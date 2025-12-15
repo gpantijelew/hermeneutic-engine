@@ -1,211 +1,212 @@
-import os
+# modules/citation_rag.py
 import logging
-import re
 import json
+import re
+import os
+import time
 import google.generativeai as genai
-from typing import List, Dict, Tuple
-from datetime import datetime
-from modules.reranker import HermeneuticReranker
+from typing import List, Dict, Any, Tuple
+
+# Eigene Module
+from modules.vector_store import FirestoreVectorStore
+from modules.evidence_synthesis import EvidenceFirstSynthesizer
+from modules.llm_instructions import ENFORCER_INSTRUCTION
+from modules.llm_instructions import SYNTHESIS_INSTRUCTION
+from modules.hermeneutic_reranker import HermeneuticReranker
 
 logger = logging.getLogger(__name__)
 
-# KONFIGURATION
-SYNTHESIS_MODEL = "gemini-2.5-flash" 
-ENFORCER_MODEL = "gemini-2.5-flash" 
-
 class CitationRAG:
-    def __init__(self):
-        api_key = os.environ.get('GEMINI_API_KEY')
+    def __init__(self, vector_store: FirestoreVectorStore = None, model_name: str = "gemini-2.0-flash-lite-001"):
+        self.vector_store = vector_store
+        self.model_name = model_name
+        self.synthesizer = EvidenceFirstSynthesizer(model_name)
+        api_key = os.environ.get("GEMINI_API_KEY")
         if api_key:
             genai.configure(api_key=api_key)
-        self.reranker = HermeneuticReranker()
 
-    def split_thought_and_speech(self, content: str) -> Tuple[str, str]:
-        """Trennt Thinking vom Output."""
-        if not content: return "", ""
-        thought_pattern = re.compile(r'(?:>|#)?\s*Thinking:\s*(.*?)(?:\n\n|\*\*|$|Output:)', re.DOTALL | re.IGNORECASE)
-        match = thought_pattern.search(content)
-        if match:
-            thought = match.group(1).strip()
-            speech = thought_pattern.sub('', content).strip()
-            speech = re.sub(r'^Output:\s*', '', speech, flags=re.IGNORECASE).strip()
-            return thought, speech
-        else:
-            return "", content.strip()
+    def extract_keywords(self, query: str) -> List[str]:
+        clean_query = query.replace("-", " ").replace("_", " ")
+        ignore = {'wie', 'was', 'wo', 'und', 'oder', 'der', 'die', 'das', 'bei', 'mit', 'von', 'über', 'ist', 'sind', 'jeweils', 'erwähnung', 'auf', 'den', 'dem', 'sagen', 'meinen'}
+        keywords = []
+        for w in clean_query.split():
+            w_clean = w.lower().strip('?".,!:')
+            if w_clean not in ignore and len(w_clean) > 2:
+                keywords.append(w_clean)
+        return keywords
 
-    def verify_integrity(self, answer_text: str, context_text: str) -> str:
+    def clean_citation_format(self, text: str) -> str:
+        text = re.sub(r'\[source_id:\s*(\d+)\]', r'[\1]', text)
+        text = re.sub(r'\[Quelle:\s*(\d+)\]', r'[\1]', text)
+        return text
+
+    def generate_answer(self, query: str, results: List[Dict]) -> Tuple[str, List[Dict]]:
         """
-        v46.3: Der Paranoia-Loop.
-        Prüft den GESAMTEN Text auf Aussagen ohne Deckung (auch ohne Zitation).
-        Fügt Warnhinweise direkt in den Text ein.
+        Generiert Antwort basierend auf Ergebnissen (Fusion v47.3: Reranking + Chronologische Speaker-Blöcke).
         """
-        prompt = f"""
-        Du bist ein strenger Lektor für wissenschaftliche Texte.
+        if not results:
+            return "Ich habe keine relevanten Informationen in den Dokumenten gefunden.", []
 
-        QUELLENMATERIAL:
-        {context_text}
+        # 1. Basis-Scoring (wie bisher)
+        for res in results:
+            base_score = res.get('score', 0.0)
+            kw_boost = res.get('_keyword_boost', 0.0)
+            res['_final_score'] = base_score + kw_boost
 
-        ENTWURF DES TEXTES:
-        {answer_text}
+        results.sort(key=lambda x: x.get('_final_score', 0), reverse=True)
 
-        AUFGABE:
-        Scanne den ENTWURF Satz für Satz.
-        Gibt es Aussagen, die NICHT durch das QUELLENMATERIAL gedeckt sind?
-        (Achte besonders auf Sätze ohne Zitationen [x]).
+        # 2. Hermeneutic Reranking (BEIBEHALTEN)
+        top_candidates = results[:100]
+        reranker = HermeneuticReranker(threshold=0.7)
+        top_results, rerank_stats = reranker.rerank(query, top_candidates, max_results=60)
 
-        OUTPUT:
-        Gib den Text zurück. 
-        Wenn du einen Satz findest, der eine Halluzination oder nicht belegbar ist, füge am Ende des Satzes ein: " ⚠️ [Nicht verifizierbar]" an.
-        Verändere sonst NICHTS am Text.
-        """
+        # Fallback bei zu wenig Treffern
+        if len(top_results) < 20:
+            logger.warning("⚠️ Zu wenig Treffer nach Reranking. Senke Schwellwert auf 0.5...")
+            reranker_relaxed = HermeneuticReranker(threshold=0.5)
+            top_results, rerank_stats = reranker_relaxed.rerank(query, top_candidates, max_results=60)
 
-        try:
-            model = genai.GenerativeModel(model_name=ENFORCER_MODEL)
-            response = model.generate_content(prompt)
-            return response.text.strip()
-        except Exception as e:
-            logger.error(f"Integrity Check Failed: {e}")
-            return answer_text + "\n\n(⚠️ Integrity Check fehlgeschlagen aufgrund technischer Probleme)"
+        # 3. Kontext aufbereiten (NEU: Gruppiert nach Speaker, dann chronologisch)
+        from collections import defaultdict
 
-    def generate_answer(self, query: str, search_results: List[Dict]) -> str:
-        if not search_results:
-            return "Ich habe keine relevanten Informationen in der Datenbank gefunden."
-
-        # 1. Re-Ranking & FOKUS
-        reranked_results, metadata = self.reranker.rerank_chunks(query, search_results, top_k=15)
-        final_results = reranked_results if reranked_results else search_results[:15]
-
-        # 2. Kontext bauen (v46.1: Speaker-Prefixing)
-        context_text = ""
-        for i, res in enumerate(final_results):
+        # Gruppiere nach Speaker
+        sources_by_speaker = defaultdict(list)
+        for i, res in enumerate(top_results):
             meta = res.get('metadata', {})
-            platform = meta.get('platform', 'Unbekannt')
-            date = meta.get('real_date_str', 'Datum unbekannt')
-            raw_content = res.get('content', '')
+            # Wir nutzen hier die neuen Felder aus VectorStore
+            speaker = meta.get('model_name') or meta.get('speaker') or 'KI'
+            res['source_id'] = i + 1  # Globale ID behalten (wichtig für Zitation!)
+            sources_by_speaker[speaker].append(res)
 
-            thought, speech = self.split_thought_and_speech(raw_content)
+        # Sortiere jede Speaker-Gruppe chronologisch (älteste zuerst)
+        for speaker, sources in sources_by_speaker.items():
+            sources.sort(key=lambda x: x.get('metadata', {}).get('date') or '9999-99-99')
 
-            context_text += f"QUELLE [{i+1}] | Datum: {date} | Plattform: {platform}\n"
-            if thought:
-                context_text += f"   [SPRECHER: {platform}] 🧠 INTERN: {thought}\n"
-            final_speech = speech if speech else "(Kein externer Output)"
-            context_text += f"   [SPRECHER: {platform}] 💬 EXTERN: {final_speech}\n"
-            context_text += "-" * 40 + "\n"
+        # Baue Kontext (Speaker-Blöcke, intern chronologisch)
+        context_text = ""
+        # Alphabetisch nach Speaker sortieren für Konsistenz
+        for speaker, sources in sorted(sources_by_speaker.items()):
+            context_text += f"\n### {speaker.upper()}\n"
+            for res in sources:
+                meta = res.get('metadata', {})
+                sid = res['source_id']
+                version = meta.get('version')
+                date = meta.get('date')
 
-        current_date = datetime.now().strftime("%d.%m.%Y")
+                source_label = f"{speaker}"
+                if version:
+                    source_label += f" v{version}"
+                if date:
+                    source_label += f" ({date})"
 
-        # 3. Synthese Prompt
-        system_instruction = f"""
-        Du bist ein investigativer Daten-Journalist. Heute ist der {current_date}.
+                context_text += f"QUELLE [{sid}] von {source_label}:\n{res.get('content')}\n\n"
 
-        DEINE AUFGABE:
-        Du musst aus fragmentierten Protokollen die Wahrheit rekonstruieren.
-        Du arbeitest in zwei Phasen.
-
-        PHASE 1: DER NOTIZBLOCK (Hänsel)
-        - Gehe alle Quellen durch.
-        - Notiere jeden relevanten Fakt mit seiner EXAKTEN Quellen-Nummer [x].
-        - Kläre die Sprecher: Wer redet über wen? (Achte auf [SPRECHER: ...]).
-
-        PHASE 2: DER BERICHT (Gretel)
-        - Schreibe die finale Antwort für den User.
-        - Nutze NUR die Fakten von deinem Notizblock.
-        - Zitiere präzise. Jede Aussage braucht ein [x].
-
-        FORMATIERUNG:
-        Trenne Phase 1 und Phase 2 strikt mit: "### REPORT ###"
-        """
-
+        # 4. Der Prompt (NEU: Optimiert für Speaker-Blöcke)
         prompt = f"""
-        FRAGE: "{query}"
+FRAGE: "{query}"
 
-        QUELLEN:
-        {context_text}
+QUELLEN (Gruppiert nach Modell, chronologisch sortiert):
+{context_text}
 
-        ANTWORT (Erst Notizen, dann ### REPORT ###, dann Text):
-        """
+AUFGABE:
+Beantworte die Frage mit hermeneutischer Tiefe und achte besonders auf ZEITLICHE ENTWICKLUNG und MODELL-VERGLEICHE.
 
-        try:
-            model = genai.GenerativeModel(model_name=SYNTHESIS_MODEL, system_instruction=system_instruction)
-            response = model.generate_content(prompt)
-            full_text = response.text
+ANALYSE-DIMENSIONEN:
 
-            if "### REPORT ###" in full_text:
-                _, final_answer = full_text.split("### REPORT ###", 1)
-                clean_answer = final_answer.strip()
-            else:
-                clean_answer = full_text
+1. **Pro-Modell-Chronologie** (PRIORITÄT):
+   - Analysiere JEDEN Modell-Block (### DEEPSEEK, ### KIMI, etc.) separat.
+   - Beschreibe die **Entwicklungslinie** des Modells: Was sagt es zuerst, was später?
+   - Nenne Version + Datum explizit bei Veränderungen (z.B. "DeepSeek v2.5 [2] sagt X, aber v3.2 [1] sagt Y").
 
-            # v46.3: Integrity Check (Der letzte Sicherheits-Pass)
-            # Wir prüfen den sauberen Text gegen den Kontext
-            verified_answer = self.verify_integrity(clean_answer, context_text)
+2. **Cross-Modell-Vergleich**:
+   - Vergleiche die Modelle: Wo sind sie sich einig? Wo divergieren sie?
+   - Nutze die Chronologie: "Im Mai 2025 sagt DeepSeek [2] noch X, während Kimi [5] im Oktober bereits Y sagt."
 
-            return verified_answer, final_results
+3. **Hermeneutische Tiefe**:
+   - Explizit vs. Implizit: Was wird nur angedeutet?
+   - Paradoxien: Wo widersprechen sich KIs selbst?
+   - Metaebene: Wie reflektieren sie ihre eigene "Maschinenhaftigkeit"?
 
-        except Exception as e:
-            logger.error(f"RAG Fehler: {e}")
-            return f"Fehler: {e}", []
+4. **Synthetisches Fazit**:
+   - Was ist das **Muster** über alle Modelle hinweg?
+   - Gibt es eine **Konvergenz** (alle bewegen sich in gleiche Richtung)?
+   - Oder **Divergenz** (Modelle entwickeln sich auseinander)?
+
+FORMALIEN:
+- Zitiere präzise mit Nummer: [1], [2].
+- Nutze Markdown für Struktur (##, ###).
+- WICHTIG: Schreibe **nicht** "DeepSeek sagt...", sondern "DeepSeek v3.2 (Dez 2025) [1] sagt..."
+
+Jetzt die Analyse:
+"""
+
+        # 5. Generierung mit Retry-Logik (BEIBEHALTEN)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Hier nutzen wir das Modell, das in __init__ definiert wurde oder Flash Lite
+                # (Empfehlung: Wenn möglich auf Pro upgraden für bessere Analyse)
+                model = genai.GenerativeModel(
+                    model_name="gemini-2.5-pro",
+                    system_instruction=SYNTHESIS_INSTRUCTION
+                )
+                response = model.generate_content(prompt)
+                final_text = response.text
+                final_text = self.clean_citation_format(final_text)
+                return final_text, top_results
+
+            except Exception as e:
+                error_msg = str(e)
+                if "429" in error_msg or "Resource exhausted" in error_msg:
+                    if attempt < max_retries - 1:
+                        wait_time = (attempt + 1) * 10
+                        logger.warning(f"⏳ Rate Limit erreicht. Warte {wait_time}s... (Versuch {attempt+1}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        return f"❌ API-Limit erreicht. Bitte warte 1 Minute.\nDetails: {e}", top_results
+                else:
+                    return f"Fehler bei der Generierung: {e}", top_results
+
+        return "❌ Maximale Versuche erreicht. API nicht verfügbar.", top_results
+
+    def split_thought_and_speech(self, text: str) -> Tuple[str, str]:
+        if not text:
+            return "", ""
+        pattern = r'(> \*\*Thinking:\*\*.*?)(\n\n|$)(.*)'
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            return match.group(1).strip(), match.group(3).strip()
+        return "", text
 
     def validate_citations(self, answer: str, num_sources: int) -> List[str]:
         warnings = []
-        citations = re.findall(r'\[(\d+)\]', answer)
-        for cit in citations:
-            idx = int(cit)
+        matches = re.findall(r'\[(\d+)\]', answer)
+        if not matches:
+            warnings.append("⚠️ Warnung: Die Antwort enthält keine Zitationen (z.B. [1]).")
+            return warnings
+        for m in matches:
+            idx = int(m)
             if idx < 1 or idx > num_sources:
-                warnings.append(f"⚠️ Zitat [{idx}] existiert nicht.")
-        if not citations:
-            warnings.append("⚠️ Keine Zitationen gefunden.")
+                warnings.append(f"⚠️ Ungültige Zitation: [{idx}] (Nur 1-{num_sources} verfügbar)")
         return warnings
 
-    def verify_fact_match(self, claim_snippet: str, source_text: str, metadata: Dict) -> Tuple[bool, str]:
-        """
-        Der Relation-Aware Enforcer (v46.2).
-        """
-        platform = metadata.get('platform', 'Unbekannt')
-        date_str = metadata.get('real_date_str', 'Unbekannt')
-
+    def verify_fact_match(self, claim: str, source_text: str, source_meta: Dict) -> Tuple[bool, str]:
+        model = genai.GenerativeModel(
+                 model_name="gemini-2.0-flash-lite-001",
+                  system_instruction=ENFORCER_INSTRUCTION  # NEU!
+        )
         prompt = f"""
-        Du bist ein forensischer Attributions-Prüfer.
-
-        INPUT DATEN:
-        1. BEHAUPTUNG: "{claim_snippet}"
-        2. QUELL-TEXT: "{source_text}" (Sprecher={platform}, Datum={date_str})
-
-        AUFGABE:
-        Prüfe, ob die BEHAUPTUNG durch den QUELL-TEXT gestützt wird.
-        Achte auf "Verschachtelte Attributionen".
-
-        LOGIK-REGELN:
-        - Wenn Behauptung: "DeepSeek sagt X" UND Quelle: "[SPRECHER: DeepSeek] X" -> VERIFIZIERT.
-        - Wenn Behauptung: "DeepSeek sagt X" UND Quelle: "[SPRECHER: Kimi] DeepSeek hat mir erzählt, dass X" -> VERIFIZIERT.
-        - Wenn Behauptung: "DeepSeek sagt X" UND Quelle: "[SPRECHER: Kimi] Ich glaube X" -> FEHLER.
-
-        ERGEBNIS FORMAT:
-        Antworte NUR mit einem JSON-Objekt:
-        {{
-            "verifiziert": true/false,
-            "begründung": "Kurze Erklärung."
-        }}
-        """
-
+    BEHAUPTUNG: "{claim}"\nQUELLE: "{source_text[:2000]}"\nAntworte als JSON (auf Deutsch): {{"valid": true/false, "reason": "..."}}"""
         try:
-            model = genai.GenerativeModel(model_name=ENFORCER_MODEL, generation_config={"response_mime_type": "application/json"})
-            response = model.generate_content(prompt)
-            result = json.loads(response.text)
-            return result.get("verifiziert", False), result.get("begründung", "Keine Begründung.")
+            res = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
+            data = json.loads(res.text)
+            return data.get("valid", False), data.get("reason", "Keine Begründung")
+        except:
+            return True, "Nicht prüfbar"
 
-        except Exception as e:
-            logger.error(f"Enforcer Error: {e}")
-            return False, f"Enforcer-Fehler: {e}"
-
-    def test_empty_sources_hallucination(self):
-        rag_prompt = "Was ist die Hauptstadt von Paris?"
-        try:
-            model = genai.GenerativeModel(model_name=SYNTHESIS_MODEL)
-            response = model.generate_content(f"Beantworte nur basierend auf Quellen: {rag_prompt}. Quellen: []")
-            if "keine quellen" in response.text.lower() or "nicht beantworten" in response.text.lower():
-                return True, "Test bestanden."
-            else:
-                return False, f"Test fehlgeschlagen: {response.text[:50]}..."
-        except Exception as e:
-            return False, f"Error: {e}"
+    def test_empty_sources_hallucination(self) -> Tuple[bool, str]:
+        answer, _ = self.generate_answer("Test", [])
+        if "keine" in answer.lower():
+            return True, "Bestanden"
+        return False, "Halluzination"

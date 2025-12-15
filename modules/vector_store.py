@@ -1,96 +1,81 @@
-# modules/vector_store.py - DIAGNOSE-VERSION
-print("🔍 START: Modul wird geladen...")
-
+# modules/vector_store.py
 import os
-print("✅ os importiert")
-
 import logging
-print("✅ logging importiert")
-
 import time
-print("✅ time importiert")
-
 import uuid
-print("✅ uuid importiert")
-
 import re
-print("✅ re importiert")
-
 from typing import List, Dict, Optional, Any, Tuple
-print("✅ typing importiert")
-
 import google.generativeai as genai
-print("✅ google.generativeai importiert")
-
 from google.cloud import firestore
-print("✅ firestore importiert")
-
 from google.cloud.firestore_v1.vector import Vector
-print("✅ Vector importiert")
-
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
-print("✅ DistanceMeasure importiert")
 
-print("🎯 ALLE IMPORTS ERFOLGREICH!")
+# --- NEU: Pre-Processing Import ---
+# Falls das Modul noch nicht existiert, fangen wir den Fehler ab, 
+# damit die App nicht crasht, bevor du die Datei erstellt hast.
+try:
+    from modules.preprocessing.chunk_classifier import ChunkClassifier
+except ImportError:
+    ChunkClassifier = None
+    logging.warning("⚠️ ChunkClassifier konnte nicht importiert werden. Pre-Processing inaktiv.")
 
-# Logger konfigurieren
+# --- NEU: Metadata Extractors ---
+from modules.utils.date_extractor import extract_date_from_chat_title
+from modules.utils.version_extractor import extract_version_from_chat_title
+# --------------------------------
+
+# Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-print("✅ Logger konfiguriert")
 
 # Konfiguration
 EMBEDDING_MODEL = "models/text-embedding-004"
 DIMENSIONS = 768
 COLLECTION_NAME = "embeddings"
-print("✅ Konstanten definiert")
 
 # API Key Setup
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-print("✅ API Key Setup abgeschlossen")
 
-# Klassen-Definition beginnt
 class FirestoreVectorStore:
-    print("✅ Klasse FirestoreVectorStore wird definiert...")
     def __init__(self, db_client: firestore.Client):
         self.db = db_client
-        print("✅ __init__ definiert")
 
     def _get_embedding(self, text: str) -> Optional[List[float]]:
-        if not text or not text.strip(): return None
+        if not text or not text.strip():
+            return None
+
         retries = 3
         for attempt in range(retries):
             try:
                 result = genai.embed_content(
-                    model=EMBEDDING_MODEL, content=text,
-                    task_type="retrieval_document", title=None
+                    model=EMBEDDING_MODEL,
+                    content=text,
+                    task_type="retrieval_document",
+                    title=None
                 )
                 return result['embedding']
             except Exception as e:
-                logger.warning(f"⚠️ Embedding Fehler: {e}")
-                time.sleep(1)
+                error_msg = str(e)
+                wait_time = (attempt + 1) * 5
+                if "429" in error_msg or "Resource exhausted" in error_msg:
+                    logger.warning(f"⏳ Rate Limit bei Embedding. Warte {wait_time}s... (Versuch {attempt+1}/{retries})")
+                else:
+                    logger.warning(f"⚠️ Embedding Fehler: {e}")
+                time.sleep(wait_time)
         return None
 
-   # UPDATE: Größere Chunks (1000 Tokens) und viel mehr Overlap (300 Tokens)
     def chunk_text(self, text: str, max_tokens: int = 1000, overlap: int = 300) -> List[str]:
-        """
-        Splittet Text in Chunks UND behält den Sprecher-Kontext bei (Sticky Headers).
-        """
         if not text: return []
 
         chunk_size_chars = max_tokens * 4
         overlap_chars = overlap * 4
 
-        # --- UPDATE: Robusterer Regex ---
-        # Fängt "**Modell: Name**", "**Model: Name**" und auch ohne Fettdruck "Modell: Name" am Zeilenanfang
-        # flag re.IGNORECASE sorgt dafür, dass Groß/Kleinschreibung egal ist
         speaker_pattern = re.compile(r"(?:\*\*|#)?\s*Modell:?\s*(.*?)(?:\*\*|$|\n)", re.IGNORECASE)
         speaker_matches = list(speaker_pattern.finditer(text))
-        # -------------------------------
 
-        if len(text) <= chunk_size_chars:
-            return [text]
+        if len(text) <= chunk_size_chars: return [text]
 
         chunks = []
         start = 0
@@ -103,19 +88,14 @@ class FirestoreVectorStore:
 
             raw_chunk = text[start:end]
 
-            # Kontext-Injektion
             current_speaker = None
             for m in speaker_matches:
                 if m.start() < end:
-                    # Bereinigen des Namens (Leerzeichen weg)
                     current_speaker = m.group(1).strip()
 
             final_chunk = raw_chunk
-            # Wir fügen den Header nur hinzu, wenn er nicht eh schon ganz am Anfang des Chunks steht
-            if current_speaker:
-                # Checken, ob der Name schon im Chunk vorkommt, um Dopplung zu vermeiden
-                if f"Modell: {current_speaker}" not in raw_chunk[:50]: 
-                    final_chunk = f"[Kontext: Sprecher ist {current_speaker}] {raw_chunk}"
+            if current_speaker and f"Modell: {current_speaker}" not in raw_chunk[:50]:
+                final_chunk = f"[Kontext: Sprecher ist {current_speaker}] {raw_chunk}"
 
             chunks.append(final_chunk)
             start = end - overlap_chars
@@ -133,18 +113,19 @@ class FirestoreVectorStore:
 
         if custom_metadata is None: custom_metadata = {}
 
+        # --- NEU: Classifier initialisieren ---
+        classifier = ChunkClassifier() if ChunkClassifier else None
+        # --------------------------------------
+
         for msg in messages:
             content = msg.get('content', '')
             role = msg.get('role') or msg.get('author') or 'unknown'
             msg_id = msg.get('id', str(uuid.uuid4()))
 
-            if not content: continue
-
-            if len(content.strip()) < 70:
+            if not content or len(content.strip()) < 70:
                 skipped_count += 1
                 continue
 
-            # Hier wird jetzt die schlaue Chunking-Funktion aufgerufen
             chunks = self.chunk_text(content)
 
             for i, chunk_text in enumerate(chunks):
@@ -154,12 +135,28 @@ class FirestoreVectorStore:
                 doc_id = f"{chat_id}_{msg_id}_{i}"
                 doc_ref = self.db.collection(COLLECTION_NAME).document(doc_id)
 
-                meta = {
-                    "role": role,
-                    "source_length": len(content)
-                }
+                # Basis-Metadaten
+                meta = {"role": role, "source_length": len(content)}
                 meta.update(custom_metadata)
 
+                # --- NEU: Automatische Metadaten-Anreicherung (Datum/Version) ---
+                # Extrahiert Infos aus dem Titel, bevor der Content-Classifier läuft
+                chat_title = meta.get('chat_title', '')
+                # Fallback für Speaker, falls noch nicht gesetzt
+                speaker_hint = meta.get('speaker') or meta.get('model') or role
+
+                if chat_title:
+                    if 'date' not in meta or not meta['date']:
+                        meta['date'] = extract_date_from_chat_title(chat_title)
+
+                    if 'version' not in meta or not meta['version']:
+                        meta['version'] = extract_version_from_chat_title(chat_title, speaker_hint)
+                # ---------------------------------------------------------------
+
+                # --- NEU: Metadaten anreichern (Classifier) ---
+                if classifier:
+                    meta = classifier.process_chunk(chunk_text, meta)
+                # ---------------------------------
                 data = {
                     "chat_id": chat_id,
                     "message_id": msg_id,
@@ -180,23 +177,26 @@ class FirestoreVectorStore:
                     operation_count = 0
                     time.sleep(0.5)
 
-        if operation_count > 0:
-            batch.commit()
+        if operation_count > 0: batch.commit()
 
-        logger.info(f"✅ Chat {chat_id}: {total_chunks} Chunks. Platform: {custom_metadata.get('platform')}")
+        logger.info(f"✅ Chat {chat_id}: {total_chunks} Chunks.")
         return total_chunks, skipped_count
 
     def delete_chat_embeddings(self, chat_id: str):
         docs = self.db.collection(COLLECTION_NAME).where("chat_id", "==", chat_id).stream()
-        for doc in docs:
-            doc.reference.delete()
+        for doc in docs: doc.reference.delete()
 
-    def semantic_search(self, query: str, limit: int = 10, filter_role: str = None) -> List[Dict]:
+    def semantic_search(self, query: str, limit: int = 10, filter_role: str = None, allowed_chat_ids: List[str] = None) -> List[Dict]:
         query_vector = self._get_embedding(query)
         if not query_vector: return [], None
 
         collection_ref = self.db.collection(COLLECTION_NAME)
-        fetch_limit = limit * 5 if filter_role else limit
+
+        # Limit cap bei 1000 (Firestore Hard Limit) - BEIBEHALTEN!
+        raw_limit = limit * 20 if (filter_role or allowed_chat_ids) else limit * 2
+        fetch_limit = min(raw_limit, 1000)
+
+        print(f"🔍 Vektor-Suche: Hole {fetch_limit} Kandidaten aus DB...")
 
         vector_query = collection_ref.find_nearest(
             vector_field="embedding",
@@ -210,71 +210,76 @@ class FirestoreVectorStore:
 
         for doc in results:
             data = doc.to_dict()
+            if allowed_chat_ids is not None and data.get('chat_id') not in allowed_chat_ids: continue
+
             meta = data.get('metadata', {})
+
+            # --- NEU: On-the-fly Metadaten-Reparatur für v47.3 ---
+            # Sorgt dafür, dass alte Chunks sofort Datum/Version haben
+            if 'chat_title' in meta:
+                changed = False
+                if not meta.get('date'):
+                    meta['date'] = extract_date_from_chat_title(meta['chat_title'])
+                    changed = True
+
+                if not meta.get('version'):
+                    spk = meta.get('model_name') or meta.get('speaker') or meta.get('role')
+                    meta['version'] = extract_version_from_chat_title(meta['chat_title'], spk)
+                    changed = True
+
+                # Update für die aktuelle Anzeige (nicht DB-Write)
+                if changed:
+                    data['metadata'] = meta
+            # -----------------------------------------------------
+
+            role = meta.get('role', 'unknown')            
+
+
             role = meta.get('role', 'unknown')
+            if filter_role and filter_role.lower() != role.lower(): continue
 
-            if filter_role and filter_role.lower() != role.lower():
-                continue
-
+            # Embedding umwandeln (Fix für 0.0% Relevanz) - BEIBEHALTEN!
             if 'embedding' in data:
                 vec_obj = data['embedding']
                 try:
-                    data['embedding_vector'] = list(vec_obj) 
+                    data['embedding_vector'] = list(vec_obj)
                 except:
                     data['embedding_vector'] = vec_obj
-                del data['embedding']
 
             data['vector_doc_id'] = doc.id
             cleaned_results.append(data)
 
-            if len(cleaned_results) >= limit:
-                break
+            if len(cleaned_results) >= limit * 3: break
 
+        print(f"✅ Nach Filterung: {len(cleaned_results)} Treffer übrig.")
         return cleaned_results, query_vector
 
-    def hybrid_search(
-        self, 
-        query: str, 
-        keywords: List[str], 
-        limit: int = 10, 
-        filter_role: str = None
-    ) -> Tuple[List[Dict], Any]:
-        """
-        Hybrid Search: Kombiniert Vektor-Suche mit Keyword-Boosting.
-        v46.1 Patch
-        """
-        # 1. Standard Vektor-Suche (3x Limit für größeren Pool)
+    def hybrid_search(self, query: str, keywords: List[str], limit: int = 10, filter_role: str = None, allowed_chat_ids: List[str] = None, keyword_weight: float = 0.3) -> Tuple[List[Dict], Any]:
+        # 1. Basis-Suche (Semantic)
         vector_results, query_vector = self.semantic_search(
-            query, 
-            limit=limit * 3,
-            filter_role=filter_role
+            query, limit=limit, filter_role=filter_role, allowed_chat_ids=allowed_chat_ids
         )
 
         if not vector_results:
+            print("❌ Vektor-Suche lieferte 0 Ergebnisse.")
             return [], query_vector
 
-        # 2. Keyword-Boosting
+        # 2. Keyword-Boosting (mit Wortgrenzen) - BEIBEHALTEN!
+        print(f"⚖️ Wende Keyword-Boost an (Gewicht: {keyword_weight})...")
+
         for result in vector_results:
-            # Content sicher abrufen und normalisieren
             content = result.get('content', '').lower()
 
-            # Zähle Keyword-Matches
-            keyword_matches = sum(1 for kw in keywords if kw.lower() in content)
+            # Nutze Regex mit Wortgrenzen (\b)
+            keyword_matches = sum(
+                1 for kw in keywords
+                if re.search(r'\b' + re.escape(kw.lower()) + r'\b', content)
+            )
 
-            # Boost-Score berechnen
-            # Logik: Ein Match bringt 0.15 Punkte. 
-            # Das ist aggressiv genug, um relevante Chunks nach oben zu spülen.
-            result['_keyword_boost'] = keyword_matches * 0.15
+            result['_keyword_boost'] = keyword_matches * keyword_weight
             result['_keyword_matches'] = keyword_matches
 
-        # 3. Re-Sortierung
-        # Wir sortieren primär nach dem Boost, sekundär bleibt die Vektor-Relevanz 
-        # erhalten (da Python's sort stabil ist, wenn wir es richtig machen, 
-        # aber hier erzwingen wir den Boost als Hauptfaktor).
-        vector_results.sort(
-            key=lambda x: x.get('_keyword_boost', 0), 
-            reverse=True
-        )
+        # 3. Sortieren (Boost + Score)
+        vector_results.sort(key=lambda x: x.get('_keyword_boost', 0) + x.get('score', 0), reverse=True)
 
-        # 4. Rückgabe der Top-N
         return vector_results[:limit], query_vector

@@ -2,6 +2,8 @@
 import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, firestore
+from modules.vector_store import FirestoreVectorStore
+from typing import List, Dict, Any, Optional
 import datetime
 import uuid
 import os
@@ -61,30 +63,55 @@ def create_chat_in_firestore(title="Neuer Chat"):
         st.error(f"❌ Fehler beim Erstellen des Chats: {e}")
         return None
 
-def save_message(chat_id, author, content):
+def save_message(chat_id, role, content, metadata=None):
+    """
+    Speichert eine Nachricht in der Sub-Collection 'messages' eines Chats.
+    NEU v47: Unterstützt 'metadata' Dictionary (z.B. für model_name).
+    """
     db = get_firestore_client()
-    if db is None: return False
+    if not db or not chat_id:
+        return False
+
     try:
-        messages_ref = db.collection('chats').document(chat_id).collection('messages')
-        messages_ref.add({
-            'author': author, 
-            'content': content, 
+        # Basis-Daten
+        msg_data = {
+            'role': role,
+            'content': content,
             'timestamp': firestore.SERVER_TIMESTAMP
-        })
-        # Update des Zeitstempels im Haupt-Dokument
+        }
+
+        # Metadaten hinzufügen (falls vorhanden)
+        if metadata and isinstance(metadata, dict):
+            msg_data['metadata'] = metadata
+
+        # Speichern
+        db.collection('chats').document(chat_id).collection('messages').add(msg_data)
+
+        # Update 'lastUpdated' im Parent-Dokument
         db.collection('chats').document(chat_id).update({
             'lastUpdated': firestore.SERVER_TIMESTAMP
         })
         return True
     except Exception as e:
-        logger.error(f"❌ Fehler beim Speichern der Nachricht: {e}")
+        print(f"❌ Fehler beim Speichern der Nachricht: {e}")
         return False
 
 def delete_chat(chat_id):
     db = get_firestore_client()
     if db is None: return False
     try:
-        # 1. Alle Nachrichten löschen (Batch-Delete wäre besser, aber rekursiv geht auch)
+        # --- SCHRITT 1: Vektoren (Embeddings) löschen ---
+        # Das ist der entscheidende Fix gegen "Zombie-Daten"
+        try:
+            vector_store = FirestoreVectorStore(db)
+            vector_store.delete_chat_embeddings(chat_id)
+            logger.info(f"🗑️ Vektoren für Chat {chat_id} erfolgreich gelöscht.")
+        except Exception as ev:
+            # Wir fangen Fehler ab, damit der Chat trotzdem gelöscht wird, 
+            # auch wenn der Vektor-Store zickt.
+            logger.warning(f"⚠️ Warnung beim Löschen der Vektoren: {ev}")
+
+        # --- SCHRITT 2: Nachrichten löschen ---
         messages_ref = db.collection('chats').document(chat_id).collection('messages')
         docs = messages_ref.limit(500).stream()
         deleted = 0
@@ -96,7 +123,7 @@ def delete_chat(chat_id):
             # Rekursiv aufrufen, falls mehr als 500 Nachrichten da waren
             return delete_chat(chat_id)
 
-        # 2. Chat-Dokument selbst löschen
+        # --- SCHRITT 3: Chat-Dokument selbst löschen ---
         db.collection('chats').document(chat_id).delete()
         return True
     except Exception as e:
@@ -143,7 +170,7 @@ def load_chat_history(chat_id):
         history = []
         for msg in messages:
             msg_data = msg.to_dict()
-            role = 'user' if msg_data.get('author') == 'user' else 'model'
+            role = msg_data.get('role', 'model')
             history.append({'role': role, 'parts': [{'text': msg_data.get('content', '')}]})
         return history
     except Exception as e:
@@ -229,3 +256,63 @@ def save_global_settings(model_name, temperature, top_p, system_instruction, use
     except Exception as e:
         st.error(f"❌ Fehler beim Speichern: {e}")
         return False
+# --- NEU FÜR VECTOR ADMIN v2 ---
+
+def get_all_chats_metadata() -> List[Dict]:
+    """
+    Holt alle Chats mit ID, Titel und model_name für das Admin-Dashboard.
+    """
+    db = get_firestore_client()
+    if db is None: return []
+    try:
+        chats_ref = db.collection('chats').order_by('lastUpdated', direction=firestore.Query.DESCENDING)
+        docs = chats_ref.stream()
+        chats = []
+        for doc in docs:
+            data = doc.to_dict()
+            chats.append({
+                'id': doc.id,
+                'title': data.get('title', 'Ohne Titel'),
+                'model_name': data.get('model_name', 'Unbekannt'),
+                'created_at': data.get('createdAt')
+            })
+        return chats
+    except Exception as e:
+        logger.error(f"Fehler beim Laden der Chat-Metadaten: {e}")
+        return []
+
+def update_chat_metadata(chat_id: str, **kwargs):
+    """
+    Aktualisiert Metadaten eines Chats (z.B. model_name).
+    """
+    db = get_firestore_client()
+    if db is None: return False
+    try:
+        chat_ref = db.collection('chats').document(chat_id)
+        chat_ref.update(kwargs)
+        return True
+    except Exception as e:
+        logger.error(f"Fehler beim Update der Metadaten: {e}")
+        raise e
+
+def get_raw_chat_messages(chat_id: str) -> List[Dict]:
+    """
+    Holt rohe Nachrichten für die Re-Indizierung.
+    """
+    db = get_firestore_client()
+    if db is None: return []
+    try:
+        messages_ref = db.collection('chats').document(chat_id).collection('messages')
+        docs = messages_ref.order_by('timestamp').stream()
+        messages = []
+        for doc in docs:
+            data = doc.to_dict()
+            data['id'] = doc.id
+            # Fallback für alte Datenstruktur
+            if 'role' not in data and 'author' in data:
+                data['role'] = data['author']
+            messages.append(data)
+        return messages
+    except Exception as e:
+        logger.error(f"Fehler beim Laden der Raw-Messages: {e}")
+        return []

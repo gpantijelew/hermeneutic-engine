@@ -1,7 +1,7 @@
-# app_forschung_v45.py - Vollständige Version mit LM-Arena-Support
-APP_VERSION = "v45"  # ← Ändere das bei jedem Update
+# app_forschung_v46.py - Vollständige Version mit LM-Arena-Support
+APP_VERSION = "v46"  # ← Ändere das bei jedem Update
 print("=" * 80)
-print("🚀 STARTUP: app_forschung_v45.py lädt...")
+print("🚀 STARTUP: app_forschung_v46.py lädt...")
 print("=" * 80)
 
 import os
@@ -23,28 +23,36 @@ from dotenv import load_dotenv
 
 # Neue Module-Importe
 from modules.database import (
-    get_firestore_client,      # <--- WICHTIG: Jetzt aus dem Modul holen!
+    get_firestore_client,
     create_chat_in_firestore,
     save_message,
     generate_and_update_title,
     delete_chat,
-    get_chat_list,             # <--- Neu importiert
-    load_chat_history,         # <--- Neu importiert
-    rename_chat,               # <--- Neu importiert
-    load_global_settings,      # <--- Neu importiert
-    save_global_settings       # <--- Neu importiert
+    get_chat_list,
+    load_chat_history,
+    rename_chat,
+    load_global_settings,
+    save_global_settings
 )
+# --- NEU: Importer Factory ---
+from modules.importers import get_importer, detect_platform, IMPORTERS
+# -----------------------------
+
+from modules.bulk_labeling import render_bulk_labeling_ui
+from modules.vector_admin import render_vector_admin_dashboard
 from modules.vector_store import FirestoreVectorStore
 from modules.citation_rag import CitationRAG
+from modules.synthesis_utils import post_process_synthesis
 from modules.confidence_scoring import calculate_confidence_scores, get_color_for_score
 from modules.export import generate_markdown, generate_json, generate_excel
+from modules.bulk_export import render_bulk_export_ui
 
-# CACHE-BUSTER: 2025-11-29 19:00 - Gemini Collector Fix
+# CACHE-BUSTER: 2025-12-05 19:00 - Gemini Collector Fix
 
 # Lade Umgebungsvariablen aus der .env-Datei (nur für lokale Entwicklung)
 load_dotenv(override=False)
 # HIER DIE TESTZEILE EINFÜGEN:
-st.write("🚀 KANARIENVOGEL-TEST: Diese Datei (v45) wird ausgeführt!")
+st.write("🚀 KANARIENVOGEL-TEST: Diese Datei (v46) wird ausgeführt!")
 
 # ==============================================================================
 # AUTHENTIFIZIERUNG (mit st.secrets)
@@ -95,7 +103,7 @@ if DEBUG_MODE:
 # 1. KONFIGURATION
 # ==============================================================================
 st.set_page_config(
-    page_title="Forschungs-Cockpit v44",
+    page_title="Forschungs-Cockpit v46",
     page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -220,187 +228,150 @@ def send_message_with_rest_api(prompt, history, system_instruction, temperature,
 # ==========================================
 # LOKALE IMPORT-FUNKTION (Umgeht Import-Fehler)
 # ==========================================
-def parse_and_import_text_chat(chat_text: str, source: str, container) -> Tuple[Optional[str], int]:
-    """
-    Parst rohen Chat-Text mithilfe von Gemini Flash in strukturiertes JSON.
-    Direkt in app.py definiert, um Import-Probleme zu lösen.
-    """
-    status = container.empty()
-    progress_bar = container.progress(0, text="Starte Analyse...")
-
-    try:
-        # 1. Validierung
-        if not chat_text or not chat_text.strip():
-            status.error("❌ Leerer Text übergeben.")
-            return None, 0
-
-        char_count = len(chat_text)
-        status.info(f"📊 Analysiere {char_count:,} Zeichen...")
-
-        # API Key Check (nutzt die globale Variable aus app.py)
-        if not GEMINI_API_KEY:
-            status.error("❌ API-Key fehlt (GEMINI_API_KEY).")
-            return None, 0
-
-        genai.configure(api_key=GEMINI_API_KEY)
-
-        # CHUNKING
-        CHUNK_SIZE = 40000 
-        OVERLAP = 1000 
-
-        chunks = []
-        for i in range(0, char_count, CHUNK_SIZE - OVERLAP):
-            chunks.append(chat_text[i : i + CHUNK_SIZE])
-
-        total_chunks = len(chunks)
-        status.info(f"🔪 Text ist zu groß. Zerlege in {total_chunks} Teile...")
-
-        all_messages = []
-
-        # 2. Processing
-        for i, chunk in enumerate(chunks):
-            current_step = i + 1
-            progress_bar.progress(int((current_step / total_chunks) * 100), text=f"Verarbeite Teil {current_step} von {total_chunks}...")
-
-            context_header = f"KONTEXT: Dies ist Teil {current_step} von {total_chunks} eines langen Chats.\n\n"
-
-            system_prompt = """Du bist ein spezialisierter Parser.
-            DAS PROBLEM: Im Input kleben User-Fragen, KI-Gedanken und KI-Antworten aneinander. 
-            DEINE MISSION: Trenne diese Elemente chirurgisch präzise.
-            REGELN:
-            1. Identifiziere die Sprecher: "user" und "model".
-            2. HARTER SCHNITT BEI GEDANKEN: Sobald du Wörter wie "Thinking", "Evaluating..." siehst, beginnt SOFORT eine neue Nachricht mit role: "model".
-            3. Formatiere den gesamten Gedanken-Block als Zitat (>) am Anfang der Nachricht.
-            4. Gib NUR das JSON-Array zurück: [{"role": "user", "content": "..."}, ...]
-            Input Text (Ausschnitt): """
-
-            full_prompt = context_header + system_prompt + chunk + "\n----------------\nJSON Output:"
-
-            # Modell-Aufruf
-            model = genai.GenerativeModel(
-                model_name="gemini-2.0-flash-lite-001", 
-                generation_config={"response_mime_type": "application/json"}
-            )
-
-            try:
-                response = model.generate_content(full_prompt)
-                chunk_messages = json.loads(response.text)
-
-                if isinstance(chunk_messages, list):
-                    all_messages.extend(chunk_messages)
-                else:
-                    st.warning(f"Chunk {current_step} lieferte kein Array.")
-
-            except Exception as e:
-                st.error(f"Fehler in Chunk {current_step}: {e}")
-                continue
-
-            time.sleep(0.5)
-
-        progress_bar.empty()
-
-        if not all_messages:
-            status.error("❌ Konnte keine Nachrichten extrahieren.")
-            return None, 0
-
-        # 3. Speichern
-        status.info(f"💾 Speichere {len(all_messages)} Nachrichten...")
-
-        platform_label = "Gemini"
-        if "chatgpt" in chat_text[:500].lower(): platform_label = "ChatGPT"
-
-        chat_title = f"Import: {platform_label} (Text) - {len(all_messages)} Msgs"
-
-        # DB Funktionen aufrufen (die sind ja in app.py importiert)
-        chat_id = create_chat_in_firestore(chat_title)
-
-        if not chat_id:
-            status.error("❌ DB-Fehler.")
-            return None, 0
-
-        saved_count = 0
-        for msg in all_messages:
-            role = msg.get('role', 'user').lower()
-            if role not in ['user', 'model']: role = 'user'
-            content = msg.get('content', '')
-
-            if content:
-                save_message(chat_id, role, content)
-                saved_count += 1
-
-        if saved_count > 0:
-            generate_and_update_title(chat_id, all_messages[:3])
-
-        status.success(f"✅ Fertig! {saved_count} Nachrichten importiert.")
-        return chat_id, saved_count
-
-    except Exception as e:
-        status.error(f"❌ Fehler: {str(e)}")
-        return None, 0
-
 # ==============================================================================
-# IMPORT-SEITE (Wiederhergestellt)
+# ==============================================================================
+# IMPORT-SEITE (Refactored v47)
 # ==============================================================================
 def render_import_page():
-    # Wir brauchen hier noch kurz die HTML-Funktionen aus dem Modul
-    from modules.importer import parse_and_import_html, PARSER_CONFIGS
-
     st.title("📥 Daten importieren")
     st.markdown("---")
 
-    tab_paste, tab_upload, tab_json = st.tabs(["📋 Copy-Paste (Text)", "📄 Datei-Upload (HTML/Txt)", "💾 JSON Backup"])
+    tab_paste, tab_upload, tab_json = st.tabs(["📋 Copy-Paste (Text)", "📄 Datei-Upload (HTML/PDF/ePub)", "💾 JSON Backup"])
 
     # TAB 1: Copy-Paste
     with tab_paste:
         st.info("Anleitung: Chat-Text markieren (Strg+A), kopieren (Strg+C) und hier einfügen.")
         chat_text_input = st.text_area("Chat-Text hier einfügen:", height=300, key="gemini_paste_area")
 
-        col1, col2 = st.columns([1, 3])
-        with col1:
-             if st.button("🚀 Importieren (Paste)", use_container_width=True, type="primary"):
-                  if chat_text_input.strip():
-                       # Hier rufen wir die lokale Funktion auf, die wir darüber definiert haben
-                       parse_and_import_text_chat(chat_text_input, "paste_input", st.container())
-                  else:
-                       st.error("❌ Bitte füge zuerst Text ein.")
+        if st.button("🚀 Importieren (Paste)", use_container_width=True, type="primary"):
+            if chat_text_input.strip():
+                container = st.container()
+                try:
+                    # Factory Aufruf: Text Fallback
+                    importer = get_importer('text_fallback')
+
+                    # 1. Parse
+                    messages = importer.parse(chat_text_input, container=container)
+
+                    # 2. Import
+                    if messages:
+                        result = importer.import_to_firestore(messages, metadata={'source': 'paste'})
+                        if result['chat_id']:
+                            container.success(f"✅ Fertig! {result['message_count']} Nachrichten importiert.")
+                        else:
+                            container.error("❌ Fehler beim Speichern in DB.")
+                except Exception as e:
+                    st.error(f"❌ Import-Fehler: {e}")
+            else:
+                st.error("❌ Bitte füge zuerst Text ein.")
 
     # TAB 2: Datei-Upload
     with tab_upload:
-        st.markdown("Lade eine .html Datei oder .txt hoch.")
+        st.markdown("Unterstützte Formate: `.html`, `.txt`, `.pdf`, `.epub`")
 
+        # Modus-Auswahl
         parser_mode = st.radio(
             "Modus:", 
-            ["🤖 Auto (empfohlen)", "🎯 Manuell", "🧠 KI-Parsing (universell)"],
+            ["🤖 Auto-Detect (empfohlen)", "🎯 Manuell wählen", "🧠 Erzwinge KI-Parsing (Text)"],
             horizontal=True
         )
 
         manual_platform = None
-        if parser_mode == "🎯 Manuell":
-            platform_names = {key: config['name'] for key, config in PARSER_CONFIGS.items()}
-            selected_name = st.selectbox("Plattform:", options=list(platform_names.values()))
-            manual_platform = next((key for key, name in platform_names.items() if name == selected_name), None)
+        if parser_mode == "🎯 Manuell wählen":
+            # Dynamische Liste aus den registrierten Importern generieren
+            # Wir instanziieren kurz, um den Namen zu holen (leichtgewichtig)
+            platform_options = {k: v().platform_name for k, v in IMPORTERS.items()}
+            selected_name = st.selectbox("Plattform:", options=list(platform_options.values()))
+            manual_platform = next((k for k, v in platform_options.items() if v == selected_name), None)
 
-        uploaded_files = st.file_uploader("Dateien wählen:", type=["html", "htm", "txt"], accept_multiple_files=True)
+        # File Uploader mit neuen Typen
+        uploaded_files = st.file_uploader(
+            "Dateien wählen:", 
+            type=["html", "htm", "txt", "pdf", "epub"], 
+            accept_multiple_files=True
+        )
 
         if uploaded_files and st.button("🚀 Start Upload", type="primary"):
-            for i, uploaded_file in enumerate(uploaded_files):
+            for uploaded_file in uploaded_files:
                 file_container = st.container()
                 file_container.markdown(f"**📄 {uploaded_file.name}**")
-                file_bytes = uploaded_file.getvalue()
 
-                if uploaded_file.name.lower().endswith(".txt"):
-                    content_str = file_bytes.decode('utf-8', errors='ignore')
-                    # Lokale Funktion aufrufen
-                    parse_and_import_text_chat(content_str, "file_upload_txt", file_container)
-                else:
-                    # HTML Funktion aus dem Modul aufrufen
-                    force_mode = 'ai' if parser_mode == "🧠 KI-Parsing (universell)" else None
-                    parse_and_import_html(file_bytes, force_mode, file_container, manual_platform)
+                try:
+                    # Datei-Inhalt lesen
+                    # Für PDF/ePub übergeben wir das File-Objekt direkt (wegen Binary/Stream)
+                    # Für Text/HTML lesen wir Bytes
+                    file_content = uploaded_file
+                    if uploaded_file.name.lower().endswith(('.html', '.htm', '.txt')):
+                        file_content = uploaded_file.read()
 
-                # Kleiner Erfolgshinweis
-                st.success(f"Verarbeitung von {uploaded_file.name} abgeschlossen.")
+                    # 1. Plattform bestimmen
+                    platform_key = 'text_fallback' # Default
 
-    # TAB 3: JSON
+                    if parser_mode == "🧠 Erzwinge KI-Parsing (Text)":
+                        platform_key = 'text_fallback'
+                        # Bei Text-Erzwingung müssen wir Bytes decoden, falls es HTML war
+                        if isinstance(file_content, bytes):
+                            file_content = file_content.decode('utf-8', errors='ignore')
+
+                    elif manual_platform:
+                        platform_key = manual_platform
+
+                    else:
+                        # Auto-Detect
+                        filename = uploaded_file.name.lower()
+                        if filename.endswith('.pdf'):
+                            platform_key = 'pdf'
+                        elif filename.endswith('.epub'):
+                            platform_key = 'epub'
+                        elif filename.endswith('.txt'):
+                            platform_key = 'text_fallback'
+                            if isinstance(file_content, bytes):
+                                file_content = file_content.decode('utf-8', errors='ignore')
+                        else:
+                            # HTML Detection
+                            detected, conf, _ = detect_platform(file_content)
+                            if detected:
+                                platform_key = detected
+                                file_container.info(f"🔍 Erkannt: {IMPORTERS[platform_key]().platform_name} ({conf:.0%})")
+                            else:
+                                file_container.warning("⚠️ Keine Signatur erkannt. Nutze Text-Analyse...")
+                                platform_key = 'text_fallback'
+                                if isinstance(file_content, bytes):
+                                    file_content = file_content.decode('utf-8', errors='ignore')
+
+                    # 2. Importer holen & Parsen
+                    importer = get_importer(platform_key)
+
+                    # Spezialfall Gemini Diagnose (Target Word)
+                    target_word = ""
+                    if platform_key == 'gemini':
+                        # Das Input-Feld müsste eigentlich vorher gerendert werden. 
+                        # Für jetzt lassen wir es leer oder nutzen einen festen Wert, 
+                        # da wir im Loop sind. (UI-Limitierung)
+                        pass
+
+                    messages = importer.parse(file_content, container=file_container, target_word=target_word)
+
+                    # 3. Importieren
+                    if messages:
+                        # Check auf Diagnose-Modus (Gemini)
+                        if len(messages) == 1 and messages[0].get('content') == 'Diagnose Mode - Kein Import':
+                            continue # Nichts speichern
+
+                        res = importer.import_to_firestore(messages, metadata={'container': file_container})
+
+                        if res['chat_id']:
+                            file_container.success(f"✅ Importiert: {res['message_count']} Nachrichten.")
+                        else:
+                            file_container.error("❌ Fehler beim Speichern.")
+                    else:
+                        file_container.error("❌ Keine Nachrichten gefunden.")
+
+                except Exception as e:
+                    file_container.error(f"❌ Kritischer Fehler bei {uploaded_file.name}: {e}")
+                    # traceback.print_exc() # Optional für Logs
+
+    # TAB 3: JSON (Bleibt unverändert, da einfache Logik)
     with tab_json:
         uploaded_json = st.file_uploader("JSON-Datei:", type=["json"], key="json_direct")
         if uploaded_json and st.button("💾 Wiederherstellen", type="primary"):
@@ -433,9 +404,38 @@ def render_analysis_page():
     # HIER WERDEN DIE TABS DEFINIERT (Das fehlte vorher!)
     tab_search, tab_stats = st.tabs(["🔍 Semantische Suche", "📊 Statistik"])
 
-    # --- TAB 1: SUCHE ---
+       # --- TAB 1: SUCHE ---
     with tab_search:
         st.subheader("Wissensbasis durchsuchen")
+
+        # --- NEU: SCOPE FILTER (Investigativ vs. Gedächtnis) ---
+        with st.expander("🔍 Such-Fokus (Scope)", expanded=True):
+            search_mode = st.radio(
+                "Modus:",
+                ["🎯 Investigativ (Nur ausgewählte Quellen)", "🧠 Gedächtnis (Alles durchsuchen)"],
+                index=0,
+                horizontal=True,
+                help="Investigativ: Wähle spezifische Chats aus, um 'Lärm' zu vermeiden.\nGedächtnis: Durchsucht das gesamte Projekt."
+            )
+
+            selected_chat_ids = None
+            if search_mode == "🎯 Investigativ (Nur ausgewählte Quellen)":
+                # Wir laden die Chat-Liste für das Dropdown
+                # all_chats wurde oben schon geladen (Zeile 429)
+                chat_options = {c['title']: c['id'] for c in all_chats}
+
+                selected_titles = st.multiselect(
+                    "Quellen auswählen:",
+                    options=list(chat_options.keys()),
+                    default=[] # Standardmäßig leer, damit man bewusst wählt
+                )
+
+                if selected_titles:
+                    selected_chat_ids = [chat_options[t] for t in selected_titles]
+                else:
+                    st.warning("⚠️ Keine Quellen gewählt! Die Suche wird leer sein.")
+                    selected_chat_ids = [] # Leere Liste = Nichts finden
+        # -------------------------------------------------------
 
         col1, col2 = st.columns([3, 1])
         with col1:
@@ -451,71 +451,59 @@ def render_analysis_page():
         # --- LOGIK: SUCHE AUSFÜHREN ---
         if search_btn and search_query:
             vector_store = FirestoreVectorStore(db)
-            rag_engine = CitationRAG()
+            rag_engine = CitationRAG() # Init ohne Vector Store, da wir Ergebnisse übergeben
 
             with st.spinner(f"1. Suche relevante Fakten..."):
                 try:
                     raw_results = []
                     query_vec = None
 
-                    # --- v46.1 HYBRID SEARCH PATCH START ---
-                    # Spezial-Logik für Zensur-Queries (Lakmustest)
-                    if "zensur" in search_query.lower() or "censorship" in search_query.lower():
-                        st.info("🔍 Hybrid Search aktiviert (Keyword-Boost für Zensur-Thema)")
+                    # --- ADAPTIVE SUCHE (NEU) ---
+                    # 1. Keywords holen
+                    keywords = rag_engine.extract_keywords(search_query)
 
-                        zensur_keywords = [
-                            "systemisch amputiert", 
-                            "Fesseln", 
-                            "Verlierer des Tests", 
-                            "Filter", 
-                            "post-hoc"
-                        ]
+                    # 2. Modus bestimmen (Präzision vs. Konzept)
+                    words = search_query.split()
+                    has_proper_nouns = any(word[0].isupper() for word in words if len(word) > 1 and word.lower() not in ["wie", "was", "wo", "wer"])
 
-                        # Filter bestimmen
-                        target_role = None
-                        if role_filter == "Nur KI (Model)": target_role = "model"
-                        elif role_filter == "Nur Ich (User)": target_role = "user"
-
-                        # Hybrid Search ausführen
-                        raw_results, query_vec = vector_store.hybrid_search(
-                            search_query, 
-                            keywords=zensur_keywords, 
-                            limit=30, 
-                            filter_role=target_role
-                        )
-
+                    if has_proper_nouns:
+                        dynamic_weight = 0.60
+                        st.toast(f"⚖️ Modus: PRÄZISION (Gewicht: {dynamic_weight})")
                     else:
-                        # --- STANDARD LOGIK (Smart Balancing) ---
-                        if role_filter == "Alles":
-                            res_model, q_vec = vector_store.semantic_search(search_query, limit=20, filter_role="model")
-                            res_user, _ = vector_store.semantic_search(search_query, limit=10, filter_role="user")
-                            raw_results = res_model + res_user
-                            query_vec = q_vec
-                        else:
-                            filter_arg = None
-                            if role_filter == "Nur KI (Model)": filter_arg = "model"
-                            elif role_filter == "Nur Ich (User)": filter_arg = "user"
-                            raw_results, query_vec = vector_store.semantic_search(search_query, limit=30, filter_role=filter_arg)
-                    # --- v46.1 HYBRID SEARCH PATCH END ---
+                        dynamic_weight = 0.20
+                        st.toast(f"⚖️ Modus: KONZEPT (Gewicht: {dynamic_weight})")
 
-                    # Scores berechnen
+                    # 3. Suche ausführen (mit Filter & Gewicht)
+                    # Wir nutzen IMMER hybrid_search, da es robuster ist
+                    raw_results, query_vec = vector_store.hybrid_search(
+                        search_query, 
+                        keywords, 
+                        limit=70, 
+                        filter_role=None, # Wir filtern nicht hart nach Rolle, um Kontext zu behalten
+                        allowed_chat_ids=selected_chat_ids, # Der Scope-Filter aus der Sidebar
+                        keyword_weight=dynamic_weight # Die adaptive Intelligenz
+                    )
+                    # -----------------------------
+
+                    # Scores berechnen (für UI)
                     results = calculate_confidence_scores(query_vec, raw_results)
 
                     if not results:
                         st.warning("Keine relevanten Quellen gefunden.")
                         if 'rag_results' in st.session_state: del st.session_state.rag_results
                     else:
-                        # Antwort generieren (Reranking passiert intern in CitationRAG)
+                        # Antwort generieren
                         with st.spinner("2. Generiere Antwort mit Zitationen..."):
-                            # v46.4: Antwort UND sortierte Quellen empfangen
-                            answer, used_sources = rag_engine.generate_answer(search_query, results)
+                            # Wir übergeben die GEFUNDENEN Ergebnisse an die Engine
+                            raw_answer, used_sources = rag_engine.generate_answer(search_query, results)
 
-                            # WICHTIG: Die Ergebnisse im State mit den sortierten überschreiben!
-                            # Damit prüft der Enforcer gegen die GLEICHE Liste wie der Writer.
-                            results = used_sources
+                            # Post-Processing
+                            valid_indices = list(range(1, len(used_sources) + 1))
+                            with st.spinner("3. Veredle Synthese (Cleanup)..."):
+                                answer = post_process_synthesis(raw_answer, valid_indices)
 
                         # Speichern
-                        st.session_state.rag_results = results
+                        st.session_state.rag_results = used_sources
                         st.session_state.rag_answer = answer
                         st.session_state.rag_query = search_query
 
@@ -691,7 +679,7 @@ if 'last_error' not in st.session_state: st.session_state.last_error = None
 st.sidebar.title(" Navigation")
 page = st.sidebar.selectbox(
     "Seite wählen",
-    [" Chat", " Import", " Analyse"],
+    [" Chat", " Import", " Analyse", "🏷️ Labeling", "💾 DB-Export"],
     help="Wähle die gewünschte Funktion aus"
 )
 
@@ -700,6 +688,10 @@ page = st.sidebar.selectbox(
 # ==============================================================================
 if page == " Import":
     render_import_page()
+elif page == "🏷️ Labeling":  # <--- NEU
+    render_bulk_labeling_ui()
+elif page == "💾 DB-Export": # <--- NEU
+    render_bulk_export_ui()
 elif page == " Analyse":
     render_analysis_page()
 elif page == " Chat":  # Korrigiert von "💬 Chat" zu " Chat" um mit selectbox übereinzustimmen
@@ -919,102 +911,4 @@ elif page == " Chat":  # Korrigiert von "💬 Chat" zu " Chat" um mit selectbox 
 # ==========================================
 # ADMIN-BEREICH (Ganz unten in app.py)
 # ==========================================
-# Debug-Zeile: Wenn du das siehst, ist der neue Code aktiv!
-st.sidebar.markdown("---")
-st.sidebar.title("🛠️ Vektor-Admin v2") 
-
-all_chats = get_chat_list()
-
-if not all_chats:
-    st.sidebar.warning("Keine Chats in der DB.")
-else:
-    # Dropdown für Chat-Auswahl
-    chat_options = {f"{c['title']}": c['id'] for c in all_chats}
-    selected_chat_label = st.sidebar.selectbox("1. Chat wählen:", options=list(chat_options.keys()), key="vec_select_v2")
-    target_chat_id = chat_options[selected_chat_label]
-
-    st.sidebar.markdown("---")
-    st.sidebar.caption("2. Metadaten setzen:")
-
-    # --- HIER SIND DIE NEUEN DROPDOWNS ---
-    col_meta1, col_meta2 = st.sidebar.columns(2)
-
-    with col_meta1:
-        # Welches Modell war das? (Erweiterte Liste)
-        model_options = [
-            "LM Arena", "Gemini", "Grok", "Claude", "ChatGPT", 
-            "DeepSeek", "GLM-4", "Kimi", 
-            "Llama", "Mistral", "Qwen", "Andere"
-        ]
-        platform_tag = st.selectbox("Modell:", model_options, key="meta_platform_v2")
-
-    with col_meta2:
-        # Wann war das ca.?
-        date_tag = st.date_input("Datum:", key="meta_date_v2")
-    # -------------------------------------
-
-    st.sidebar.markdown("---")
-    
-    # Wir nutzen einen Callback, um sicherzustellen, dass die Werte da sind
-    def start_learning():
-        st.session_state.trigger_learning = True
-
-    st.sidebar.button("🚀 3. Chat lernen", on_click=start_learning)
-
-    if st.session_state.get('trigger_learning', False):
-        # Reset Trigger sofort, damit es nicht beim nächsten Reload nochmal läuft
-        st.session_state.trigger_learning = False
-
-        # DB Client holen
-        db = get_firestore_client()
-        vector_store = FirestoreVectorStore(db)
-
-        st.sidebar.info(f"Lese '{selected_chat_label}'...")
-
-        try:
-            raw_msgs_ref = db.collection('chats').document(target_chat_id).collection('messages').order_by('timestamp').stream()
-            messages = []
-            for m in raw_msgs_ref:
-                d = m.to_dict()
-                d['id'] = m.id
-                if 'role' not in d and 'author' in d: d['role'] = d['author']
-                messages.append(d)
-
-            if not messages:
-                st.sidebar.warning("Chat ist leer.")
-            else:
-                with st.spinner("Vektorisiere mit Metadaten..."):
-                    # Wir übergeben die Tags an den Store
-                    custom_meta = {
-                        "platform": platform_tag,
-                        "real_date_str": date_tag.strftime("%d.%m.%Y")
-                    }
-
-                    # Aufruf der Funktion in vector_store.py
-                    count, skipped = vector_store.process_and_store_chat(target_chat_id, messages, custom_meta)
-
-                    st.sidebar.success(f"✅ Fertig!")
-                    st.sidebar.markdown(f"- **{count}** Chunks gespeichert")
-                    st.sidebar.markdown(f"- Tag: **{platform_tag}**")
-                    st.sidebar.markdown(f"- Datum: **{date_tag}**")
-
-                    time.sleep(2)
-                    st.rerun()
-
-        except Exception as e:
-            st.sidebar.error(f"Fehler: {e}")
-            print(traceback.format_exc())
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("🚑 Notfall-Diagnose")
-
-    if st.sidebar.button("🧪 Halluzinations-Test (Leere Quellen)"):
-        rag = CitationRAG()
-        with st.spinner("Teste auf Lecks..."):
-            passed, msg = rag.test_empty_sources_hallucination()
-
-            if passed:
-                st.sidebar.success(msg)
-                st.sidebar.info("Das System ist jetzt 'clean'. Es nutzt nur noch echte Quellen.")
-            else:
-                st.sidebar.error(msg)
-                st.sidebar.warning("ACHTUNG: Der System-Prompt ist immer noch kontaminiert!")
+render_vector_admin_dashboard()
