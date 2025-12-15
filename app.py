@@ -1,7 +1,7 @@
-# app_forschung_v46.py - Vollständige Version mit LM-Arena-Support
-APP_VERSION = "v46"  # ← Ändere das bei jedem Update
+# app_forschung_v47.py - Vollständige Version mit LM-Arena-Support
+APP_VERSION = "v47"  # ← Ändere das bei jedem Update
 print("=" * 80)
-print("🚀 STARTUP: app_forschung_v46.py lädt...")
+print("🚀 STARTUP: app_forschung_v47.py lädt...")
 print("=" * 80)
 
 import os
@@ -47,7 +47,7 @@ from modules.confidence_scoring import calculate_confidence_scores, get_color_fo
 from modules.export import generate_markdown, generate_json, generate_excel
 from modules.bulk_export import render_bulk_export_ui
 
-# CACHE-BUSTER: 2025-12-05 19:00 - Gemini Collector Fix
+# CACHE-BUSTER: 2025-12-15 21:00 - Gemini Collector Fix
 
 # Lade Umgebungsvariablen aus der .env-Datei (nur für lokale Entwicklung)
 load_dotenv(override=False)
@@ -103,7 +103,7 @@ if DEBUG_MODE:
 # 1. KONFIGURATION
 # ==============================================================================
 st.set_page_config(
-    page_title="Forschungs-Cockpit v46",
+    page_title="Forschungs-Cockpit v47",
     page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded"
