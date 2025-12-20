@@ -66,13 +66,23 @@ def generate_json(query: str, answer: str, results: List[Dict]) -> str:
 
     # Hilfsfunktion: Konvertiert Firestore-Zeitstempel in Strings
     def json_serial(obj):
-        """JSON serializer for objects not serializable by default json code"""
-        # Prüfen, ob das Objekt eine isoformat Methode hat (wie datetime)
-        if hasattr(obj, 'isoformat'):
-            return obj.isoformat()
-        # Fallback: Einfach als String zurückgeben
-        return str(obj)
-
+         """JSON serializer for objects not serializable by default"""
+         if isinstance(obj, datetime):
+             return obj.isoformat()
+    
+         # FIX: Firestore Vector handling
+         if hasattr(obj, '__class__') and 'Vector' in obj.__class__.__name__:
+             try:
+                 # Try to extract vector values (depends on Firestore version)
+                 if hasattr(obj, 'to_map_value'):
+                     return str(obj.to_map_value())
+                 elif hasattr(obj, '_values'):
+                     return list(obj._values)
+                 else:
+                     return str(obj)  # Fallback
+             except:
+                 return str(obj)
+    
     data = {
         "query": query,
         "generated_answer": answer,
