@@ -1,0 +1,16 @@
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = false
+# WICHTIG: Erhöht die Toleranz für fehlende Heartbeats
+websocketPingTimeout = 120  
+runOnSave = false
+
+[browser]
+# Verhindert, dass der Browser zu aggressiv neu lädt
+gatherUsageStats = false
+serverAddress = "0.0.0.0"
+
+[runner]
+# Magic Fix: Installiert Garbage Collection aggressiver, um RAM-Spikes zu verhindern
+magicEnabled = false
