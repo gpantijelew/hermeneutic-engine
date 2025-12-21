@@ -1,9 +1,10 @@
-# modules/citation_rag.py
 import logging
 import json
 import re
 import os
 import time
+import asyncio
+from functools import partial
 import google.generativeai as genai
 from typing import List, Dict, Any, Tuple
 
@@ -20,6 +21,12 @@ logger = logging.getLogger(__name__)
 
 class CitationRAG:
     def __init__(self, vector_store: FirestoreVectorStore = None, model_name: str = "gemini-2.0-flash-lite-001"):
+        # Falls kein Store übergeben wurde, initialisieren wir ihn (wichtig für Standalone-Tests)
+        if vector_store is None:
+            from google.cloud import firestore
+            db = firestore.Client()
+            vector_store = FirestoreVectorStore(db)
+
         self.vector_store = vector_store
         self.model_name = model_name
         self.classifier = QueryClassifier()
@@ -27,6 +34,29 @@ class CitationRAG:
         api_key = os.environ.get("GEMINI_API_KEY")
         if api_key:
             genai.configure(api_key=api_key)
+
+    # --- NEU (v49): RRF Retrieval Wrapper ---
+    def retrieve_with_rrf(self, query: str, limit: int = 15, chat_id: Any = None) -> List[Dict]:
+        """
+        Nutzt die neue Hybrid-Suche (RRF) aus dem VectorStore.
+        Dient als Einstiegspunkt für die Pipeline.
+        """
+        # FIX: Robustes ID-Handling (String vs. List für Investigativ-Modus)
+        allowed_ids = None
+        if chat_id:
+            if isinstance(chat_id, list):
+                allowed_ids = chat_id  # Es ist schon eine Liste (z.B. ['id1', 'id2'])
+            else:
+                allowed_ids = [chat_id] # Es ist ein einzelner String
+
+        # Ruft die neue hybrid_search Methode in vector_store.py auf
+        results, _ = self.vector_store.hybrid_search(
+            query=query,
+            limit=limit,
+            allowed_chat_ids=allowed_ids
+        )
+        return results
+    # ----------------------------------------
 
     def extract_keywords(self, query: str) -> List[str]:
         clean_query = query.replace("-", " ").replace("_", " ")
@@ -43,21 +73,30 @@ class CitationRAG:
         text = re.sub(r'\[Quelle:\s*(\d+)\]', r'[\1]', text)
         return text
 
-    def generate_answer(self, query: str, results: List[Dict]) -> Tuple[str, List[Dict]]:
+    def generate_answer(self, query: str, results: List[Dict]) -> Tuple[str, List[Dict], str]:
         """
-        Generiert Antwort basierend auf Ergebnissen (Fusion v47.3: Reranking + Chronologische Speaker-Blöcke).
-        FIX v48: Klassifizierung nach Reranking + Dynamische System-Instruction.
+        Generiert Antwort basierend auf Ergebnissen (Fusion v49: RRF -> Reranking -> Chronologische Speaker-Blöcke).
         """
         if not results:
-            return "Ich habe keine relevanten Informationen in den Dokumenten gefunden.", []
+            return "Ich habe keine relevanten Informationen in den Dokumenten gefunden.", [], "unknown"
 
-        # --- SCHRITT A: Basis-Scoring & Sortierung (Vorgezogen) ---
-        for res in results:
-            base_score = res.get('score', 0.0)
-            kw_boost = res.get('_keyword_boost', 0.0)
-            res['_final_score'] = base_score + kw_boost
+        # --- SCHRITT A: Basis-Scoring & Sortierung ---
+        # UPDATE v49: Wenn RRF aktiv war (erkennbar am Flag), vertrauen wir dem RRF-Ranking
+        is_rrf_result = any(res.get('_rrf_active') for res in results)
 
-        results.sort(key=lambda x: x.get('_final_score', 0), reverse=True)
+        if is_rrf_result:
+            # RRF hat schon sortiert. Wir übernehmen das.
+            for res in results:
+                if '_final_score' not in res:
+                    res['_final_score'] = res.get('score', 0.0) # RRF Score nutzen
+            logger.info("⚡ RRF-Ranking erkannt. Überspringe manuelles Boosting.")
+        else:
+            # Legacy Fallback
+            for res in results:
+                base_score = res.get('score', 0.0)
+                kw_boost = res.get('_keyword_boost', 0.0)
+                res['_final_score'] = base_score + kw_boost
+            results.sort(key=lambda x: x.get('_final_score', 0), reverse=True)
 
         # --- SCHRITT B: Hermeneutic Reranking (Erzeugt top_results) ---
         top_candidates = results[:100]
@@ -70,14 +109,10 @@ class CitationRAG:
             reranker_relaxed = HermeneuticReranker(threshold=0.5)
             top_results, rerank_stats = reranker_relaxed.rerank(query, top_candidates, max_results=60)
 
-        # --- SCHRITT C: Klassifizierung (JETZT erst, da top_results existiert) ---
-        # Wir nutzen top_results für den Kontext der Entscheidung
+        # --- SCHRITT C: Klassifizierung ---
         mode = self.classifier.classify(query, top_results)
-
-        # Logging für Transparenz
         print(f"🧠 RAG Modus: {mode.value.upper()}")
 
-        # Prompt-Auswahl basierend auf Modus
         if mode == QueryType.EXEGESIS:
             system_instruction = EXEGESIS_SYNTHESIS_PROMPT
         else:
@@ -86,19 +121,16 @@ class CitationRAG:
         # --- SCHRITT D: Kontext aufbereiten (Gruppiert nach Speaker) ---
         from collections import defaultdict
 
-        # Gruppiere nach Speaker
         sources_by_speaker = defaultdict(list)
         for i, res in enumerate(top_results):
             meta = res.get('metadata', {})
             speaker = meta.get('model_name') or meta.get('speaker') or 'KI'
-            res['source_id'] = i + 1  # Globale ID behalten
+            res['source_id'] = i + 1
             sources_by_speaker[speaker].append(res)
 
-        # Sortiere jede Speaker-Gruppe chronologisch
         for speaker, sources in sources_by_speaker.items():
             sources.sort(key=lambda x: x.get('metadata', {}).get('date') or '9999-99-99')
 
-        # Baue Kontext-Text
         context_text = ""
         for speaker, sources in sorted(sources_by_speaker.items()):
             context_text += f"\n### {speaker.upper()}\n"
@@ -150,14 +182,12 @@ Jetzt die Analyse:
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                # FIX: Hier nutzen wir jetzt die Variable system_instruction statt der Konstante
                 model = genai.GenerativeModel(
                     model_name="gemini-2.5-pro",
                     system_instruction=system_instruction 
                 )
                 response = model.generate_content(prompt)
                 final_text = self.clean_citation_format(response.text)
-                # Wir geben auch den Modus zurück für das UI
                 return final_text, top_results, mode.value
 
             except Exception as e:
@@ -169,11 +199,11 @@ Jetzt die Analyse:
                         time.sleep(wait_time)
                         continue
                     else:
-                        return f"❌ API-Limit erreicht. Bitte warte 1 Minute.\nDetails: {e}", top_results
+                        return f"❌ API-Limit erreicht. Bitte warte 1 Minute.\nDetails: {e}", top_results, mode.value
                 else:
-                    return f"Fehler bei der Generierung: {e}", top_results
+                    return f"Fehler bei der Generierung: {e}", top_results, mode.value
 
-        return "❌ Maximale Versuche erreicht. API nicht verfügbar.", top_results
+        return "❌ Maximale Versuche erreicht. API nicht verfügbar.", top_results, mode.value
 
     def split_thought_and_speech(self, text: str) -> Tuple[str, str]:
         if not text:
@@ -199,34 +229,23 @@ Jetzt die Analyse:
     def verify_fact_match(self, claim: str, source_text: str, source_meta: Dict) -> Tuple[bool, str]:
         """
         Validiert eine Behauptung mit dem Hermeneutic Enforcer (v48).
-        Ersetzt die alte juristische Logik durch hermeneutische Analyse.
         """
         try:
-            # Lazy Import der neuen Klasse (vermeidet Zirkelbezüge)
             from modules.hermeneutic_enforcer import HermeneuticEnforcer
-
-            # Instanziierung (nutzt intern Gemini Pro wie definiert)
             enforcer = HermeneuticEnforcer()
-
-            # Formatierung für den Enforcer (erwartet Liste von Quellen)
             sources = [{"content": source_text, "metadata": source_meta}]
 
-            # Validierung durchführen
             is_valid, classification, reason = enforcer.validate_claim(
                 claim=claim, 
                 sources=sources
             )
 
-            # Logging für Transparenz im Terminal
             status_icon = "✅" if is_valid else "❌"
             print(f"   {status_icon} [{classification.upper()}] {reason}")
 
-            # Rückgabe im Format (bool, Begründung)
             return is_valid, f"[{classification.upper()}] {reason}"
 
         except Exception as e:
-            # Fallback: Wenn der Enforcer crasht, lassen wir den Prozess nicht sterben.
-            # AI Mandate §2: Datenerhalt. Wir warnen, aber löschen nicht blind.
             print(f"⚠️ Enforcer Error: {e}")
             return True, f"ENFORCER ERROR (Skipped): {e}"
 
@@ -235,3 +254,75 @@ Jetzt die Analyse:
         if "keine" in answer.lower():
             return True, "Bestanden"
         return False, "Halluzination"
+
+    # =========================================================================
+    # NEU in v49.1: Asynchrone Parallel-Verarbeitung für den Enforcer
+    # =========================================================================
+
+    async def verify_facts_parallel(self, sentences: List[str], results: List[Dict], progress_callback=None) -> List[Dict]:
+        """
+        Führt den Faktencheck parallel durch (Asyncio + ThreadPool).
+        Reduziert die Wartezeit von Minuten auf Sekunden.
+        """
+        # Semaphore: Begrenzt gleichzeitige API-Calls auf 5 (Konservativ für Rate Limits)
+        # Wir wollen nicht ins 429 Limit laufen.
+        sem = asyncio.Semaphore(5) 
+
+        verified_logs = []
+        total = len(sentences)
+        completed = 0
+
+        async def _bounded_check(sent):
+            nonlocal completed
+            async with sem:
+                # Wir wrappen den synchronen Call in einen Thread
+                loop = asyncio.get_running_loop()
+
+                # Extrahiere Zitat-IDs [1], [2]...
+                matches = re.findall(r'\[(\d+)\]', sent)
+                if not matches:
+                    return None # Satz ohne Zitat überspringen
+
+                # Wir prüfen nur das erste Zitat pro Satz für Speed (oder alle? Hier: Erstes)
+                # Grigori-Modus: Wir prüfen ALLE im Satz genannten Quellen.
+                results_for_sentence = []
+
+                for m in matches:
+                    idx = int(m) - 1
+                    if 0 <= idx < len(results):
+                        source_content = results[idx].get('content', '')
+                        source_meta = results[idx].get('metadata', {})
+
+                        # Der eigentliche synchrone Call wird in einen Thread ausgelagert
+                        # damit er den Event Loop nicht blockiert
+                        is_valid, reason = await loop.run_in_executor(
+                            None, 
+                            partial(self.verify_fact_match, sent, source_content, source_meta)
+                        )
+
+                        results_for_sentence.append({
+                            'sentence': sent,
+                            'source_id': m,
+                            'valid': is_valid,
+                            'reason': reason
+                        })
+
+                completed += 1
+                if progress_callback:
+                    progress_callback(completed / total)
+
+                return results_for_sentence
+
+        # Erstelle Tasks für alle Sätze
+        tasks = [_bounded_check(sent) for sent in sentences]
+
+        # Führe alle parallel aus
+        all_results = await asyncio.gather(*tasks)
+
+        # Flatten list of lists
+        flat_log = []
+        for res_list in all_results:
+            if res_list:
+                flat_log.extend(res_list)
+
+        return flat_log

@@ -1,5 +1,5 @@
-# app_forschung_v48.py - Gerettet von Claude (Gemini 3 Sidebar-Disaster Fix)
-APP_VERSION = "v48"  # v47 + v48-Feature (Exegese/Diskurs-Modi)
+# app_forschung_v49.py - Gerettet von Claude (Gemini 3 Sidebar-Disaster Fix)
+APP_VERSION = "v49"  # v47 + v48-Feature (Exegese/Diskurs-Modi)
 print("=" * 80)
 print(f"🚀 STARTUP: app_forschung_{APP_VERSION}.py lädt...")
 print("=" * 80)
@@ -473,41 +473,62 @@ def render_analysis_page():
                     st.success("✅ Struktur-Check bestanden: Alle Zitate sind gültig.")
                 
                 if st.button("🕵️‍♂️ Tiefenprüfung starten (Faktencheck)"):
-                    with st.spinner("Der Enforcer prüft die Fakten..."):
-                        import re
+                    import asyncio
+
+                    # Container für Progress Bar
+                    progress_bar = st.progress(0, text="Starte Enforcer Engine...")
+                    status_text = st.empty()
+
+                    # Callback für die Progress Bar
+                    def update_progress(p):
+                        progress_bar.progress(p, text=f"Prüfe Fakten... {int(p*100)}%")
+
+                    # Async Runner
+                    async def run_deep_check():
                         sentences = re.split(r'(?<=[.!?])\s+', answer)
-                        issues_found = 0
-                        checked_count = 0
-                        deep_check_log = []
-                        
-                        for sent in sentences:
-                            matches = re.findall(r'\[(\d+)\]', sent)
-                            if matches:
-                                for m in matches:
-                                    idx = int(m) - 1
-                                    if 0 <= idx < len(results):
-                                        checked_count += 1
-                                        source_content = results[idx].get('content', '')
-                                        source_meta = results[idx].get('metadata', {})
-                                        is_valid, reason = rag_engine.verify_fact_match(sent, source_content, source_meta)
-                                        log_entry = {'sentence': sent[:60], 'source_id': m, 'valid': is_valid, 'reason': reason}
-                                        deep_check_log.append(log_entry)
-                                        
-                                        if is_valid:
-                                            st.markdown(f"✅ **Verifiziert:** *\"{sent[:50]}...\"* -> Quelle [{m}]")
-                                        else:
-                                            st.error(f"❌ **Diskrepanz:** *\"{sent}\"*")
-                                            st.markdown(f"Grund: {reason}")
-                                            st.markdown(f"Quelle [{m}]: _{source_content[:100]}..._")
-                                            issues_found += 1
-                        
+                        # Filtere leere Sätze
+                        sentences = [s for s in sentences if s.strip()]
+
+                        if not sentences:
+                            return []
+
+                        return await rag_engine.verify_facts_parallel(
+                            sentences, 
+                            results, 
+                            progress_callback=update_progress
+                        )
+
+                    with st.spinner("Der Enforcer prüft parallel (v49.1 Speedup)..."):
+                        # Führe Async Code im Streamlit Sync Context aus
+                        deep_check_log = asyncio.run(run_deep_check())
+
                         st.session_state.verification_log['deep_check'] = deep_check_log
-                        
+
+                        # Auswertung anzeigen
+                        issues_found = 0
+                        checked_count = len(deep_check_log)
+
+                        for entry in deep_check_log:
+                            sent = entry['sentence']
+                            m = entry['source_id']
+                            is_valid = entry['valid']
+                            reason = entry['reason']
+
+                            if is_valid:
+                                st.markdown(f"✅ **Verifiziert:** *\"{sent[:50]}...\"* -> Quelle [{m}]")
+                            else:
+                                st.error(f"❌ **Diskrepanz:** *\"{sent}\"*")
+                                st.markdown(f"Grund: {reason}")
+                                issues_found += 1
+
+                        progress_bar.empty()
+                        status_text.empty()
+
                         if checked_count == 0:
-                            st.warning("Keine Sätze mit Zitationen gefunden.")
+                            st.warning("Keine prüfbaren Zitate gefunden.")
                         elif issues_found == 0:
                             st.balloons()
-                            st.success(f"🎉 Perfekt! {checked_count} Zitate geprüft.")
+                            st.success(f"🎉 Perfekt! {checked_count} Fakten erfolgreich verifiziert.")
             
             st.markdown("---")
             st.markdown("### 📚 Verwendete Quellen (Beweise)")

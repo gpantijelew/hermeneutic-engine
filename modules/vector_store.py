@@ -10,16 +10,28 @@ from google.cloud import firestore
 from google.cloud.firestore_v1.vector import Vector
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
 
-# --- NEU: Pre-Processing Import ---
-# Falls das Modul noch nicht existiert, fangen wir den Fehler ab, 
-# damit die App nicht crasht, bevor du die Datei erstellt hast.
+# --- NEU (v49): BM25 für RRF ---
+try:
+    from rank_bm25 import BM25Okapi
+    BM25_AVAILABLE = True
+except ImportError:
+    BM25_AVAILABLE = False
+    logging.warning("⚠️ rank-bm25 nicht installiert. RRF läuft im Fallback-Modus.")
+
+# Globaler Cache für den BM25 Index (verhindert Rebuild bei jedem Request)
+_BM25_INDEX = None
+_BM25_DOC_MAP = None # Mapping von Index-ID zu Firestore-Dokumenten
+_BM25_LAST_UPDATE = 0
+# -------------------------------
+
+# --- Pre-Processing Import ---
 try:
     from modules.preprocessing.chunk_classifier import ChunkClassifier
 except ImportError:
     ChunkClassifier = None
     logging.warning("⚠️ ChunkClassifier konnte nicht importiert werden. Pre-Processing inaktiv.")
 
-# --- NEU: Metadata Extractors ---
+# --- Metadata Extractors ---
 from modules.utils.date_extractor import extract_date_from_chat_title
 from modules.utils.version_extractor import extract_version_from_chat_title
 # --------------------------------
@@ -32,6 +44,7 @@ logger = logging.getLogger(__name__)
 EMBEDDING_MODEL = "models/text-embedding-004"
 DIMENSIONS = 768
 COLLECTION_NAME = "embeddings"
+RRF_K = 60  # Standard-Konstante für RRF Fusion
 
 # API Key Setup
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
@@ -104,6 +117,11 @@ class FirestoreVectorStore:
 
     def process_and_store_chat(self, chat_id: str, messages: List[Dict], custom_metadata: Dict = None):
         logger.info(f"🔄 Starte Vektorisierung für Chat {chat_id}...")
+
+        # Cache invalidieren, da sich Daten ändern
+        global _BM25_INDEX
+        _BM25_INDEX = None 
+
         self.delete_chat_embeddings(chat_id)
 
         batch = self.db.batch()
@@ -113,9 +131,7 @@ class FirestoreVectorStore:
 
         if custom_metadata is None: custom_metadata = {}
 
-        # --- NEU: Classifier initialisieren ---
         classifier = ChunkClassifier() if ChunkClassifier else None
-        # --------------------------------------
 
         for msg in messages:
             content = msg.get('content', '')
@@ -135,14 +151,10 @@ class FirestoreVectorStore:
                 doc_id = f"{chat_id}_{msg_id}_{i}"
                 doc_ref = self.db.collection(COLLECTION_NAME).document(doc_id)
 
-                # Basis-Metadaten
                 meta = {"role": role, "source_length": len(content)}
                 meta.update(custom_metadata)
 
-                # --- NEU: Automatische Metadaten-Anreicherung (Datum/Version) ---
-                # Extrahiert Infos aus dem Titel, bevor der Content-Classifier läuft
                 chat_title = meta.get('chat_title', '')
-                # Fallback für Speaker, falls noch nicht gesetzt
                 speaker_hint = meta.get('speaker') or meta.get('model') or role
 
                 if chat_title:
@@ -151,12 +163,10 @@ class FirestoreVectorStore:
 
                     if 'version' not in meta or not meta['version']:
                         meta['version'] = extract_version_from_chat_title(chat_title, speaker_hint)
-                # ---------------------------------------------------------------
 
-                # --- NEU: Metadaten anreichern (Classifier) ---
                 if classifier:
                     meta = classifier.process_chunk(chunk_text, meta)
-                # ---------------------------------
+
                 data = {
                     "chat_id": chat_id,
                     "message_id": msg_id,
@@ -186,13 +196,64 @@ class FirestoreVectorStore:
         docs = self.db.collection(COLLECTION_NAME).where("chat_id", "==", chat_id).stream()
         for doc in docs: doc.reference.delete()
 
-    def semantic_search(self, query: str, limit: int = 10, filter_role: str = None, allowed_chat_ids: List[str] = None) -> List[Dict]:
+        # Cache invalidieren
+        global _BM25_INDEX
+        _BM25_INDEX = None
+
+    # --- v49: BM25 INDEX BUILDER ---
+    def _ensure_bm25_index(self):
+        """
+        Baut den BM25 Index im Speicher auf, falls er noch nicht existiert.
+        Holt nur 'content' und 'metadata' aus Firestore (effizient).
+        """
+        global _BM25_INDEX, _BM25_DOC_MAP
+
+        if _BM25_INDEX is not None:
+            return # Index ist bereits heiß
+
+        if not BM25_AVAILABLE:
+            return
+
+        logger.info("🏗️ Baue BM25 Index auf (Initial Load)...")
+        start_time = time.time()
+
+        # Projektion: Wir laden nur content und metadata, keine Vektoren (spart Bandbreite)
+        docs = self.db.collection(COLLECTION_NAME).select(['content', 'metadata', 'chat_id']).stream()
+
+        corpus = []
+        doc_map = {}
+
+        count = 0
+        for doc in docs:
+            data = doc.to_dict()
+            content = data.get('content', "")
+
+            # Einfacher Tokenizer (lowercase + split)
+            # Für v50 könnte man hier Spacy/NLTK nutzen
+            tokens = content.lower().split()
+            corpus.append(tokens)
+
+            # Wir speichern das ganze Doc-Objekt im RAM-Cache für schnellen Zugriff
+            # Das vermeidet einen zweiten DB-Call beim Retrieval
+            data['vector_doc_id'] = doc.id
+            doc_map[count] = data
+            count += 1
+
+        if corpus:
+            _BM25_INDEX = BM25Okapi(corpus)
+            _BM25_DOC_MAP = doc_map
+            logger.info(f"✅ BM25 Index gebaut: {count} Dokumente in {time.time() - start_time:.2f}s")
+        else:
+            logger.warning("⚠️ Keine Dokumente für BM25 gefunden.")
+
+    def _tokenize(self, text: str) -> List[str]:
+        return text.lower().split()
+
+    def semantic_search(self, query: str, limit: int = 10, filter_role: str = None, allowed_chat_ids: List[str] = None) -> Tuple[List[Dict], List[float]]:
         query_vector = self._get_embedding(query)
         if not query_vector: return [], None
 
         collection_ref = self.db.collection(COLLECTION_NAME)
-
-        # Limit cap bei 1000 (Firestore Hard Limit) - BEIBEHALTEN!
         raw_limit = limit * 20 if (filter_role or allowed_chat_ids) else limit * 2
         fetch_limit = min(raw_limit, 1000)
 
@@ -214,31 +275,35 @@ class FirestoreVectorStore:
 
             meta = data.get('metadata', {})
 
-            # --- NEU: On-the-fly Metadaten-Reparatur für v47.3 ---
-            # Sorgt dafür, dass alte Chunks sofort Datum/Version haben
+            # On-the-fly Metadaten-Reparatur
             if 'chat_title' in meta:
                 changed = False
                 if not meta.get('date'):
                     meta['date'] = extract_date_from_chat_title(meta['chat_title'])
                     changed = True
-
                 if not meta.get('version'):
                     spk = meta.get('model_name') or meta.get('speaker') or meta.get('role')
                     meta['version'] = extract_version_from_chat_title(meta['chat_title'], spk)
                     changed = True
+                if changed: data['metadata'] = meta
 
-                # Update für die aktuelle Anzeige (nicht DB-Write)
-                if changed:
-                    data['metadata'] = meta
-            # -----------------------------------------------------
+            # --- FIX: Intelligenter Rollen-Filter ---
+            role = meta.get('role', 'unknown').lower()
 
-            role = meta.get('role', 'unknown')            
+            if filter_role:
+                f_role = filter_role.lower()
 
+                # Mapping für Synonyme
+                is_model_search = f_role in ["model", "assistant", "ai", "ki"]
+                is_model_content = role in ["model", "assistant", "ai", "ki"]
 
-            role = meta.get('role', 'unknown')
-            if filter_role and filter_role.lower() != role.lower(): continue
-
-            # Embedding umwandeln (Fix für 0.0% Relevanz) - BEIBEHALTEN!
+                # Wenn nach Model gesucht wird, akzeptieren wir alle Model-Varianten
+                if is_model_search and is_model_content:
+                    pass # Match!
+                # Sonst strikter Vergleich
+                elif f_role != role:
+                    continue
+            # ----------------------------------------
             if 'embedding' in data:
                 vec_obj = data['embedding']
                 try:
@@ -247,39 +312,94 @@ class FirestoreVectorStore:
                     data['embedding_vector'] = vec_obj
 
             data['vector_doc_id'] = doc.id
-            cleaned_results.append(data)
 
+            # Score normalisieren (Firestore gibt Distance, wir wollen Similarity?)
+            # Firestore Cosine Distance: 0 = gleich, 2 = gegenteil.
+            # Wir konvertieren nicht explizit, da RRF nur den RANK braucht.
+
+            cleaned_results.append(data)
             if len(cleaned_results) >= limit * 3: break
 
-        print(f"✅ Nach Filterung: {len(cleaned_results)} Treffer übrig.")
+        print(f"✅ Vektor-Suche: {len(cleaned_results)} Treffer.")
         return cleaned_results, query_vector
 
-    def hybrid_search(self, query: str, keywords: List[str], limit: int = 10, filter_role: str = None, allowed_chat_ids: List[str] = None, keyword_weight: float = 0.3) -> Tuple[List[Dict], Any]:
-        # 1. Basis-Suche (Semantic)
-        vector_results, query_vector = self.semantic_search(
-            query, limit=limit, filter_role=filter_role, allowed_chat_ids=allowed_chat_ids
+    # --- v49: RRF HYBRID SEARCH ---
+    def hybrid_search_rrf(self, query: str, limit: int = 10, filter_role: str = None, allowed_chat_ids: List[str] = None) -> Tuple[List[Dict], Any]:
+        """
+        Führt eine echte Hybrid-Suche durch:
+        1. Vektor-Suche (Semantic)
+        2. BM25-Suche (Keyword)
+        3. Reciprocal Rank Fusion (RRF)
+        """
+        # 1. Vektor-Suche (Hole mehr Kandidaten für bessere Fusion)
+        vector_candidates, query_vector = self.semantic_search(
+            query, limit=limit * 3, filter_role=filter_role, allowed_chat_ids=allowed_chat_ids
         )
 
-        if not vector_results:
-            print("❌ Vektor-Suche lieferte 0 Ergebnisse.")
-            return [], query_vector
+        if not BM25_AVAILABLE:
+            # Fallback auf alte Methode, wenn Library fehlt
+            return vector_candidates[:limit], query_vector
 
-        # 2. Keyword-Boosting (mit Wortgrenzen) - BEIBEHALTEN!
-        print(f"⚖️ Wende Keyword-Boost an (Gewicht: {keyword_weight})...")
+        # 2. BM25 Suche
+        self._ensure_bm25_index()
 
-        for result in vector_results:
-            content = result.get('content', '').lower()
+        bm25_candidates = []
+        if _BM25_INDEX:
+            tokenized_query = self._tokenize(query)
+            # Hole Scores für ALLE Dokumente im Index
+            scores = _BM25_INDEX.get_scores(tokenized_query)
+            # Hole Top N Indizes
+            top_n = _BM25_INDEX.get_top_n(tokenized_query, list(_BM25_DOC_MAP.keys()), n=limit * 3)
 
-            # Nutze Regex mit Wortgrenzen (\b)
-            keyword_matches = sum(
-                1 for kw in keywords
-                if re.search(r'\b' + re.escape(kw.lower()) + r'\b', content)
-            )
+            for idx in top_n:
+                doc_data = _BM25_DOC_MAP[idx]
+                # Filter anwenden (muss auch hier passieren!)
+                if allowed_chat_ids and doc_data.get('chat_id') not in allowed_chat_ids:
+                    continue
 
-            result['_keyword_boost'] = keyword_matches * keyword_weight
-            result['_keyword_matches'] = keyword_matches
+                role = doc_data.get('metadata', {}).get('role', 'unknown')
+                if filter_role and filter_role.lower() != role.lower():
+                    continue
 
-        # 3. Sortieren (Boost + Score)
-        vector_results.sort(key=lambda x: x.get('_keyword_boost', 0) + x.get('score', 0), reverse=True)
+                bm25_candidates.append(doc_data)
 
-        return vector_results[:limit], query_vector
+        print(f"📚 BM25-Suche: {len(bm25_candidates)} Treffer.")
+
+        # 3. RRF Fusion
+        # Wir bauen ein Dictionary: doc_id -> RRF Score
+        rrf_scores = {}
+
+        # Helper für RRF Formel: score = 1 / (k + rank)
+        def add_scores(candidates, weight=1.0):
+            for rank, doc in enumerate(candidates):
+                doc_id = doc.get('vector_doc_id')
+                if not doc_id: continue
+
+                if doc_id not in rrf_scores:
+                    rrf_scores[doc_id] = {"doc": doc, "score": 0.0}
+
+                rrf_scores[doc_id]["score"] += weight * (1 / (RRF_K + rank + 1))
+
+        add_scores(vector_candidates)
+        add_scores(bm25_candidates)
+
+        # Sortieren nach RRF Score
+        sorted_results = sorted(rrf_scores.values(), key=lambda x: x['score'], reverse=True)
+
+        # Top N extrahieren
+        final_results = [item['doc'] for item in sorted_results[:limit]]
+
+        # Debug Info hinzufügen
+        for res in final_results:
+            res['_rrf_active'] = True
+
+        print(f"⚖️ RRF Fusion: {len(final_results)} finale Treffer.")
+        return final_results, query_vector
+
+    # Legacy Wrapper für Kompatibilität
+    def hybrid_search(self, query: str, keywords: List[str] = None, limit: int = 10, filter_role: str = None, allowed_chat_ids: List[str] = None, keyword_weight: float = 0.3) -> Tuple[List[Dict], Any]:
+        """
+        Legacy Methode. Leitet jetzt auf RRF um, ignoriert aber 'keywords' Liste,
+        da BM25 die Keywords selbst aus der Query extrahiert.
+        """
+        return self.hybrid_search_rrf(query, limit, filter_role, allowed_chat_ids)

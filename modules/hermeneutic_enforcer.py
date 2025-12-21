@@ -3,6 +3,7 @@
 import os
 import json
 import re
+import hashlib
 import google.generativeai as genai
 from typing import List, Dict, Tuple
 
@@ -53,6 +54,10 @@ Jetzt validiere die Behauptung:
 """
 
 class HermeneuticEnforcer:
+    # --- FIX: Statischer Cache (überlebt Re-Instanziierung) ---
+    _global_cache = {} 
+    # ----------------------------------------------------------
+
     def __init__(self, model_name: str = "gemini-2.5-pro"):
         # Robustes Laden des API Keys (Google oder Gemini)
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
@@ -76,6 +81,13 @@ class HermeneuticEnforcer:
             generation_config={"temperature": 0.0}
         )
 
+    def _generate_cache_key(self, claim: str, sources: List[Dict]) -> str:
+        """Erzeugt einen eindeutigen Hash für Claim + Quellen."""
+        content_str = claim.strip()
+        for src in sources:
+            content_str += src.get("content", "").strip()
+        return hashlib.md5(content_str.encode('utf-8')).hexdigest()
+
     def _clean_json_response(self, text: str) -> dict:
         try:
             return json.loads(text)
@@ -98,6 +110,14 @@ class HermeneuticEnforcer:
         return {"valid": False, "classification": "error", "reason": "No JSON found"}
 
     def validate_claim(self, claim: str, sources: List[Dict], mode: str = "hermeneutic") -> Tuple[bool, str, str]:
+        # 1. Cache Check (auf Klassen-Ebene!)
+        cache_key = self._generate_cache_key(claim, sources)
+
+        if cache_key in self._global_cache:
+            # print(f"⚡ [CACHE HIT] Enforcer spart API-Call.") # Debug
+            return self._global_cache[cache_key]
+
+        # 2. API Call (wenn nicht im Cache)
         sources_text = ""
         for i, src in enumerate(sources, 1):
             content = src.get("content", "")
@@ -107,8 +127,17 @@ class HermeneuticEnforcer:
 
         try:
             response = self.model.generate_content(prompt)
-            result = self._clean_json_response(response.text)
-            return (result.get("valid", False), result.get("classification", "unknown"), result.get("reason", "No reason provided"))
+            result_json = self._clean_json_response(response.text)
+
+            result = (
+                result_json.get("valid", False),
+                result_json.get("classification", "unknown"),
+                result_json.get("reason", "No reason provided")
+            )
+
+            # 3. Ergebnis cachen (in Klassen-Variable)
+            self._global_cache[cache_key] = result
+            return result
+
         except Exception as e:
-            # Wir geben den Fehler zurück, damit er im Test sichtbar wird
             return False, "error", str(e)
