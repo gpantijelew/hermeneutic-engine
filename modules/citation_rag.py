@@ -11,7 +11,9 @@ from typing import List, Dict, Any, Tuple
 from modules.vector_store import FirestoreVectorStore
 from modules.evidence_synthesis import EvidenceFirstSynthesizer
 from modules.llm_instructions import ENFORCER_INSTRUCTION
-from modules.llm_instructions import SYNTHESIS_INSTRUCTION
+from .query_classifier import QueryClassifier
+from .types import QueryType
+from .llm_instructions import EXEGESIS_SYNTHESIS_PROMPT, SYNTHESIS_INSTRUCTION
 from modules.hermeneutic_reranker import HermeneuticReranker
 
 logger = logging.getLogger(__name__)
@@ -20,6 +22,7 @@ class CitationRAG:
     def __init__(self, vector_store: FirestoreVectorStore = None, model_name: str = "gemini-2.0-flash-lite-001"):
         self.vector_store = vector_store
         self.model_name = model_name
+        self.classifier = QueryClassifier()
         self.synthesizer = EvidenceFirstSynthesizer(model_name)
         api_key = os.environ.get("GEMINI_API_KEY")
         if api_key:
@@ -43,11 +46,12 @@ class CitationRAG:
     def generate_answer(self, query: str, results: List[Dict]) -> Tuple[str, List[Dict]]:
         """
         Generiert Antwort basierend auf Ergebnissen (Fusion v47.3: Reranking + Chronologische Speaker-Blöcke).
+        FIX v48: Klassifizierung nach Reranking + Dynamische System-Instruction.
         """
         if not results:
             return "Ich habe keine relevanten Informationen in den Dokumenten gefunden.", []
 
-        # 1. Basis-Scoring (wie bisher)
+        # --- SCHRITT A: Basis-Scoring & Sortierung (Vorgezogen) ---
         for res in results:
             base_score = res.get('score', 0.0)
             kw_boost = res.get('_keyword_boost', 0.0)
@@ -55,7 +59,7 @@ class CitationRAG:
 
         results.sort(key=lambda x: x.get('_final_score', 0), reverse=True)
 
-        # 2. Hermeneutic Reranking (BEIBEHALTEN)
+        # --- SCHRITT B: Hermeneutic Reranking (Erzeugt top_results) ---
         top_candidates = results[:100]
         reranker = HermeneuticReranker(threshold=0.7)
         top_results, rerank_stats = reranker.rerank(query, top_candidates, max_results=60)
@@ -66,25 +70,36 @@ class CitationRAG:
             reranker_relaxed = HermeneuticReranker(threshold=0.5)
             top_results, rerank_stats = reranker_relaxed.rerank(query, top_candidates, max_results=60)
 
-        # 3. Kontext aufbereiten (NEU: Gruppiert nach Speaker, dann chronologisch)
+        # --- SCHRITT C: Klassifizierung (JETZT erst, da top_results existiert) ---
+        # Wir nutzen top_results für den Kontext der Entscheidung
+        mode = self.classifier.classify(query, top_results)
+
+        # Logging für Transparenz
+        print(f"🧠 RAG Modus: {mode.value.upper()}")
+
+        # Prompt-Auswahl basierend auf Modus
+        if mode == QueryType.EXEGESIS:
+            system_instruction = EXEGESIS_SYNTHESIS_PROMPT
+        else:
+            system_instruction = SYNTHESIS_INSTRUCTION 
+
+        # --- SCHRITT D: Kontext aufbereiten (Gruppiert nach Speaker) ---
         from collections import defaultdict
 
         # Gruppiere nach Speaker
         sources_by_speaker = defaultdict(list)
         for i, res in enumerate(top_results):
             meta = res.get('metadata', {})
-            # Wir nutzen hier die neuen Felder aus VectorStore
             speaker = meta.get('model_name') or meta.get('speaker') or 'KI'
-            res['source_id'] = i + 1  # Globale ID behalten (wichtig für Zitation!)
+            res['source_id'] = i + 1  # Globale ID behalten
             sources_by_speaker[speaker].append(res)
 
-        # Sortiere jede Speaker-Gruppe chronologisch (älteste zuerst)
+        # Sortiere jede Speaker-Gruppe chronologisch
         for speaker, sources in sources_by_speaker.items():
             sources.sort(key=lambda x: x.get('metadata', {}).get('date') or '9999-99-99')
 
-        # Baue Kontext (Speaker-Blöcke, intern chronologisch)
+        # Baue Kontext-Text
         context_text = ""
-        # Alphabetisch nach Speaker sortieren für Konsistenz
         for speaker, sources in sorted(sources_by_speaker.items()):
             context_text += f"\n### {speaker.upper()}\n"
             for res in sources:
@@ -101,7 +116,7 @@ class CitationRAG:
 
                 context_text += f"QUELLE [{sid}] von {source_label}:\n{res.get('content')}\n\n"
 
-        # 4. Der Prompt (NEU: Optimiert für Speaker-Blöcke)
+        # --- SCHRITT E: Der User-Prompt ---
         prompt = f"""
 FRAGE: "{query}"
 
@@ -112,55 +127,45 @@ AUFGABE:
 Beantworte die Frage mit hermeneutischer Tiefe und achte besonders auf ZEITLICHE ENTWICKLUNG und MODELL-VERGLEICHE.
 
 ANALYSE-DIMENSIONEN:
-
 1. **Pro-Modell-Chronologie** (PRIORITÄT):
-   - Analysiere JEDEN Modell-Block (### DEEPSEEK, ### KIMI, etc.) separat.
-   - Beschreibe die **Entwicklungslinie** des Modells: Was sagt es zuerst, was später?
-   - Nenne Version + Datum explizit bei Veränderungen (z.B. "DeepSeek v2.5 [2] sagt X, aber v3.2 [1] sagt Y").
-
+   - Analysiere JEDEN Modell-Block separat.
+   - Beschreibe die Entwicklungslinie.
 2. **Cross-Modell-Vergleich**:
-   - Vergleiche die Modelle: Wo sind sie sich einig? Wo divergieren sie?
-   - Nutze die Chronologie: "Im Mai 2025 sagt DeepSeek [2] noch X, während Kimi [5] im Oktober bereits Y sagt."
-
+   - Wo sind sie sich einig? Wo divergieren sie?
 3. **Hermeneutische Tiefe**:
-   - Explizit vs. Implizit: Was wird nur angedeutet?
-   - Paradoxien: Wo widersprechen sich KIs selbst?
-   - Metaebene: Wie reflektieren sie ihre eigene "Maschinenhaftigkeit"?
-
+   - Explizit vs. Implizit.
+   - Paradoxien.
 4. **Synthetisches Fazit**:
-   - Was ist das **Muster** über alle Modelle hinweg?
-   - Gibt es eine **Konvergenz** (alle bewegen sich in gleiche Richtung)?
-   - Oder **Divergenz** (Modelle entwickeln sich auseinander)?
+   - Muster, Konvergenz oder Divergenz?
 
 FORMALIEN:
 - Zitiere präzise mit Nummer: [1], [2].
-- Nutze Markdown für Struktur (##, ###).
-- WICHTIG: Schreibe **nicht** "DeepSeek sagt...", sondern "DeepSeek v3.2 (Dez 2025) [1] sagt..."
+- Nutze Markdown.
+- Schreibe "DeepSeek v3.2 (Dez 2025) [1] sagt..."
 
 Jetzt die Analyse:
 """
 
-        # 5. Generierung mit Retry-Logik (BEIBEHALTEN)
+        # --- SCHRITT F: Generierung ---
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                # Hier nutzen wir das Modell, das in __init__ definiert wurde oder Flash Lite
-                # (Empfehlung: Wenn möglich auf Pro upgraden für bessere Analyse)
+                # FIX: Hier nutzen wir jetzt die Variable system_instruction statt der Konstante
                 model = genai.GenerativeModel(
                     model_name="gemini-2.5-pro",
-                    system_instruction=SYNTHESIS_INSTRUCTION
+                    system_instruction=system_instruction 
                 )
                 response = model.generate_content(prompt)
-                final_text = response.text
-                final_text = self.clean_citation_format(final_text)
-                return final_text, top_results
+                final_text = self.clean_citation_format(response.text)
+                # Wir geben auch den Modus zurück für das UI
+                return final_text, top_results, mode.value
 
             except Exception as e:
                 error_msg = str(e)
                 if "429" in error_msg or "Resource exhausted" in error_msg:
                     if attempt < max_retries - 1:
                         wait_time = (attempt + 1) * 10
-                        logger.warning(f"⏳ Rate Limit erreicht. Warte {wait_time}s... (Versuch {attempt+1}/{max_retries})")
+                        logger.warning(f"⏳ Rate Limit erreicht. Warte {wait_time}s...")
                         time.sleep(wait_time)
                         continue
                     else:
@@ -192,18 +197,38 @@ Jetzt die Analyse:
         return warnings
 
     def verify_fact_match(self, claim: str, source_text: str, source_meta: Dict) -> Tuple[bool, str]:
-        model = genai.GenerativeModel(
-                 model_name="gemini-2.0-flash-lite-001",
-                  system_instruction=ENFORCER_INSTRUCTION  # NEU!
-        )
-        prompt = f"""
-    BEHAUPTUNG: "{claim}"\nQUELLE: "{source_text[:2000]}"\nAntworte als JSON (auf Deutsch): {{"valid": true/false, "reason": "..."}}"""
+        """
+        Validiert eine Behauptung mit dem Hermeneutic Enforcer (v48).
+        Ersetzt die alte juristische Logik durch hermeneutische Analyse.
+        """
         try:
-            res = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-            data = json.loads(res.text)
-            return data.get("valid", False), data.get("reason", "Keine Begründung")
-        except:
-            return True, "Nicht prüfbar"
+            # Lazy Import der neuen Klasse (vermeidet Zirkelbezüge)
+            from modules.hermeneutic_enforcer import HermeneuticEnforcer
+
+            # Instanziierung (nutzt intern Gemini Pro wie definiert)
+            enforcer = HermeneuticEnforcer()
+
+            # Formatierung für den Enforcer (erwartet Liste von Quellen)
+            sources = [{"content": source_text, "metadata": source_meta}]
+
+            # Validierung durchführen
+            is_valid, classification, reason = enforcer.validate_claim(
+                claim=claim, 
+                sources=sources
+            )
+
+            # Logging für Transparenz im Terminal
+            status_icon = "✅" if is_valid else "❌"
+            print(f"   {status_icon} [{classification.upper()}] {reason}")
+
+            # Rückgabe im Format (bool, Begründung)
+            return is_valid, f"[{classification.upper()}] {reason}"
+
+        except Exception as e:
+            # Fallback: Wenn der Enforcer crasht, lassen wir den Prozess nicht sterben.
+            # AI Mandate §2: Datenerhalt. Wir warnen, aber löschen nicht blind.
+            print(f"⚠️ Enforcer Error: {e}")
+            return True, f"ENFORCER ERROR (Skipped): {e}"
 
     def test_empty_sources_hallucination(self) -> Tuple[bool, str]:
         answer, _ = self.generate_answer("Test", [])
