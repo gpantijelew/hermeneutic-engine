@@ -35,12 +35,53 @@ class CitationRAG:
         if api_key:
             genai.configure(api_key=api_key)
 
+    # --- NEU (v49.1): Polyglot Query Expansion ---
+    def expand_query_multilingual(self, query: str) -> str:
+        """
+        Erweitert die Suchanfrage um mehrsprachige Keywords (DE, EN, RU, FR),
+        um die BM25-Suche in polyglotten Datenbanken zu verbessern.
+        """
+        try:
+            # Wir nutzen das schnelle Flash-Modell für minimale Latenz (ca. 0.5s)
+            model = genai.GenerativeModel("gemini-2.0-flash-lite-001")
+
+            prompt = f"""
+            Du bist ein Such-Optimierer für eine Vektor-Datenbank.
+
+            USER QUERY: "{query}"
+
+            AUFGABE:
+            Generiere 3-5 relevante Suchbegriffe oder Synonyme in ENGLISCH, DEUTSCH und RUSSISCH, die den Kern der Frage treffen.
+            Konzentriere dich auf Fachbegriffe (z.B. "Zirkelschluss" -> "circular reasoning", "tautology").
+
+            OUTPUT FORMAT:
+            Nur die Begriffe, getrennt durch Leerzeichen. Keine Erklärungen.
+            """
+
+            # Kurzer Timeout, damit die Suche nicht hängt
+            response = model.generate_content(prompt, request_options={'timeout': 5})
+            expanded_terms = response.text.strip()
+
+            # Logging für Debugging
+            logger.info(f"🌍 Polyglot Expansion: '{query}' -> +[{expanded_terms}]")
+
+            # Wir hängen die neuen Begriffe an die Original-Query an
+            return f"{query} {expanded_terms}"
+
+        except Exception as e:
+            logger.warning(f"Query Expansion failed (Fallback to original): {e}")
+            return query 
+
     # --- NEU (v49): RRF Retrieval Wrapper ---
     def retrieve_with_rrf(self, query: str, limit: int = 15, chat_id: Any = None) -> List[Dict]:
         """
         Nutzt die neue Hybrid-Suche (RRF) aus dem VectorStore.
         Dient als Einstiegspunkt für die Pipeline.
         """
+        # 1. Query Expansion (NEU v49.1)
+        # Wir erweitern die Query für das Retrieval, damit BM25 auch englische/russische Texte findet
+        expanded_query = self.expand_query_multilingual(query)
+
         # FIX: Robustes ID-Handling (String vs. List für Investigativ-Modus)
         allowed_ids = None
         if chat_id:
@@ -50,8 +91,9 @@ class CitationRAG:
                 allowed_ids = [chat_id] # Es ist ein einzelner String
 
         # Ruft die neue hybrid_search Methode in vector_store.py auf
+        # WICHTIG: Wir nutzen hier die expanded_query!
         results, _ = self.vector_store.hybrid_search(
-            query=query,
+            query=expanded_query,
             limit=limit,
             allowed_chat_ids=allowed_ids
         )
