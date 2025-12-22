@@ -8,15 +8,15 @@ logger = logging.getLogger(__name__)
 def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> str:
     """
     Hauptfunktion: Bereinigt die Synthese nach der LLM-Generierung.
-    1. Entfernt Fragmente (< 10 Wörter).
+    1. Entfernt Fragmente (< 7 Wörter).
     2. Konvertiert Fragen in Aussagen (Batch-Processing).
     3. Entfernt ungültige Zitationen (die nicht in used_source_ids sind).
+    4. v49.1 FIX: Robust gegen Placeholder-Fehler.
     """
     if not synthesis_text:
         return ""
 
     lines = synthesis_text.split('\n')
-    cleaned_lines = []
     questions_to_convert = []
 
     # Set für schnelleren Lookup
@@ -38,9 +38,12 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
         # Citation-Check & Cleanup
         # Wir entfernen Citations, die NICHT in der valid_ids Liste sind
         def validate_match(match):
-            cit_id = int(match.group(1))
-            if cit_id in valid_ids:
-                return f"[{cit_id}]"
+            try:
+                cit_id = int(match.group(1))
+                if cit_id in valid_ids:
+                    return f"[{cit_id}]"
+            except ValueError:
+                pass
             return "" # Ungültige Citation entfernen
 
         line_validated = re.sub(r'\[(\d+)\]', validate_match, stripped_line)
@@ -50,13 +53,17 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
         # Ignoriere Aufzählungszeichen für den Count
         text_only_clean = re.sub(r'^[\-\*\d\.]+\s*', '', text_only)
 
-        if len(text_only_clean.split()) < 7: # Toleranz: 7 Wörter Minimum
-            logger.warning(f"Fragment entfernt: '{text_only_clean}'")
-            continue
+        # Toleranz: 7 Wörter Minimum für echte Sätze
+        if len(text_only_clean.split()) < 7: 
+            # Ausnahme: Kurze Überschriften oder Listenpunkte die wichtig aussehen
+            if not text_only_clean.endswith(':'):
+                logger.warning(f"Fragment entfernt: '{text_only_clean}'")
+                continue
 
         # Frage-Check
         if text_only.endswith('?'):
             questions_to_convert.append(line_validated)
+            # Wir nutzen einen eindeutigen Marker mit ID
             temp_lines.append(f"__QUESTION_PLACEHOLDER_{len(questions_to_convert)-1}__")
         else:
             temp_lines.append(line_validated)
@@ -66,16 +73,28 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
     if questions_to_convert:
         converted_statements = _batch_convert_questions(questions_to_convert)
 
-    # 3. Zusammenbau
+    # 3. Zusammenbau (FIX v49.1: Robustes Regex statt split)
     final_lines = []
     for line in temp_lines:
-        if line.startswith("__QUESTION_PLACEHOLDER_"):
-            idx = int(line.split('_')[3])
-            if idx < len(converted_statements):
-                final_lines.append(converted_statements[idx])
+        if "__QUESTION_PLACEHOLDER_" in line:
+            # Sicherer Regex-Zugriff auf die ID
+            match = re.search(r'__QUESTION_PLACEHOLDER_(\d+)__', line)
+            if match:
+                try:
+                    idx = int(match.group(1))
+                    if 0 <= idx < len(converted_statements):
+                        final_lines.append(converted_statements[idx])
+                    elif 0 <= idx < len(questions_to_convert):
+                        # Fallback auf Originalfrage
+                        final_lines.append(questions_to_convert[idx])
+                    else:
+                        # Index out of bounds (sollte nicht passieren)
+                        continue
+                except ValueError:
+                    continue
             else:
-                # Fallback, falls Konvertierung fehlschlug
-                final_lines.append(questions_to_convert[idx])
+                # Falls der Placeholder kaputt ist, Zeile ignorieren
+                continue
         else:
             final_lines.append(line)
 
@@ -83,12 +102,18 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
     result = '\n'.join(final_lines)
     result = re.sub(r'\n{3,}', '\n\n', result)
 
+    # Letzter Cleanup: "Thinking"-Blöcke entfernen, falls sie durchgerutscht sind
+    result = re.sub(r'> \*\*Thinking:\*\*.*?(?=\n\n|\Z)', '', result, flags=re.DOTALL)
+
     return result.strip()
 
 def _batch_convert_questions(questions: List[str]) -> List[str]:
     """
     Konvertiert eine Liste von Fragen in Aussagen via LLM (Flash Model).
     """
+    if not questions:
+        return []
+
     try:
         # Wir nutzen ein schnelles Modell
         model = genai.GenerativeModel("gemini-2.0-flash-lite-001")
@@ -99,7 +124,8 @@ def _batch_convert_questions(questions: List[str]) -> List[str]:
 
         prompt += "\nAntwortformat:\nAussage 0: ...\nAussage 1: ...\n(usw.)"
 
-        response = model.generate_content(prompt)
+        # Timeout hinzufügen, damit es nicht hängt
+        response = model.generate_content(prompt, request_options={'timeout': 30})
         text = response.text
 
         statements = []
