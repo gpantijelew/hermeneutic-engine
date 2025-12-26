@@ -1,12 +1,13 @@
 import json
 import logging
 import google.generativeai as genai
+from modules.config import MODEL_FACT_EXTRACTION
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
 class EvidenceFirstSynthesizer:
-    def __init__(self, model_name="gemini-2.0-flash-lite-001"):
+    def __init__(self, model_name=MODEL_FACT_EXTRACTION):
         self.model_name = model_name
         # API Key wird global konfiguriert, wir verlassen uns darauf
 

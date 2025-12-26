@@ -1,3 +1,34 @@
+# Environment & Secrets
 .env
+*.env
+.streamlit/secrets.toml
+.secrets/  # ← NEU: Service Account Keys
+
+# Service Account Keys (Google Cloud)
+*-????????.json
+*-????????????.json
 *.json
 !requirements.json
+comparative-studies-ai-models-*.json  # ← Explizit
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Test/Debug Artifacts
+debug_*.py
+check_*.py
+*_old.py
+*.html
+!FIBEL*.html  # Falls du die Fibel als HTML versionierst
+grok_chat*.json
+*.txt
+!requirements.txt
+!struktur.txt
+!README.md
+
+# IDE
+.vscode/
+.idea/

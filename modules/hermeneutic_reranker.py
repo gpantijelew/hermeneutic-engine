@@ -16,6 +16,7 @@ Basierend auf:
 import logging
 import google.generativeai as genai
 from typing import List, Dict, Tuple
+from modules.config import MODEL_RERANKER
 from modules.llm_instructions import RERANKER_INSTRUCTION
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ class HermeneuticReranker:
              OHNE False Negatives (wichtige Kontext-Chunks bleiben erhalten)
     """
     
-    def __init__(self, model_name: str = "gemini-2.0-flash-lite-001", threshold: float = 0.7):
+    def __init__(self, model_name: str = MODEL_RERANKER, threshold: float = 0.7):
         self.model_name = model_name
         self.threshold = threshold
         self.model = genai.GenerativeModel(

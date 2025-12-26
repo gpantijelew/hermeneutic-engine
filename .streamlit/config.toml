@@ -5,6 +5,12 @@ enableXsrfProtection = false
 # WICHTIG: Erhöht die Toleranz für fehlende Heartbeats
 websocketPingTimeout = 120  
 runOnSave = false
+# Zeige 'localhost' statt '0.0.0.0' im Terminal
+address = "localhost"
+port = 8501
+
+# Optional: Öffne Browser automatisch
+headless = false
 
 [browser]
 # Verhindert, dass der Browser zu aggressiv neu lädt

@@ -6,6 +6,7 @@ import re
 import hashlib
 import google.generativeai as genai
 from typing import List, Dict, Tuple
+from modules.config import MODEL_ENFORCER
 
 # SYSTEM PROMPT (v48.1 - Mit Zitat-Schutz)
 HERMENEUTIC_PROMPT_TEMPLATE = """
@@ -58,7 +59,7 @@ class HermeneuticEnforcer:
     _global_cache = {} 
     # ----------------------------------------------------------
 
-    def __init__(self, model_name: str = "gemini-2.5-pro"):
+    def __init__(self, model_name: str = MODEL_ENFORCER):
         # Robustes Laden des API Keys (Google oder Gemini)
         api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
 

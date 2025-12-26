@@ -10,6 +10,7 @@ import os
 import traceback
 import logging
 import google.generativeai as genai
+from modules.config import MODEL_TITLE_GEN, SERVICE_ACCOUNT_KEY_PATH
 
 # Logging konfigurieren
 logger = logging.getLogger(__name__)
@@ -25,23 +26,24 @@ def get_firestore_client():
     """Initialisiert Firestore-Client mit intelligenter Credential-Erkennung."""
     try:
         # Prüfe, ob ein lokaler Master-Key existiert
-        master_key_path = "comparative-studies-ai-models-1bf59eb77077.json" 
+        master_key_path = SERVICE_ACCOUNT_KEY_PATH 
 
         if os.path.exists(master_key_path):
+            # Setze Environment Variable für Google Auth
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = master_key_path
-            # Nur loggen, nicht st.write nutzen, um UI nicht zu spammen
-            logger.info("Lokal: Verwende Master Service-Account-Key")
+            logger.info(f"Lokal: Verwende Service Account Key: {master_key_path}")
         else:
-            logger.info("Cloud: Verwende Application Default Credentials")
-
+            logger.warning(f"⚠️ Service Account Key nicht gefunden: {master_key_path}")
+            logger.info("Cloud: Versuche Application Default Credentials")
+        
+        # Initialisiere Firestore Client
         db = firestore.Client(project="comparative-studies-ai-models")
         return db
-
+        
     except Exception as e:
         st.error(f"🔥 Firestore-Verbindungsfehler: {e}")
         st.error(f"Traceback: {traceback.format_exc()}")
         return None
-
 # ==============================================================================
 # 2. CHAT-MANAGEMENT (Erstellen, Speichern, Löschen)
 # ==============================================================================
@@ -202,7 +204,7 @@ def generate_and_update_title(chat_id, history):
 
         prompt = f"Fasse den folgenden Gesprächsanfang in einem prägnanten Titel mit maximal 5 Wörtern zusammen. Antworte NUR mit dem Titel. Gespräch:\n---\n{conversation_text}\n---\nTitel:"
 
-        model = genai.GenerativeModel(model_name="gemini-2.0-flash-lite-001") # Nutze das schnelle Modell
+        model = genai.GenerativeModel(model_name=MODEL_TITLE_GEN) # Nutze das schnelle Modell
         title_response = model.generate_content(prompt)
         new_title = title_response.text.strip().replace('"', '')
 
