@@ -2,6 +2,7 @@ import re
 import logging
 import google.generativeai as genai
 from typing import List, Set
+from modules.config import MODEL_QUESTION_CONV
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ def _batch_convert_questions(questions: List[str]) -> List[str]:
 
     try:
         # Wir nutzen ein schnelles Modell
-        model = genai.GenerativeModel("gemini-2.0-flash-lite-001")
+        model = genai.GenerativeModel(MODEL_QUESTION_CONV)
 
         prompt = "Formuliere die folgenden rhetorischen Fragen in neutrale Aussagen um. Behalte alle Quellenangaben [x] exakt bei.\n\n"
         for i, q in enumerate(questions):

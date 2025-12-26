@@ -4,10 +4,11 @@ import logging
 import re
 from typing import List, Dict
 import google.generativeai as genai
+from modules.config import MODEL_FACT_EXTRACTION
 
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = "gemini-2.0-flash-001" # Standard Flash für Präzision
+MODEL_NAME = MODEL_FACT_EXTRACTION  # v49: Upgraded auf Pro für Präzision
 
 class StructuredFactExtractor:
     def __init__(self):

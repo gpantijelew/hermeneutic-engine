@@ -9,10 +9,11 @@ import json
 import logging
 from typing import List, Dict, Tuple
 import google.generativeai as genai
+from modules.config import MODEL_RERANKER
 
 logger = logging.getLogger(__name__)
 
-RERANKER_MODEL = "gemini-2.0-flash-001"
+RERANKER_MODEL = MODEL_RERANKER
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 if GEMINI_API_KEY:

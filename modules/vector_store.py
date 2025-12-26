@@ -6,6 +6,7 @@ import uuid
 import re
 from typing import List, Dict, Optional, Any, Tuple
 import google.generativeai as genai
+from modules.config import EMBEDDING_MODEL, EMBEDDING_DIMENSIONS
 from google.cloud import firestore
 from google.cloud.firestore_v1.vector import Vector
 from google.cloud.firestore_v1.base_vector_query import DistanceMeasure

@@ -1,6 +1,7 @@
 # modules/bulk_labeling.py
 import streamlit as st
 import google.generativeai as genai
+from modules.config import MODEL_BULK_LABELING
 import json
 import os
 import re
@@ -167,7 +168,7 @@ def render_bulk_labeling_ui():
 
 def generate_ai_suggestions(chunks):
     """Nutzt Gemini Flash Lite, um Metadaten zu raten."""
-    model = genai.GenerativeModel("gemini-2.0-flash-lite-001")
+    model = genai.GenerativeModel(MODEL_BULK_LABELING)
 
     # Batching (max 20 für Demo/Speed)
     batch_chunks = chunks[:20] 

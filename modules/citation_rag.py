@@ -7,6 +7,11 @@ import asyncio
 from functools import partial
 import google.generativeai as genai
 from typing import List, Dict, Any, Tuple
+from modules.config import (
+    MODEL_SYNTHESIS,
+    MODEL_QUERY_EXPANSION,
+    MODEL_ENFORCER
+)
 
 # Eigene Module
 from modules.vector_store import FirestoreVectorStore
@@ -20,7 +25,7 @@ from modules.hermeneutic_reranker import HermeneuticReranker
 logger = logging.getLogger(__name__)
 
 class CitationRAG:
-    def __init__(self, vector_store: FirestoreVectorStore = None, model_name: str = "gemini-2.0-flash-lite-001"):
+    def __init__(self, vector_store: FirestoreVectorStore = None, model_name: str = MODEL_SYNTHESIS):
         # Falls kein Store übergeben wurde, initialisieren wir ihn (wichtig für Standalone-Tests)
         if vector_store is None:
             from google.cloud import firestore
@@ -43,7 +48,7 @@ class CitationRAG:
         """
         try:
             # Wir nutzen das schnelle Flash-Modell für minimale Latenz (ca. 0.5s)
-            model = genai.GenerativeModel("gemini-2.0-flash-lite-001")
+            model = genai.GenerativeModel(MODEL_QUERY_EXPANSION)
 
             prompt = f"""
             Du bist ein Such-Optimierer für eine Vektor-Datenbank.
@@ -225,7 +230,7 @@ Jetzt die Analyse:
         for attempt in range(max_retries):
             try:
                 model = genai.GenerativeModel(
-                    model_name="gemini-2.5-pro",
+                    model_name=MODEL_SYNTHESIS,
                     system_instruction=system_instruction 
                 )
                 response = model.generate_content(prompt)

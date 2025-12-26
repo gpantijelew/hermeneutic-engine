@@ -4,6 +4,7 @@ print("=" * 80)
 print(f"🚀 STARTUP: app_forschung_{APP_VERSION}.py lädt...")
 print("=" * 80)
 
+from modules.config import MODEL_CHAT_API
 import os
 import hmac
 from datetime import datetime
@@ -52,7 +53,7 @@ from modules.export import generate_markdown, generate_json, generate_excel
 load_dotenv(override=False)
 
 # TESTZEILE
-st.write(f"🚀 KANARIENVOGEL-TEST: Diese Datei ({APP_VERSION}) wird ausgeführt!")
+st.write(f"🚀 Die ({APP_VERSION}) wird ausgeführt!")
 
 # ==============================================================================
 # AUTHENTIFIZIERUNG (mit st.secrets) - WIEDERHERGESTELLT!
@@ -156,7 +157,7 @@ def send_message_with_rest_api(prompt, history, system_instruction, temperature,
             raise Exception("❌ GEMINI_API_KEY nicht gefunden!")
         
         # MODEL_NAME aus global_settings holen
-        MODEL_NAME = st.session_state.global_settings.get('model_name', "gemini-2.5-pro")
+        MODEL_NAME = st.session_state.global_settings.get('model_name', MODEL_CHAT_API)
         
         # Konvertiere History für REST API
         rest_history = []
