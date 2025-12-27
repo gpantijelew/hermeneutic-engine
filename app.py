@@ -38,7 +38,14 @@ from modules.database import (
 
 # --- NEU: Importer Factory ---
 from modules.importers import get_importer, detect_platform, IMPORTERS
-# -----------------------------
+# === NEU: Config-Validierung (v49.3) ===
+from modules.importers.base import validate_parser_configs
+
+try:
+    validate_parser_configs()
+except ValueError as e:
+    st.error(f"❌ CRITICAL: Parser-Config Fehler: {e}")
+    st.stop()# -----------------------------
 
 from modules.bulk_labeling import render_bulk_labeling_ui  # v47 Feature
 from modules.bulk_export import render_bulk_export_ui      # v47 Feature
@@ -255,26 +262,28 @@ def render_import_page():
     
     # TAB 2: Datei-Upload
     with tab_upload:
-        st.markdown("Unterstützte Formate: `.html`, `.txt`, `.pdf`, `.epub`")
-        
+        # 1. Info aktualisiert
+        st.markdown("Unterstützte Formate: `.html`, `.txt`, `.pdf`, `.epub`, `.fb2`")
+
         parser_mode = st.radio(
             "Modus:", 
             ["🤖 Auto-Detect (empfohlen)", "🎯 Manuell wählen", "🧠 Erzwinge KI-Parsing (Text)"],
             horizontal=True
         )
-        
+
         manual_platform = None
         if parser_mode == "🎯 Manuell wählen":
             platform_options = {k: v().platform_name for k, v in IMPORTERS.items()}
             selected_name = st.selectbox("Plattform:", options=list(platform_options.values()))
             manual_platform = next((k for k, v in platform_options.items() if v == selected_name), None)
-        
+
+        # 2. "fb2" erlaubt
         uploaded_files = st.file_uploader(
             "Dateien wählen:", 
-            type=["html", "htm", "txt", "pdf", "epub"], 
+            type=["html", "htm", "txt", "pdf", "epub", "fb2"], 
             accept_multiple_files=True
         )
-        
+
         if uploaded_files and st.button("🚀 Start Upload", type="primary"):
             for uploaded_file in uploaded_files:
                 file_container = st.container()
@@ -283,7 +292,7 @@ def render_import_page():
                     file_content = uploaded_file
                     if uploaded_file.name.lower().endswith(('.html', '.htm', '.txt')):
                         file_content = uploaded_file.read()
-                    
+
                     platform_key = 'text_fallback'
                     if parser_mode == "🧠 Erzwinge KI-Parsing (Text)":
                         platform_key = 'text_fallback'
@@ -297,6 +306,9 @@ def render_import_page():
                             platform_key = 'pdf'
                         elif filename.endswith('.epub'):
                             platform_key = 'epub'
+                        # 3. FB2-Weiche hinzugefügt
+                        elif filename.endswith('.fb2'):
+                            platform_key = 'fb2'
                         elif filename.endswith('.txt'):
                             platform_key = 'text_fallback'
                             if isinstance(file_content, bytes):
@@ -311,10 +323,10 @@ def render_import_page():
                                 platform_key = 'text_fallback'
                                 if isinstance(file_content, bytes):
                                     file_content = file_content.decode('utf-8', errors='ignore')
-                    
+
                     importer = get_importer(platform_key)
                     messages = importer.parse(file_content, container=file_container)
-                    
+
                     if messages:
                         if len(messages) == 1 and messages[0].get('content') == 'Diagnose Mode - Kein Import':
                             continue

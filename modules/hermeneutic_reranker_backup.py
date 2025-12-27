@@ -1,16 +1,11 @@
 # modules/hermeneutic_reranker.py
 """
-Hermeneutic Reranker: LLM-as-Judge für RAG-Systeme (v49.2 - Essay-Sensitiv).
+Hermeneutic Reranker: LLM-as-Judge für RAG-Systeme (v47.1 - Literatur-Sensitiv).
 
-VERBESSERUNGEN v49.2:
-- Essay-Analyse wird als LITERARY erkannt (war vorher FACTUAL!)
-- Erweiterte Literary-Signals: essay, gattung, stilistik, Autoren-Namen
-- Polyglotte Unterstützung: эссе, essai, ensaio
-
-VERBESSERUNGEN v47.1:
+VERBESSERUNGEN (Option C):
 - Literarische Texte: Original-Zitate SIND relevant (als Beispiele)
-- Analyse-Queries: Auch Kontext-Chunks sind wertvoll
-- Polyglotte Texte: Chunks in Fremdsprachen korrekt bewertet
+- Analyse-Queries: Auch Kontext-Chunks sind wertvoll (nicht nur direkte Antworten)
+- Polyglotte Texte: Chunks in Fremdsprachen werden erkannt und korrekt bewertet
 
 Basierend auf:
 - Grok-Recherche (LLM-as-Judge erreicht 85-92% Genauigkeit)
@@ -21,12 +16,10 @@ Basierend auf:
 import logging
 import google.generativeai as genai
 from typing import List, Dict, Tuple
-
 from modules.config import MODEL_RERANKER
 from modules.llm_instructions import RERANKER_INSTRUCTION
 
 logger = logging.getLogger(__name__)
-
 
 class HermeneuticReranker:
     """
@@ -37,10 +30,6 @@ class HermeneuticReranker:
     2. LLM-Judge bewertet jeden: 0.0 (irrelevant) bis 1.0 (hochrelevant)
     3. Nur Kandidaten ≥ threshold (0.7) passieren
     4. Top 60 gehen zur Synthesis
-    
-    v49.2 VERBESSERUNG:
-    - Essay-Analyse wird als LITERARY erkannt (nicht mehr FACTUAL!)
-    - Erweiterte Trigger: essay, gattung, stilistik, Autoren-Namen
     
     v47.1 VERBESSERUNG:
     - Literatur-sensitiv: Erkennt Original-Zitate als relevant
@@ -63,36 +52,15 @@ class HermeneuticReranker:
         """
         Erkennt Query-Typ für angepasste Bewertung.
         
-        v49.2: Erweiterte Literary-Signals (Essay, Gattung, Autoren)
-        
         Returns:
             "literary" | "analytical" | "factual"
         """
-        # Literary Signals (v49.2: ERWEITERT!)
+        # Literary Signals
         literary_signals = [
-            # Gedichte & Lyrik
             'gedicht', 'übersetzung', 'musikalität', 'rhythmus', 'metapher',
             'poem', 'poetry', 'translation', 'verse', 'stanza',
-            'поэзия', 'стих', 'перевод',
-            'poesia', 'verso', 'tradução',
-            
-            # Essays & Prosa (NEU in v49.2!)
-            'essay', 'essai', 'эссе', 'ensaio',
-            'gattung', 'genre', 'жанр',
-            'literarische analyse', 'literary analysis', 'литературный анализ',
-            'stilistik', 'style', 'стиль',
-            'prosa', 'prose', 'проза',
-            
-            # Literaturwissenschaftliche Begriffe
-            'definition', 'definiert', 'defines',
-            'text', 'texte', 'текст',
-            'autor', 'author', 'автор',
-            
-            # Bekannte Autoren (für literarische Vergleiche)
-            'adorno', 'chesterton', 'valéry', 'valery',
-            'шкловский', 'shklovskii', 'shklovsky',
-            'тынянов', 'tynyanov', 'tynianov',
-            'pessoa', 'celan', 'ayer', 'voltaire'
+            'поэзия', 'стих', 'перевод',  # Russisch
+            'poesia', 'verso', 'tradução'   # Portugiesisch
         ]
         
         # Analytical Signals
@@ -104,7 +72,6 @@ class HermeneuticReranker:
         
         query_lower = query.lower()
         
-        # Priorität: Literary > Analytical > Factual
         if any(sig in query_lower for sig in literary_signals):
             return "literary"
         elif any(sig in query_lower for sig in analytical_signals):
@@ -116,8 +83,7 @@ class HermeneuticReranker:
         """
         Fragt das LLM: "Beantwortet dieser Chunk die Query DIREKT?"
         
-        v49.2: Erweiterte Literary-Prompt für Essay-Analyse
-        v47.1: Query-Type-Awareness für bessere Bewertung
+        v47.1 VERBESSERUNG: Query-Type-Awareness für bessere Bewertung.
         
         Args:
             query: User-Frage
@@ -146,33 +112,29 @@ TEXT-CHUNK (von {speaker}, Chat: "{chat_title}"):
 {chunk_short}
 
 BEWERTUNGS-KONTEXT:
-Diese Frage bezieht sich auf literarische Analyse (Gedichte, Essays, Übersetzungen, Stilistik, Gattungen).
+Diese Frage bezieht sich auf literarische Analyse (Gedichte, Übersetzungen, Stilistik).
 
 WICHTIG - LITERARISCHE CHUNKS RICHTIG BEWERTEN:
-
 1. **Original-Texte SIND relevant** (als Beispiele für Analyse)
-   - Bei "Essay-Definition von Adorno" ist Adornos Original-Text HOCHRELEVANT
+   - Beispiel: Bei "Musikalität von Pessoa" ist der portugiesische Original-Text HOCHRELEVANT
    - Auch wenn er keine Meta-Aussage enthält!
 
-2. **Theoretische Texte SIND relevant** (Essays über Essays!)
-   - "Der Essay als Form" von Adorno ist hochrelevant für "Wie definiert Adorno Essay?"
-   - Auch wenn es ein langer theoretischer Text ist!
+2. **Übersetzungen SIND relevant** (als Vergleichsmaterial)
+   - Deutsche/Englische/Russische Übersetzungen sind ALLE relevant für Vergleiche
+   - Auch wenn sie die Frage nicht "direkt" beantworten
 
 3. **Kontext-Chunks SIND wertvoll**
-   - Ein Chunk mit Adornos Essay-Theorie ist relevant für "Essay-Definition"
+   - Ein Chunk mit "Não sou nada" ist relevant für "Wie ist die Musikalität?"
    - Weil die Synthese daraus Beispiele zitieren kann!
 
-4. **Autoren-Namen MATCHEN**
-   - Wenn Query "Adorno" erwähnt und Chunk von Adorno handelt → HOCHRELEVANT!
-
 BEWERTUNGS-SKALA:
-- 0.9-1.0: Direkte Antwort (Essay-Definition vom genannten Autor)
-- 0.7-0.9: Kontext-Text (theoretischer Text über Essay-Gattung)
-- 0.4-0.7: Tangential relevant (erwähnt Essay, aber wenig Substanz)
+- 0.9-1.0: Original-Text / Übersetzungs-Text (direkt zitierbar als Beispiel)
+- 0.7-0.9: Kontext-Text (liefert Hintergrund für Analyse)
+- 0.4-0.7: Tangential relevant (erwähnt Thema, aber wenig Substanz)
 - 0.0-0.4: Irrelevant (anderes Thema, Meta-Chat, etc.)
 
 FRAGE DICH:
-"Könnte die Synthese aus diesem Chunk eine Essay-Definition ableiten?"
+"Könnte die Synthese aus diesem Chunk ein konkretes Beispiel zitieren?"
 Falls JA → mindestens 0.7!
 
 Bewerte die Relevanz (0.0-1.0):
@@ -189,7 +151,6 @@ BEWERTUNGS-KONTEXT:
 Diese Frage verlangt Vergleich/Analyse (z.B. "Vergleiche X und Y").
 
 WICHTIG - ANALYTISCHE CHUNKS RICHTIG BEWERTEN:
-
 1. **Direkte Analyse-Aussagen** = hochrelevant (0.8-1.0)
    - "X ist besser als Y, weil..."
    - "Die Entwicklung von A zu B zeigt..."
@@ -235,6 +196,7 @@ Bewerte die Relevanz (0.0-1.0):
             score_text = response.text.strip()
             
             # Parse Score (robust gegen verschiedene Formate)
+            # Erwartet: "0.7" oder "0,7" oder "1.  0" (Gemini-Bug) oder "Score: 0.7"
             import re
             
             # Clean Score-Text (entferne Whitespace-Fehler wie "1.  0" → "1.0")
@@ -244,18 +206,18 @@ Bewerte die Relevanz (0.0-1.0):
             match = re.search(r'(\d+[.,]\d+)', score_clean)
             if match:
                 score = float(match.group(1).replace(',', '.'))
-                return max(0.0, min(1.0, score))
+                return max(0.0, min(1.0, score))  # Clamp auf [0, 1]
             else:
-                logger.warning(f"⚠️ Unparseable Score: '{score_text}' → Fallback 0.5")
-                return 0.5
+                logger.warning(f"⚠️ Unparseable Score: '{score_text}' (cleaned: '{score_clean}') → Fallback 0.5")
+                return 0.5  # Fallback bei Parse-Fehler
         
         except Exception as e:
             logger.error(f"❌ Reranker-Fehler: {e}")
-            return 0.5
+            return 0.5  # Fallback bei API-Fehler
     
     def rerank(self, query: str, candidates: List[Dict], max_results: int = 60) -> Tuple[List[Dict], Dict]:
         """
-        Filtert Kandidaten durch LLM-Judge (v49.2: Essay-Aware).
+        Filtert Kandidaten durch LLM-Judge (v47.1: Query-Type-Aware).
         
         Args:
             query: User-Frage
@@ -294,7 +256,7 @@ Bewerte die Relevanz (0.0-1.0):
             if (i + 1) % 20 == 0:
                 logger.info(f"   ... {i+1}/{len(candidates)} geprüft, {len(filtered)} bestanden")
         
-        # Sortiere nach hermeneutischem Score
+        # Sortiere nach hermeneutischem Score (NICHT mehr nach Vector Score!)
         filtered.sort(key=lambda x: x['hermeneutic_score'], reverse=True)
         
         # Top N
@@ -306,7 +268,7 @@ Bewerte die Relevanz (0.0-1.0):
             "passed": len(filtered),
             "rejected": rejected_count,
             "avg_score": sum(r['hermeneutic_score'] for r in filtered) / len(filtered) if filtered else 0,
-            "query_type": query_type
+            "query_type": query_type  # NEU in v47.1
         }
         
         logger.info(f"✅ Reranker: {stats['passed']}/{stats['total']} bestanden (Ø {stats['avg_score']:.2f}, Typ: {query_type})")
