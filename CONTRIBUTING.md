@@ -377,4 +377,4 @@ Jeder Beitrag – ob Code, Dokumentation oder Bug Report – hilft, dieses Forsc
 ---
 
 **Version:** v49.2  
-**Stand:** Dezember 2025
+**Stand:** 26. Dezember 2025

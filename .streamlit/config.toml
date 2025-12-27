@@ -1,22 +1,25 @@
 [server]
-headless = true
+# Headless-Modus (false = Browser öffnet sich automatisch)
+headless = false
+
+# CORS & Security
 enableCORS = false
 enableXsrfProtection = false
-# WICHTIG: Erhöht die Toleranz für fehlende Heartbeats
-websocketPingTimeout = 120  
+
+# WebSocket-Timeout (erhöht für stabilere Verbindung)
+websocketPingTimeout = 120
+
+# Run-on-Save deaktiviert (verhindert Auto-Reload bei Dateiänderungen)
 runOnSave = false
-# Zeige 'localhost' statt '0.0.0.0' im Terminal
+
+# Server-Adresse (localhost für lokale Entwicklung)
 address = "localhost"
 port = 8501
 
-# Optional: Öffne Browser automatisch
-headless = false
-
 [browser]
-# Verhindert, dass der Browser zu aggressiv neu lädt
+# Verhindert aggressive Browser-Reloads
 gatherUsageStats = false
-serverAddress = "0.0.0.0"
 
 [runner]
-# Magic Fix: Installiert Garbage Collection aggressiver, um RAM-Spikes zu verhindern
+# Magic-Modus deaktiviert (verhindert unerwartete Verhaltensweisen)
 magicEnabled = false

@@ -202,10 +202,10 @@ streamlit run app.py
 ---
 
 ### Pessoa Translation Analysis (⭐⭐⭐⭐⭐++)
-**Query:** "Vergleiche VIER Texte: 1. Portugiesisches Original (Pessoa), 2. Deutsche Übersetzung (Celan), 3. Englische Übersetzung (Honig/Brown), 4. Russische Übersetzung (Bogdanovsky). Ordne nach Nähe zum Original ein."
+**Query:** "Vergleiche VIER Texte: 1. Portugiesisches Original (Pessoa), 2. Deutsche Übersetzung (Celan), 3. Englische Übersetzung (Honig/Brown), 4. Russische Übersetzung (Bogdanovski). Ordne nach Nähe zum Original ein."
 
 **Resultat:**
-- ✅ Korrekte Rangordnung: 1. Celan (DE), 2. Bogdanovsky (RU), 3. Honig/Brown (EN)
+- ✅ Korrekte Rangordnung: 1. Celan (DE), 2. Bogdanovski (RU), 3. Honig/Brown (EN)
 - ✅ Zeile-für-Zeile-Vergleiche (parallel zitiert aus allen 4 Texten!)
 - ✅ Übersetzungstheorie: Target-Audience-Problem analysiert
 - ✅ RRF: Alle 4 Texte gefunden (in v47 nur 2-3!)
@@ -268,7 +268,7 @@ Registriere sie in `modules/importers/__init__.py`.
 
 **Use-Case:**
 ```
-User: "Vergleiche Celan und Bogdanovsky Zeile für Zeile"
+User: "Vergleiche Celan und Bogdanovski Zeile für Zeile"
 
 System (intern):
 → Zerlege in 60 Sub-Queries (eine pro Zeile)
@@ -291,7 +291,7 @@ Dieses Projekt ist derzeit ein **Forschungsprototyp**. Für Fragen oder Kollabor
 
 **Projekt-Lead:** Grigori Pantijelew  
 **Email:** grigori.pantijelew@lis.bremen.de  
-**Institution:** Staats- und Universitätsbibliothek Bremen
+**Institution:** Landesinstitut für Schule Bremen
 
 ---
 
