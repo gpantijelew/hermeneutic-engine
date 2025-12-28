@@ -60,6 +60,10 @@ MODEL_FACT_EXTRACTION = "gemini-2.5-pro"
 # Rationale: Kritisch für RRF-Erfolg, aber Flash reicht für Keyword-Gen
 MODEL_QUERY_EXPANSION = "gemini-2.0-flash-001"
 
+# NEU v50: Hermeneutic Router (Adaptive RAG)
+# Muss extrem schnell sein, entscheidet über Retrieval-Strategie
+MODEL_ROUTER = "gemini-2.0-flash-lite-001"
+
 # Relevance Scoring (Reranker - viele Chunks, Speed wichtig)
 MODEL_RERANKER = "gemini-2.0-flash-lite-001"
 
@@ -116,6 +120,7 @@ def get_model_for_task(task: str) -> str:
         'enforcer': MODEL_ENFORCER,
         'fact_extraction': MODEL_FACT_EXTRACTION,
         'query_expansion': MODEL_QUERY_EXPANSION,
+        'router': MODEL_ROUTER, # <--- NEU
         'reranker': MODEL_RERANKER,
         'bulk_labeling': MODEL_BULK_LABELING,
         'title_gen': MODEL_TITLE_GEN,

@@ -333,3 +333,37 @@ Falls du diese Engine in deiner Forschung nutzt:
 **Version:** v49  
 **Stand:** Dezember 2025  
 **Status:** 🔬 Research-Grade, Production-Ready
+
+## 🎯 v50.5 Highlights
+
+### Hermeneutic Fairness
+Das System garantiert, dass **jede** vom User ausgewählte Quelle 
+gleichberechtigt in der Synthese erscheint – unabhängig von:
+- Sprache (multilingualer Query Expansion)
+- Länge (Essence Parity: Max 12 Chunks/Doc)
+- Embedding-Quality (VIP-Schutz: Min. 3 Chunks/Doc)
+
+### Example Use Case
+"Vergleiche Adorno (DE, 25 S.), Chesterton (EN, 7 S.), Valéry (FR, 200 S.), Tynjanov, Schklowski"
+
+**v49:** Nur Adorno + Valéry analysiert (EN fehlt)
+**v50.5:** Alle 5 Autoren mit 4-6 Sätzen + 3-4 Zitaten ✅
+
+### Architecture
+```
+User Query (DE)
+    ↓
+Hermeneutic Router → Intent: LITERARY
+    ↓
+Multilingual Expansion → "... How ... Comment ... Как ..."
+    ↓
+Investigativ-Modus (≤5 Docs) → Fairness-Quota: 84 Chunks/Doc
+    ↓
+RRF (Vector + BM25) → VIP-Schutz: Min. 3 Chunks/Doc
+    ↓
+Hermeneutic Reranker → Threshold: 0.6
+    ↓
+Essence Parity → Max 12 Chunks/Doc
+    ↓
+Synthesis (Sonnet 4) → Prompt erzwingt 1 Absatz + 3-4 Zitate/Text
+```
