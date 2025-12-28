@@ -13,6 +13,7 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
     2. Konvertiert Fragen in Aussagen (Batch-Processing).
     3. Entfernt ungültige Zitationen (die nicht in used_source_ids sind).
     4. v49.1 FIX: Robust gegen Placeholder-Fehler.
+    5. v49.2 FIX: Speaker-Header werden NICHT als Fragmente entfernt!
     """
     if not synthesis_text:
         return ""
@@ -55,11 +56,38 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
         text_only_clean = re.sub(r'^[\-\*\d\.]+\s*', '', text_only)
 
         # Toleranz: 7 Wörter Minimum für echte Sätze
-        if len(text_only_clean.split()) < 7: 
-            # Ausnahme: Kurze Überschriften oder Listenpunkte die wichtig aussehen
-            if not text_only_clean.endswith(':'):
-                logger.warning(f"Fragment entfernt: '{text_only_clean}'")
+        if len(text_only_clean.split()) < 7:
+            # WHITELIST 1: Speaker-Header (markdown bold: **Name**)
+            # Erkennung: Zeile besteht NUR aus **Text** (kein weiterer Content)
+            is_speaker_header = (
+                stripped_line.startswith('**') and 
+                stripped_line.endswith('**') and
+                len(stripped_line.strip('*').strip()) < 50  # Max 50 Zeichen für Namen
+            )
+            
+            # WHITELIST 2: Überschriften mit Doppelpunkt
+            is_heading = text_only_clean.endswith(':')
+            
+            # WHITELIST 3: Markdown-Überschriften (### Name)
+            is_markdown_heading = stripped_line.startswith('###')
+            
+            # Wenn Whitelist-Match → BEHALTEN!
+            if is_speaker_header:
+                logger.debug(f"✅ Speaker-Header behalten: '{stripped_line}'")
+                temp_lines.append(stripped_line)  # Speaker-Header behalten!
                 continue
+            
+            if is_heading:
+                temp_lines.append(line_validated)  # Überschrift behalten!
+                continue
+            
+            if is_markdown_heading:
+                temp_lines.append(stripped_line)  # Markdown-Überschrift behalten!
+                continue
+            
+            # Sonst: Fragment entfernen
+            logger.warning(f"Fragment entfernt: '{text_only_clean}'")
+            continue
 
         # Frage-Check
         if text_only.endswith('?'):
