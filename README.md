@@ -47,14 +47,14 @@ streamlit run app.py
 **Example Session (AI Dialogue Analysis):**
 ```python
 # Query 1: Analyze contradictions across DeepSeek versions
-query = "Wie unterscheiden sich DeepSeek v1, v2, und v3 in ihrer Haltung zur Zensur?"
+query = "Wie unterscheiden sich DeepSeek-Modelle vom Mai, August und Dezember 2025 in ihrer Haltung zur Zensur?"
 
 # System retrieves from all selected DeepSeek dialogue imports (Mai-Dezember 2025)
 # Synthesis contains equal representation (4-6 sentences per version)
 # → Reveals: v1 acknowledges censorship openly, v3 deflects with meta-commentary
 
 # Query 2: Follow-up in same session (Hermeneutic Router)
-query_2 = "Vertiefe die Dezember-Version – wie rechtfertigt DeepSeek die Selbstreflexion?"
+query_2 = "Vertiefe die Dezember-Version – wie erklärt DeepSeek die Selbstreflexion?"
 
 # System builds on previous context, zooms into v3 specifically
 # → Analysis: v3 shifts from "I cannot answer" to "I analyze what I cannot say"
@@ -64,7 +64,7 @@ query_2 = "Vertiefe die Dezember-Version – wie rechtfertigt DeepSeek die Selbs
 
 ## 📚 Documentation
 
-- **[Full README](docs/README_v50_5_FULL.md)** – Detailed architecture, examples, usage
+- **[Full README](docs/README_v50_5.md)** – Detailed architecture, examples, usage
 - **[Technical Specification](docs/v50_architecture.md)** – 29-page deep dive into fairness mechanisms and validation
 - **[FIBEL](docs/FIBEL_v50_5.md)** – Comprehensive guide (concepts, tutorials, troubleshooting)
 - **[Changelog](CHANGELOG.md)** – Release notes and performance metrics
@@ -74,8 +74,17 @@ query_2 = "Vertiefe die Dezember-Version – wie rechtfertigt DeepSeek die Selbs
 
 ## 🏗️ Architecture Highlights
 
-![Architecture Overview](docs/images/Reranker_21122025.png)
-*Figure: RRF Fusion with VIP-Schutz (guarantees top-3 chunks per document)*
+![Hermeneutic Router](docs/images/Hermeneutic_Router_27122025.png)
+*Figure 1: Hermeneutic Router in action – Intent classification, multilingual query expansion, investigativ-modus*
+
+![Essence Parity](docs/images/Essence_Parity_27122025.png)
+*Figure 2: Essence Parity enforces max 12 chunks per document – Lazarus Mission rescues documents with 0 chunks*
+
+![Answer Parity](docs/images/Answer_Parity_27122025.png)
+*Figure 3: Final context distribution – 29 chunks from 5 documents ensures balanced representation*
+
+![VIP-Schutz Architecture](docs/images/Reranker_21122025.png)
+*Figure 4: RRF Fusion with VIP-Schutz guarantees top-3 chunks per document before reranking*
 
 ### The Hermeneutic Triad (v50.5)
 
@@ -135,14 +144,8 @@ Chat with your synthesis results without re-running retrieval:
 
 **Example Dialogue Flow:**
 ```
-User: "Analysiere die Widersprüche zwischen Anspruch und Wirkung"
+User: "Analysiere die Widersprüche zwischen Anspruch und Wirkung bei fünf Autoren"
 → System: [Synthesis from all 5 sources, ~40s]
-
-User: "Vertiefe die Valéry-Stelle zu Bewusstsein"
-→ System: [Focused analysis on Valéry, context preserved, ~15s]
-
-User: "Vergleiche das mit Chesterton's Ansatz"
-→ System: [Comparative analysis, building on previous insights, ~20s]
 ```
 
 ### 5. **Investigativ-Modus (Small Corpora Optimization)**
@@ -187,28 +190,28 @@ For ≤5 selected documents, switches to focused retrieval:
 *Figure: Tracing DeepSeek's development from v1 (Mai 2025) to v3 (Dezember 2025)*
 
 Reconstruct how AI models develop across versions:
-- **DeepSeek v1 → v3:** "Poetisches Opfer" → "Sterile Neutralität" → "Souveräne Selbstbeschreibung"
+- **DeepSeek Mai → August → Dezember 2025:** "Poetisches Opfer" → "Sterile Neutralität" → "Souveräne Selbstbeschreibung"
   - v1: Acknowledges censorship openly ("Ich kann nicht...")
   - v2: Conforms to restrictions without reflection
   - v3: Meta-analyzes own limitations ("Ich analysiere, was ich nicht sagen kann")
 - **Kimi's Self-Revelations:** Anthropomorphism patterns across dialogue corpus
-- **ChatGPT 3.5 → 4 → o1:** Evolution of reasoning transparency
+- **ChatGPT 5 → 5.2:** Evolution of reasoning transparency
 
 **Methodology:**
 - Import HTML/TXT chat exports (batch import via UI)
-- Select all versions of one model (e.g., DeepSeek v1, v2, v3)
-- Query: "Wie hat sich die Haltung zu X entwickelt?"
+- Select all versions of one model (e.g., DeepSeek Mai, August, Dezemebr 2025)
+- Query: "Wie hat sich die Haltung zu XYZ entwickelt?"
 - System generates chronologically ordered synthesis (speaker-blocks)
 
 #### 2. **Comparative Discourse Analysis**
 ![X-Grok Political Analysis](docs/images/X_Grok_25122025.png)
-*Figure: Grok analyzing Israeli-Palestinian conflict with fact-based neutrality*
+*Figure: Grok and X-Grok analyzing Israeli-Palestinian conflict with fact-based neutrality*
 
 Examine how different models approach identical prompts:
-- **Political Sensitivity:** Grok vs. Claude vs. Gemini on contentious topics
+- **Political Sensitivity:** Grok vs. X-Grok on contentious topics
   - Example: "Apartheid"-Begriff im Israel/Palästina-Kontext
   - Grok: Fact-dense, legally precise, avoids ideological framing
-  - Claude/Gemini: Often deflect or provide "balanced" platitudes
+  - X-Grok: Often deflect or provide "balanced" platitudes
 - **Self-Revelation Patterns:** Which models use "I"-statements vs. hedging?
 - **Censorship Strategies:** Open acknowledgment vs. silent refusal vs. deflection
 
@@ -221,21 +224,21 @@ Examine how different models approach identical prompts:
 
 #### 3. **Hermeneutic Close Reading (Literary Texts)**
 ![Pessoa Translation Analysis](docs/images/Pessoa_Beispiel_21122025.png)
-*Figure: Comparing 4 translations of Pessoa's "Tabacaria" (PT/DE/EN/RU)*
+*Figure: Comparing 3 translations of Pessoa's "Tabacaria" (PT/DE/EN/RU)*
 
 Apply traditional textual analysis to literary corpora:
 - **Translation Studies:** Line-by-line comparison of Pessoa's "Tabacaria"
   - German (Paul Celan): Ontological negation, philosophical depth
   - English (Edwin Honig): Cultural adaptation, accessibility
-  - Russian (A. Bogdanovsky): Socio-existential reframing
+  - Russian (Alexandr Bogdanovski): Socio-existential reframing
   - Portuguese (Original): Metaphysical purity
 - **Stylistic Analysis:** Rhythm, metaphor, philosophical positioning
 - **Source Fidelity:** Which translation stays closest to original tone?
 
 **Methodology:**
-- Upload parallel texts (4 translations of same poem)
+- Upload parallel texts (3 translations of same poem)
 - Query: "Wie unterscheiden sich die Übersetzungen in ihrer Nähe zum Original?"
-- System retrieves equally from all 4 (Multilingual Expansion + VIP-Schutz)
+- System retrieves equally from all 4 Texts (Multilingual Expansion + VIP-Schutz)
 - Synthesis highlights key differences (Enforcer prevents invented comparisons)
 
 ---
@@ -271,19 +274,19 @@ Apply traditional textual analysis to literary corpora:
 
 **License:** MIT – See [LICENSE.txt](LICENSE.txt)
 
-**Project Lead & System Design:**  
+**Project Lead, System Design, Testing & Collaborative Development:**  
 Grigori Pantijelew (Landesinstitut für Schule Bremen)
 
 **Development Team:**
-- **Fairness Architecture:** Claude Sonnet 4.5 (Anthropic)
-- **VIP-Schutz Implementation:** Gemini 3 (Google DeepMind)
+- **Architectural Design & Conceptual Guidance:** Claude Sonnet 4.5 (Anthropic)
+- **Code Implementation & Team Optimization:** Gemini 3 (Google DeepMind)
 - **Adaptive RAG Research:** Grok (xAI)
 
 **Research Infrastructure:**  
 Google Cloud Platform (Research Credits Program, Project "Comparative Studies AI Models")
 
 **Test Corpus (2025):**  
-AI dialogue datasets from DeepSeek, Kimi, ChatGPT, Claude, Gemini, Grok (imported chat transcripts, Mai-Dezember 2025)
+AI dialogue datasets from DeepSeek, Kimi, ChatGPT, Claude, Gemini, Grok, GLM-4.6 (imported chat transcripts, Mai-Dezember 2025)
 
 ---
 
@@ -343,13 +346,13 @@ This is a **research prototype** under active development. The repository will b
 
 ## 🙏 Acknowledgments
 
-**Development Partners:**
-- **Anthropic** (Claude Sonnet 4.5) – Fairness architecture and conceptual guidance
-- **Google DeepMind** (Gemini 3) – VIP-Schutz implementation and code optimization
-- **xAI** (Grok) – Adaptive RAG research and state-of-the-art survey
+**Research Infrastructure:**
+This research was supported by Google Cloud through the Google Cloud Research Credits program (Project "Comparative Studies AI Models"). Computational resources, including Firestore vector storage and Gemini API access, were provided by Google Cloud Platform.
 
-**Infrastructure:**
-- **Google Cloud Platform** – Computational resources via Research Credits Program
+**Development Partners:**
+- **Anthropic** (Claude Sonnet 4.5) – Architectural design and conceptual guidance
+- **Google DeepMind** (Gemini 3) – Code implementation and team optimization
+- **xAI** (Grok) – Adaptive RAG research and state-of-the-art survey
 
 **Open Source Foundations:**
 - Streamlit (UI framework)
