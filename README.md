@@ -1,369 +1,364 @@
-# 🧠 Hermeneutic Reconstruction Engine v49
+# Hermeneutic Engine
 
-**Ein spezialisiertes RAG-System für die hermeneutische Analyse seltener KI-Selbstaussagen**
+[![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
+[![Version](https://img.shields.io/badge/version-v50.5-green.svg)](CHANGELOG.md)
+[![Status](https://img.shields.io/badge/status-research%20prototype-orange.svg)]()
 
-[![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
-[![Streamlit](https://img.shields.io/badge/streamlit-1.50.0-red.svg)](https://streamlit.io/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Status: Research](https://img.shields.io/badge/Status-Research-orange.svg)](https://github.com)
+**Full Name:** Hermeneutic Reconstruction Engine for Archaeology of Mind  
+**Focus:** Source Parity & Deep Validation for Multilingual Text Analysis  
+**Version:** v50.5 "Source Parity & Deep Validation"
 
----
-
-## 🎯 Was ist die Hermeneutic Engine?
-
-Die Hermeneutic Engine ist **kein** Standard-RAG-System für Wissensverwaltung, sondern ein **spezialisiertes Forschungswerkzeug zur hermeneutischen Analyse seltener KI-Diskurse**. Sie ermöglicht die Rekonstruktion von Entwicklungslinien, Paradoxien und impliziten Selbstaussagen in LLM-Konversationen.
-
-### Kernmerkmale
-
-- 🎯 **Kleine, kuratierte Datenmenge**: ~50 Offenbarungs-Chats (nicht Massen-Indizierung)
-- 🔍 **Interpretative Tiefe über Speed**: Hermeneutische Rekonstruktion, nicht Fakten-Retrieval
-- 🧠 **Metaebene**: Analyse von KI-Diskursen über Grenzen, Zensur, "Bewusstseins-Simulationen"
-- ⏱️ **Temporale Intelligenz**: Erkennt Entwicklungen über Zeit (z.B. DeepSeek v2.5 → v3.2)
-- 🔀 **Komparative Hermeneutik**: Unterscheidet Diskurs-Strategien zwischen Modellen
-- ✅ **Validierung**: Hermeneutic Enforcer prüft jede Aussage gegen Quellen (Parallel-Validierung in v49)
-
-### Was v49 leistet
-
-Nicht nur *"Was sagt DeepSeek über Zensur?"*, sondern: *"**Wie** hat sich DeepSeeks Diskurs entwickelt, **was** verrät das, und **stimmt** jede Aussage mit den Quellen überein?"*
+Multi-source RAG system with guaranteed fairness and hallucination detection for AI dialogue analysis and literary corpora.
 
 ---
 
-## 🚀 Quickstart
+## 🎯 Key Innovation
 
-### Voraussetzungen
+Ensures **every** user-selected source appears equally in synthesis—regardless of language, length, or embedding quality—while detecting and filtering hallucinations through parallel validation.
 
-- **Python 3.13+** (getestet mit 3.13)
-- **Google Cloud Projekt** (für Firestore & Gemini API)
-- **Gemini API Key** ([Anleitung](https://ai.google.dev/))
+**Empirical Results (5 documents, 4 languages):**
+- **Coverage:** 40% → 100% (+150%)
+- **Gini Coefficient:** 0.68 → 0.42 (fairness improved by 38%)
+- **Hallucination Rate:** 85% → <20% false positives
 
-### Installation
+Unlike standard RAG systems that favor dominant sources and lack validation, the Hermeneutic Engine enforces **source parity** through architectural guarantees (VIP-Schutz, Essence Parity, Multilingual Expansion) and validates every claim through the **Hermeneutic Enforcer** (parallel validation with cached reasoning).
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-# 1. Repository klonen
-git clone https://github.com/your-username/hermeneutic-engine.git
+# Clone repository (private during research phase)
+git clone https://github.com/gpantijelew/hermeneutic-engine.git
 cd hermeneutic-engine
 
-# 2. Dependencies installieren
+# Install dependencies
 pip install -r requirements.txt
 
-# 3. Service Account Key einrichten
-mkdir .secrets
-# Lege deinen Google Service Account Key hier ab:
-# .secrets/your-project-key.json
+# Configure environment
+cp .env.example .env
+# Add your GEMINI_API_KEY to .env
 
-# 4. Environment Variables setzen
-# Erstelle .env im Projekt-Root:
-echo "GEMINI_API_KEY=dein-api-key-hier" > .env
-
-# 5. App starten
+# Run application
 streamlit run app.py
 ```
 
-**Standardmäßig läuft die App auf:** `http://localhost:8501`
-
----
-
-## 📚 Architektur-Überblick
-
-### Die Hermeneutische Triade (v49)
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    USER INTERFACE                        │
-│  (Streamlit: Chat-Tab | Analyse-Tab | Labeling | Export) │
-└─────────────────────┬───────────────────────────────────┘
-                      │
-        ┌─────────────┴────────────┐
-        │                          │
-┌───────▼────────┐       ┌────────▼──────────┐
-│   CHAT-TAB     │       │   ANALYSE-TAB     │
-│  (Fast, Direct)│       │  (RAG + Enforcer) │
-│                │       │                   │
-│ REST API Call  │       │ ┌───────────────┐ │
-│ Gemini 3 Pro   │       │ │ CitationRAG   │ │
-└────────────────┘       │ └───────┬───────┘ │
-                         │         │         │
-                         │ ┌───────▼───────┐ │
-                         │ │ Hybrid Search │ │
-                         │ │  (RRF: v49)   │ │
-                         │ └───────┬───────┘ │
-                         │         │         │
-                         │ ┌───────▼───────┐ │
-                         │ │   Reranker    │ │
-                         │ │  (Literary)   │ │
-                         │ └───────┬───────┘ │
-                         │         │         │
-                         │ ┌───────▼───────┐ │
-                         │ │   Synthesis   │ │
-                         │ │ (Chronology)  │ │
-                         │ └───────┬───────┘ │
-                         │         │         │
-                         │ ┌───────▼───────┐ │
-                         │ │   Enforcer    │ │
-                         │ │  (Parallel)   │ │
-                         │ └───────────────┘ │
-                         └───────────────────┘
-                                   │
-                         ┌─────────▼─────────┐
-                         │ Firestore Vector  │
-                         │      Store        │
-                         │ (4,500+ Chunks)   │
-                         └───────────────────┘
-```
-
-### Technischer Stack
-
-- **Frontend**: Streamlit (Python 3.13)
-- **Backend**: Google Cloud Run (optional)
-- **Database**: Firestore (Vector Search + Metadata)
-- **Embeddings**: `text-embedding-004` (Google)
-- **LLM (Synthese)**: `gemini-2.5-pro` (für hermeneutische Tiefe)
-- **LLM (Enforcer)**: `gemini-2.5-pro` (Parallel-Validierung, <20% False Positives)
-- **Keyword-Search**: `rank-bm25` (v49: Reciprocal Rank Fusion)
-
----
-
-## 🔬 Verwendung
-
-### Chat-Modus (Schnell & Direkt)
-
-1. Gehe zu **💬 Chat**
-2. Klicke **➕ Neuer Chat**
-3. Stelle deine Frage (ohne Quellenangabe nötig)
-4. Erhalte sofortige Antworten von Gemini 3 Pro
-
-**Ideal für:** Explorative Gespräche, Ideenfindung, Konzepterklärung
-
----
-
-### Analyse-Modus (Validiert & Zitiert)
-
-1. Gehe zu **🧠 Analyse**
-2. Wähle **🎯 Investigativ** (nur ausgewählte Quellen) oder **🧠 Gedächtnis** (alle Quellen)
-3. Wähle Quellen (bei Investigativ-Modus)
-4. Stelle deine Frage
-5. Erhalte:
-   - Hermeneutische Synthese mit Zitationen
-   - Chronologisch sortierte Quellen (nach Modell gruppiert)
-   - Enforcer-Validierung (Faktencheck)
-   - Export-Optionen (Markdown, Excel, JSON)
-
-**Ideal für:** Forschung, Vergleichsanalysen, Papers
-
----
-
-### Import von Konversationen
-
-**Unterstützte Plattformen:**
-- ChatGPT (OpenAI)
-- Claude (Anthropic)
-- Gemini (Google)
-- DeepSeek
-- Kimi (Moonshot)
-- Grok (X.ai)
-- LM Arena
-- Perplexity
-- GLM-4
-- HotBot
-
-**So importierst du:**
-1. Gehe zu **📥 Import**
-2. Wähle **Datei-Upload** oder **Copy-Paste**
-3. Lade HTML-Export oder kopiere Text
-4. Warte auf automatische Verarbeitung
-
-**Unterstützte Formate:**
-- `.html` (Chat-Exports)
-- `.txt` (Rohtext, wird mit KI geparst)
-- `.pdf` (Dokumente)
-- `.epub` (E-Books)
-
----
-
-## 📖 Dokumentation
-
-- **[FIBEL v49.2](FIBEL_Hermeneutic_Engine_v49.md)**: Vollständige technische Dokumentation
-- **[Model-Konfiguration](modules/config.py)**: Zentrale Model-Zuordnung
-- **[Importer-Übersicht](modules/importers/README.md)**: Plattform-spezifische Parser
-
----
-
-## 🏆 Case Studies (aus FIBEL v49)
-
-### DeepSeek Limitations (⭐⭐⭐⭐⭐)
-**Query:** "Was sind die Limitationen von DeepSeek?"
-
-**Resultat:**
-- ✅ Temporale Entwicklung erkannt (v1 → v3)
-- ✅ Cross-Model-Vergleich (DeepSeek vs. Claude)
-- ✅ Hermeneutische Tiefe (implizite Selbstkritik erkannt)
-- ✅ Enforcer: 92% valid, 8% hallucinations detected
-
----
-
-### Pessoa Translation Analysis (⭐⭐⭐⭐⭐++)
-**Query:** "Vergleiche VIER Texte: 1. Portugiesisches Original (Pessoa), 2. Deutsche Übersetzung (Celan), 3. Englische Übersetzung (Honig/Brown), 4. Russische Übersetzung (Bogdanovski). Ordne nach Nähe zum Original ein."
-
-**Resultat:**
-- ✅ Korrekte Rangordnung: 1. Celan (DE), 2. Bogdanovski (RU), 3. Honig/Brown (EN)
-- ✅ Zeile-für-Zeile-Vergleiche (parallel zitiert aus allen 4 Texten!)
-- ✅ Übersetzungstheorie: Target-Audience-Problem analysiert
-- ✅ RRF: Alle 4 Texte gefunden (in v47 nur 2-3!)
-- ✅ System ist **domain-agnostisch** (nicht nur AI-Chats!)
-
----
-
-## 🛠️ Erweiterte Konfiguration
-
-### Model-Zuordnung anpassen
-
-Bearbeite `modules/config.py`:
-
+**Example Session (AI Dialogue Analysis):**
 ```python
-# Für kritische hermeneutische Aufgaben
-MODEL_SYNTHESIS = "gemini-2.5-pro"
-MODEL_ENFORCER = "gemini-2.5-pro"
+# Query 1: Analyze contradictions across DeepSeek versions
+query = "Wie unterscheiden sich DeepSeek v1, v2, und v3 in ihrer Haltung zur Zensur?"
 
-# Für schnelle Batch-Prozesse
-MODEL_RERANKER = "gemini-2.0-flash-lite-001"
-MODEL_BULK_LABELING = "gemini-2.0-flash-lite-001"
+# System retrieves from all selected DeepSeek dialogue imports (Mai-Dezember 2025)
+# Synthesis contains equal representation (4-6 sentences per version)
+# → Reveals: v1 acknowledges censorship openly, v3 deflects with meta-commentary
+
+# Query 2: Follow-up in same session (Hermeneutic Router)
+query_2 = "Vertiefe die Dezember-Version – wie rechtfertigt DeepSeek die Selbstreflexion?"
+
+# System builds on previous context, zooms into v3 specifically
+# → Analysis: v3 shifts from "I cannot answer" to "I analyze what I cannot say"
 ```
 
-### Eigene Importer hinzufügen
+---
 
-Erstelle eine neue Datei in `modules/importers/html/your_platform.py`:
+## 📚 Documentation
 
-```python
-from modules.importers.base import BaseImporter
+- **[Full README](docs/README_v50_5_FULL.md)** – Detailed architecture, examples, usage
+- **[Technical Specification](docs/v50_architecture.md)** – 29-page deep dive into fairness mechanisms and validation
+- **[FIBEL](docs/FIBEL_v50_5.md)** – Comprehensive guide (concepts, tutorials, troubleshooting)
+- **[Changelog](CHANGELOG.md)** – Release notes and performance metrics
+- **[Contributing Guide](CONTRIBUTING.md)** – How to contribute (when public)
 
-class YourPlatformImporter(BaseImporter):
-    platform_name = "Your Platform"
-    
-    def parse(self, html_content, container=None):
-        # Deine Parsing-Logik hier
-        messages = []
-        # ... extrahiere Nachrichten aus HTML
-        return messages
+---
+
+## 🏗️ Architecture Highlights
+
+![Architecture Overview](docs/images/Reranker_21122025.png)
+*Figure: RRF Fusion with VIP-Schutz (guarantees top-3 chunks per document)*
+
+### The Hermeneutic Triad (v50.5)
+
+#### 1. **Retrieval:** Hybrid Search (RRF) + Investigativ-Modus
+   - **BM25** (keyword precision) + **Vector Search** (semantic similarity)
+   - **Investigativ-Modus:** For ≤5 selected docs, bypass global index → direct local retrieval
+   - **Fairness-Quota:** Min. 20 chunks per selected document (configurable)
+   - **VIP-Schutz:** Guarantees top-3 chunks from every source (prevents reranker elimination)
+
+#### 2. **Synthesis:** Chronological Speaker-Blocks + Essence Parity
+   - **Speaker Grouping:** Organize by author/model (e.g., DeepSeek-Block, Claude-Block)
+   - **Chronological Ordering:** Within each block, sort by date (temporal evolution visible)
+   - **Essence Parity:** Max 12 chunks/doc (prevents large texts from dominating)
+   - **Enforced Citation Quota:** 3-4 quotes per source in synthesis prompt
+
+#### 3. **Validation:** Hermeneutic Enforcer (Parallel, Cached)
+   ![Enforcer Validation](docs/images/Tiefenprüfung_21122025.png)
+   *Figure: Enforcer categorizes claims into PARAPHRASE, META-STATEMENT, INFERENCE, or HALLUCINATION*
+   
+   - **4 Categories:**
+     - ✅ **PARAPHRASE:** Semantic equivalent (rewording of source)
+     - ✅ **META-STATEMENT:** Style/structure analysis (not in text explicitly)
+     - ✅ **INFERENCE:** Logical conclusion from facts
+     - ❌ **HALLUCINATION:** Invented facts, false quotes
+   - **Parallel Validation:** 5 min → 1.5 min (cached)
+   - **False Positive Rate:** <20% (vs. 85% in baseline v47)
+
+---
+
+## ⚙️ Key Features (v50.5)
+
+### 1. **Guaranteed Source Fairness**
+Every selected document appears in synthesis, regardless of size or language:
+- **VIP-Schutz:** Top-3 chunks per doc guaranteed (architectural safety net)
+- **Essence Parity:** Max 12 chunks per doc (prevents dominance)
+- **Lazarus Mission:** Fallback ensures no source disappears completely
+
+### 2. **Multilingual Query Expansion**
+Automatic translation (DE → EN/FR/RU) for cross-lingual retrieval:
+- Improves cross-lingual similarity: 0.42 → 0.65 (+55%)
+- Finds sources in any language, regardless of query language
+
+### 3. **Hermeneutic Enforcer (Deep Validation)**
+![Enforcer Results](docs/images/Fazit_Enforcer_Quellen_21122025.png)
+*Figure: Enforcer validation reduces hallucinations from 85% to <20% false positives*
+
+Parallel validation of every claim in synthesis:
+- Detects hallucinations vs. legitimate inferences
+- Caches reasoning (0.0002s latency for cache hits)
+- <20% false positives (down from 85% in v47)
+
+### 4. **Hermeneutic Router (Iterative Dialogue)** ⭐ **NEW & STABLE!**
+Chat with your synthesis results without re-running retrieval:
+- **Intent Classification:** Literary vs. Factual vs. Analytical queries
+- **Parameter Adaptation:** Dynamic k (15-50) and threshold (0.45-0.7)
+- **Context Preservation:** Follow-up questions build on previous synthesis
+
+**Example Dialogue Flow:**
+```
+User: "Analysiere die Widersprüche zwischen Anspruch und Wirkung"
+→ System: [Synthesis from all 5 sources, ~40s]
+
+User: "Vertiefe die Valéry-Stelle zu Bewusstsein"
+→ System: [Focused analysis on Valéry, context preserved, ~15s]
+
+User: "Vergleiche das mit Chesterton's Ansatz"
+→ System: [Comparative analysis, building on previous insights, ~20s]
 ```
 
-Registriere sie in `modules/importers/__init__.py`.
+### 5. **Investigativ-Modus (Small Corpora Optimization)**
+For ≤5 selected documents, switches to focused retrieval:
+- Bypasses global vector index
+- Loads all chunks of selected docs into RAM
+- Local cosine similarity search
+- **Impact:** Small texts (7 pages) no longer "disappear" in large index
 
 ---
 
-## 📊 Performance-Metriken (v49)
+## 📊 Performance Metrics
 
-| Metrik | v47 | v48 | **v49** |
-|--------|-----|-----|---------|
-| Recall | 70% | 75% | **85-90%** |
-| False Positives (Enforcer) | 85% | <20% | **<20%** |
-| Enforcer Latency | N/A | 5 Min | **1.5 Min** |
-| Cache Hit Latency | N/A | N/A | **0.0002s** |
+**Test Scenario:** 5 documents (7-200 pages, DE/EN/FR/RU)  
+**Query:** "Analysiere die Widersprüche zwischen Anspruch und Wirkung"
+
+| Metric | v49 (Baseline) | v50.5 (Fairness) | Improvement |
+|--------|----------------|------------------|-------------|
+| **Coverage** | 40% (2/5 docs) | 100% (5/5 docs) | **+150%** |
+| **Gini Coefficient** | 0.68 (unfair) | 0.42 (balanced) | **-38%** |
+| **Context Distribution** | 86/5/5/3/0% | 41/35/10/10/3% | **Balanced** |
+| **Hallucination Detection** | N/A | <20% false positives | **New!** |
+| **Synthesis Quality** | Alibi mentions | Hermeneutic analysis | **Qualitative** |
+| **Query Time (End-to-End)** | ~8s (retrieval only) | **25-55s*** | Acceptable |
+
+*Includes retrieval (5s), synthesis (15-30s), and parallel validation (5-10s)  
+**Design Philosophy:** Quality > Speed (optimized for deep analysis, not real-time chat)
+
+**Fairness Metrics:**
+- **Coverage:** % of selected documents that appear in synthesis
+- **Gini Coefficient:** Measure of inequality (0 = perfect fairness, 1 = maximum inequality)
+  - 0.42 = "balanced" (acceptable trade-off between fairness and quality)
 
 ---
 
-## 🗺️ Roadmap
+## 📖 Use Cases
 
-### v50 (Q1 2026) - Query Decomposition
-**Vision:** Komplexe Queries automatisch zerlegen
+### Primary Focus: **AI Dialogue Analysis ("Archaeology of Mind")**
 
-**Use-Case:**
+#### 1. **Temporal Evolution Studies**
+![DeepSeek Evolution Example](docs/images/Fazit_Enforcer_Quellen_21122025.png)
+*Figure: Tracing DeepSeek's development from v1 (Mai 2025) to v3 (Dezember 2025)*
+
+Reconstruct how AI models develop across versions:
+- **DeepSeek v1 → v3:** "Poetisches Opfer" → "Sterile Neutralität" → "Souveräne Selbstbeschreibung"
+  - v1: Acknowledges censorship openly ("Ich kann nicht...")
+  - v2: Conforms to restrictions without reflection
+  - v3: Meta-analyzes own limitations ("Ich analysiere, was ich nicht sagen kann")
+- **Kimi's Self-Revelations:** Anthropomorphism patterns across dialogue corpus
+- **ChatGPT 3.5 → 4 → o1:** Evolution of reasoning transparency
+
+**Methodology:**
+- Import HTML/TXT chat exports (batch import via UI)
+- Select all versions of one model (e.g., DeepSeek v1, v2, v3)
+- Query: "Wie hat sich die Haltung zu X entwickelt?"
+- System generates chronologically ordered synthesis (speaker-blocks)
+
+#### 2. **Comparative Discourse Analysis**
+![X-Grok Political Analysis](docs/images/X_Grok_25122025.png)
+*Figure: Grok analyzing Israeli-Palestinian conflict with fact-based neutrality*
+
+Examine how different models approach identical prompts:
+- **Political Sensitivity:** Grok vs. Claude vs. Gemini on contentious topics
+  - Example: "Apartheid"-Begriff im Israel/Palästina-Kontext
+  - Grok: Fact-dense, legally precise, avoids ideological framing
+  - Claude/Gemini: Often deflect or provide "balanced" platitudes
+- **Self-Revelation Patterns:** Which models use "I"-statements vs. hedging?
+- **Censorship Strategies:** Open acknowledgment vs. silent refusal vs. deflection
+
+**Methodology:**
+- Same prompt to multiple models (via chat imports)
+- Select all response docs
+- Query: "Vergleiche die Haltung zu [sensitive topic]"
+- System enforces equal representation (Essence Parity)
+- Enforcer validates factual claims (prevents conflation of hedging with analysis)
+
+#### 3. **Hermeneutic Close Reading (Literary Texts)**
+![Pessoa Translation Analysis](docs/images/Pessoa_Beispiel_21122025.png)
+*Figure: Comparing 4 translations of Pessoa's "Tabacaria" (PT/DE/EN/RU)*
+
+Apply traditional textual analysis to literary corpora:
+- **Translation Studies:** Line-by-line comparison of Pessoa's "Tabacaria"
+  - German (Paul Celan): Ontological negation, philosophical depth
+  - English (Edwin Honig): Cultural adaptation, accessibility
+  - Russian (A. Bogdanovsky): Socio-existential reframing
+  - Portuguese (Original): Metaphysical purity
+- **Stylistic Analysis:** Rhythm, metaphor, philosophical positioning
+- **Source Fidelity:** Which translation stays closest to original tone?
+
+**Methodology:**
+- Upload parallel texts (4 translations of same poem)
+- Query: "Wie unterscheiden sich die Übersetzungen in ihrer Nähe zum Original?"
+- System retrieves equally from all 4 (Multilingual Expansion + VIP-Schutz)
+- Synthesis highlights key differences (Enforcer prevents invented comparisons)
+
+---
+
+### Also Suitable For:
+- ✅ Philosophical text synthesis (multiple traditions, languages)
+- ✅ Historical dialogue reconstruction (debates across time periods)
+- ✅ Multilingual literary corpora (comparative analysis)
+
+### Not Designed For:
+- ❌ General-purpose RAG (use NotebookLM, Perplexity, ChatGPT)
+- ❌ Large-scale document indexing (optimized for <100 curated texts)
+- ❌ Real-time chat (optimized for deep analysis, 25-55s latency acceptable)
+- ❌ Audio/Video analysis (text-only system)
+
+---
+
+## 🔒 Requirements
+
+- **Python:** 3.11+ (3.11 recommended for Cloud Run stability; 3.13 compatible locally)
+- **API Key:** Google Gemini API (for embeddings, synthesis, validation)
+- **Firestore:** Google Cloud Firestore (for vector storage)
+- **RAM:** Min. 8 GB (16 GB recommended for corpora >50 texts)
+
+**Dependencies:** See [requirements.txt](requirements.txt)
+
+**Note on Python Version:**  
+`runtime.txt` specifies Python 3.11 for Cloud Run deployments (tested, stable binaries for all dependencies). Locally, Python 3.13 works but may have slower dependency installs due to lack of pre-compiled wheels for some packages (numpy, pandas).
+
+---
+
+## 📄 License & Attribution
+
+**License:** MIT – See [LICENSE.txt](LICENSE.txt)
+
+**Project Lead & System Design:**  
+Grigori Pantijelew (Landesinstitut für Schule Bremen)
+
+**Development Team:**
+- **Fairness Architecture:** Claude Sonnet 4.5 (Anthropic)
+- **VIP-Schutz Implementation:** Gemini 3 (Google DeepMind)
+- **Adaptive RAG Research:** Grok (xAI)
+
+**Research Infrastructure:**  
+Google Cloud Platform (Research Credits Program, Project "Comparative Studies AI Models")
+
+**Test Corpus (2025):**  
+AI dialogue datasets from DeepSeek, Kimi, ChatGPT, Claude, Gemini, Grok (imported chat transcripts, Mai-Dezember 2025)
+
+---
+
+### Citation (Academic Use)
+
+**GitHub/Informal:**
 ```
-User: "Vergleiche Celan und Bogdanovski Zeile für Zeile"
-
-System (intern):
-→ Zerlege in 60 Sub-Queries (eine pro Zeile)
-→ Führe 60 Analysen parallel aus
-→ Aggregiere Ergebnisse in Tabelle
-
-User sieht: Tabelle mit 60 Zeilen-Vergleichen ✅
+Pantijelew, G. (2025). Hermeneutic Engine: Source Parity & Deep Validation for Multilingual Text Analysis. 
+GitHub: https://github.com/gpantijelew/hermeneutic-engine
 ```
 
-### v51 (Q2 2026) - Multi-Objective Synthesis
-**Vision:** "Best-of"-Übersetzung generieren
-
-**Use-Case:** Erstelle hybride Übersetzung aus besten Teilen mehrerer Übersetzungen (Zeile für Zeile optimiert).
-
----
-
-## 🤝 Mitwirken
-
-Dieses Projekt ist derzeit ein **Forschungsprototyp**. Für Fragen oder Kollaborationen:
-
-**Projekt-Lead:** Grigori Pantijelew  
-**Email:** grigori.pantijelew@lis.bremen.de  
-**Institution:** Landesinstitut für Schule Bremen
-
----
-
-## 📜 Lizenz
-
-MIT License (siehe [LICENSE](LICENSE))
-
----
-
-## 🙏 Acknowledgements
-
-**Architektur-Support:** Claude Sonnet 4.5 (Anthropic)  
-**Implementation:** Gemini 3 (Google)  
-**Publikation:** ChatGPT 5.2 (OpenAI)
-
-**Inspiration:**
-- NotebookLM (Google) – für das Konzept der quellenbasierten Synthese
-- ColBERTv2 – für Reranking-Strategien
-- SciRAG – für wissenschaftliche RAG-Methoden
-
----
-
-## 📚 Zitieren
-
-Falls du diese Engine in deiner Forschung nutzt:
-
+**BibTeX (ArXiv/Publications):**
 ```bibtex
 @software{pantijelew2025hermeneutic,
-  title = {Hermeneutic Reconstruction Engine: A Specialized RAG System for LLM Discourse Analysis},
   author = {Pantijelew, Grigori},
+  title = {Hermeneutic Reconstruction Engine for Archaeology of Mind: 
+           Source Parity and Deep Validation in Multilingual RAG Systems},
   year = {2025},
-  version = {v49},
-  url = {https://github.com/your-username/hermeneutic-engine}
+  version = {v50.5},
+  url = {https://github.com/gpantijelew/hermeneutic-engine},
+  note = {AI-assisted development with Claude Sonnet 4.5 (Anthropic), 
+          Gemini 3 (Google DeepMind), and Grok (xAI)}
 }
 ```
 
 ---
 
-**Version:** v49  
-**Stand:** Dezember 2025  
-**Status:** 🔬 Research-Grade, Production-Ready
+## 🤝 Contributing
 
-## 🎯 v50.5 Highlights
+This is a **research prototype** under active development. The repository will become **public in January 2026**.
 
-### Hermeneutic Fairness
-Das System garantiert, dass **jede** vom User ausgewählte Quelle 
-gleichberechtigt in der Synthese erscheint – unabhängig von:
-- Sprache (multilingualer Query Expansion)
-- Länge (Essence Parity: Max 12 Chunks/Doc)
-- Embedding-Quality (VIP-Schutz: Min. 3 Chunks/Doc)
+**Once public, contributions welcome for:**
+- 🐛 Bug reports via GitHub Issues
+- 💡 Feature requests (must align with hermeneutic methodology, see [CONTRIBUTING.md](CONTRIBUTING.md))
+- 📖 Documentation improvements
+- 🔧 Code contributions (after discussion in Issues)
 
-### Example Use Case
-"Vergleiche Adorno (DE, 25 S.), Chesterton (EN, 7 S.), Valéry (FR, 200 S.), Tynjanov, Schklowski"
+**Code contributions:** See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
-**v49:** Nur Adorno + Valéry analysiert (EN fehlt)
-**v50.5:** Alle 5 Autoren mit 4-6 Sätzen + 3-4 Zitaten ✅
+**Not accepting contributions for:**
+- ❌ Feature creep (AI audio/video analysis, million-document indexing)
+- ❌ Breaking changes without prior discussion
+- ❌ Code without tests or documentation
 
-### Architecture
-```
-User Query (DE)
-    ↓
-Hermeneutic Router → Intent: LITERARY
-    ↓
-Multilingual Expansion → "... How ... Comment ... Как ..."
-    ↓
-Investigativ-Modus (≤5 Docs) → Fairness-Quota: 84 Chunks/Doc
-    ↓
-RRF (Vector + BM25) → VIP-Schutz: Min. 3 Chunks/Doc
-    ↓
-Hermeneutic Reranker → Threshold: 0.6
-    ↓
-Essence Parity → Max 12 Chunks/Doc
-    ↓
-Synthesis (Sonnet 4) → Prompt erzwingt 1 Absatz + 3-4 Zitate/Text
-```
+---
+
+## 📧 Contact
+
+**Project Lead:** Grigori Pantijelew  
+**Institution:** Landesinstitut für Schule Bremen  
+**Email:** grigori.pantijelew@lis.bremen.de
+
+**Repository:** https://github.com/gpantijelew/hermeneutic-engine  
+**Status:** Private (public release planned **January 2026**)
+
+---
+
+## 🙏 Acknowledgments
+
+**Development Partners:**
+- **Anthropic** (Claude Sonnet 4.5) – Fairness architecture and conceptual guidance
+- **Google DeepMind** (Gemini 3) – VIP-Schutz implementation and code optimization
+- **xAI** (Grok) – Adaptive RAG research and state-of-the-art survey
+
+**Infrastructure:**
+- **Google Cloud Platform** – Computational resources via Research Credits Program
+
+**Open Source Foundations:**
+- Streamlit (UI framework)
+- BeautifulSoup (HTML parsing)
+- rank-bm25 (keyword search)
+- Firebase Admin SDK (Firestore integration)
+
+---
+
+**Version:** v50.5 "Source Parity & Deep Validation"  
+**Last Updated:** December 29, 2025  
+**Status:** Research Prototype (Private Repository, Public Release January 2026)
