@@ -70,7 +70,7 @@ st.write(f"🚀 Die ({APP_VERSION}) wird ausgeführt!")
 AUTH_ENABLED = True  # Passwort-Schutz aktiviert
 
 def check_password():
-    """Prüft das Passwort via st.session_state."""
+    """Prüft das Passwort (Robust für Cloud & Lokal)."""
     if st.session_state.get("password_correct"):
         return True
 
@@ -79,7 +79,21 @@ def check_password():
     password = st.text_input("Passwort eingeben:", type="password")
 
     if password:
-        app_password = st.secrets.get("APP_PASSWORD", "fallback_password_unsafe")
+        # 1. Versuch: Hole Passwort aus Umgebungsvariable (Cloud / Google Secrets)
+        # Das ist der entscheidende Teil für Cloud Run!
+        app_password = os.environ.get("APP_PASSWORD")
+
+        # 2. Versuch: Hole Passwort aus st.secrets (Lokal)
+        if not app_password:
+            try:
+                app_password = st.secrets.get("APP_PASSWORD")
+            except:
+                pass # Keine Secrets Datei gefunden (ist ok in der Cloud)
+
+        # Fallback, falls gar nichts gesetzt ist
+        if not app_password:
+            app_password = "fallback_password_unsafe"
+
         if password == app_password:
             st.session_state.password_correct = True
             st.success("✅ Willkommen!")
@@ -105,7 +119,22 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Debug-Mode aktivieren?
-DEBUG_MODE = st.secrets.get("DEBUG_MODE", False)
+# Wir prüfen erst die Umgebungsvariable (Cloud), dann die Secrets (Lokal)
+try:
+    # Cloud-Weg (Environment Variable)
+    debug_env = os.environ.get("DEBUG_MODE", "False").lower() == "true"
+
+    # Lokaler Weg (Secrets Datei)
+    try:
+        debug_local = st.secrets.get("DEBUG_MODE", False)
+    except:
+        debug_local = False # Datei fehlt, ist ok
+
+    DEBUG_MODE = debug_env or debug_local
+
+except Exception:
+    DEBUG_MODE = False
+
 if DEBUG_MODE:
     logger.setLevel(logging.DEBUG)
     st.sidebar.info("🐛 Debug-Mode AKTIV")
@@ -459,7 +488,7 @@ def render_analysis_page():
                             )
                         
                         # Hole Imbalance-Info
-                        imbalance_info = rag_engine.last_imbalance_info
+                        imbalance_info = getattr (rag_engine, 'last_imbalance_info', None)
                         
                         # ===================================================================
                         # VARIANTE C: GESTUFTE INTERVENTION

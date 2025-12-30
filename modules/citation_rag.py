@@ -22,6 +22,7 @@ from modules.llm_instructions import ENFORCER_INSTRUCTION
 from modules.llm_instructions import EXEGESIS_SYNTHESIS_PROMPT, SYNTHESIS_INSTRUCTION
 from modules.hermeneutic_reranker import HermeneuticReranker
 from modules.hermeneutic_router import HermeneuticRouter
+from types import SimpleNamespace
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,9 @@ class CitationRAG:
         self.model_name = model_name
         self.router = HermeneuticRouter()
         self.synthesizer = EvidenceFirstSynthesizer(model_name)
+
+        # FIX: Initialisierung für UI-Zugriff
+        self.last_imbalance_info = None 
         
         self.current_context = {
             "intent": "FACTUAL",
@@ -232,6 +236,31 @@ WICHTIG:
         logger.info(f"📊 Dokumente nach Reranking (vor Essenz-Extraktion):")
         for doc_title, count in sorted(surviving_docs.items(), key=lambda x: x[1], reverse=True):
             logger.info(f"  📄 {doc_title}: {count} Chunks")
+
+        # --- v50.5 FIX: Imbalance-Daten für UI speichern ---
+        if surviving_docs:
+            counts = list(surviving_docs.values())
+            max_c = max(counts)
+            min_c = min(counts)
+            ratio = max_c / min_c if min_c > 0 else 0
+
+            severity = "none"
+            if len(surviving_docs) > 1:
+                if ratio >= 10: severity = "critical"
+                elif ratio >= 5: severity = "info"
+
+            self.last_imbalance_info = SimpleNamespace(
+                severity=severity,
+                ratio=ratio,
+                doc_distribution=dict(surviving_docs),
+                max_chunks=max_c,
+                min_chunks=min_c
+            )
+        else:
+            self.last_imbalance_info = SimpleNamespace(
+                severity="none", ratio=1.0, doc_distribution={}, max_chunks=0, min_chunks=0
+            )
+        # ---------------------------------------------------
         
         # --- v50.5: ESSENCE PARITY (Intelligente Essenz-Extraktion!) ---
         if chat_id and isinstance(chat_id, list) and len(chat_id) <= 10:

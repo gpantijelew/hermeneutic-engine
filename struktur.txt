@@ -1,168 +1,136 @@
-Auflistung der Ordnerpfade f�r Volume System
-Volumeseriennummer : 566B-3A7A
-C:.
-|   .env
-|   .gitignore
-|   app.py
-|   comparative-studies-ai-models-1bf59eb77077.json
-|   FIBEL_Hermeneutic_Engine_v49.md
-|   Procfile
-|   README.md
-|   requirements.txt
-|   runtime.txt
-|   struktur.txt
-|   system_prompts.py
-|   
-+---.streamlit
-|       config.toml
-|       secrets.toml
-|       
-+---data
-|   \---examples
-+---modules
-|   |   bulk_export.py
-|   |   bulk_labeling.py
-|   |   citation_rag.py
-|   |   confidence_scoring.py
-|   |   database.py
-|   |   enforcer_config.py
-|   |   evidence_synthesis.py
-|   |   export.py
-|   |   fact_extractor.py
-|   |   hermeneutic_enforcer.py
-|   |   hermeneutic_reranker.py
-|   |   importer_old.py
-|   |   llm_instructions.py
-|   |   query_classifier.py
-|   |   reranker.py
-|   |   synthesis_utils.py
-|   |   types.py
-|   |   vector_admin.py
-|   |   vector_store.py
-|   |   __init__.py
-|   |   
-|   +---importers
-|   |   |   base.py
-|   |   |   README.md
-|   |   |   text_parser.py
-|   |   |   utils.py
-|   |   |   __init__.py
-|   |   |   
-|   |   +---documents
-|   |   |   |   epub.py
-|   |   |   |   pdf.py
-|   |   |   |   
-|   |   |   \---__pycache__
-|   |   |           epub.cpython-313.pyc
-|   |   |           pdf.cpython-313.pyc
-|   |   |           
-|   |   +---html
-|   |   |   |   chatgpt.py
-|   |   |   |   claude.py
-|   |   |   |   deepseek.py
-|   |   |   |   gemini.py
-|   |   |   |   glm.py
-|   |   |   |   grok.py
-|   |   |   |   hotbot.py
-|   |   |   |   kimi.py
-|   |   |   |   lmarena.py
-|   |   |   |   perplexity.py
-|   |   |   |   
-|   |   |   \---__pycache__
-|   |   |           chatgpt.cpython-313.pyc
-|   |   |           claude.cpython-313.pyc
-|   |   |           deepseek.cpython-313.pyc
-|   |   |           gemini.cpython-313.pyc
-|   |   |           glm.cpython-313.pyc
-|   |   |           grok.cpython-313.pyc
-|   |   |           hotbot.cpython-313.pyc
-|   |   |           kimi.cpython-313.pyc
-|   |   |           lmarena.cpython-313.pyc
-|   |   |           perplexity.cpython-313.pyc
-|   |   |           
-|   |   \---__pycache__
-|   |           base.cpython-313.pyc
-|   |           text_parser.cpython-313.pyc
-|   |           utils.cpython-313.pyc
-|   |           __init__.cpython-313.pyc
-|   |           
-|   +---preprocessing
-|   |   |   chunk_classifier.py
-|   |   |   __init__.py
-|   |   |   
-|   |   \---__pycache__
-|   |           chunk_classifier.cpython-313.pyc
-|   |           __init__.cpython-313.pyc
-|   |           
-|   +---utils
-|   |   |   date_extractor.py
-|   |   |   version_extractor.py
-|   |   |   
-|   |   \---__pycache__
-|   |           date_extractor.cpython-313.pyc
-|   |           version_extractor.cpython-313.pyc
-|   |           
-|   \---__pycache__
-|           bulk_export.cpython-313.pyc
-|           bulk_labeling.cpython-313.pyc
-|           citation_rag.cpython-313.pyc
-|           confidence_scoring.cpython-313.pyc
-|           database.cpython-313.pyc
-|           evidence_synthesis.cpython-313.pyc
-|           export.cpython-313.pyc
-|           hermeneutic_enforcer.cpython-313.pyc
-|           hermeneutic_reranker.cpython-313.pyc
-|           importer.cpython-313.pyc
-|           llm_instructions.cpython-313.pyc
-|           query_classifier.cpython-313.pyc
-|           reranker.cpython-313.pyc
-|           synthesis_utils.cpython-313.pyc
-|           types.cpython-313.pyc
-|           vector_admin.cpython-313.pyc
-|           vector_store.cpython-313.pyc
-|           __init__.cpython-313.pyc
-|           
-+---scripts
-|   +---debug
-|   |       debug_db.py
-|   |       debug_document.py
-|   |       debug_metadata.py
-|   |       debug_pdf.py
-|   |       debug_raw.py
-|   |       html_spy.py
-|   |       inspect_artifacts.py
-|   |       inspect_deepseek_hit.py
-|   |       inspect_index.py
-|   |       
-|   +---maintenance
-|   |       reindex_db.py
-|   |       repair_pdf_metadata.py
-|   |       reset_vectors.py
-|   |       selective_indexer.py
-|   |       smart_reindex.py
-|   |       
-|   \---utilities
-|           find_quote.py
-|           force_import_pdfs.py
-|           
-+---tests
-|   |   stress_test_v49.py
-|   |   test_classifier.py
-|   |   test_hermeneutic_enforcer.py
-|   |   test_lakmus.py
-|   |   test_metadata_logic.py
-|   |   test_preprocessing.py
-|   |   test_ranking.py
-|   |   test_reranker_lakmus.py
-|   |   test_rrf.py
-|   |   
-|   \---diagnostics
-|           check_chats.py
-|           check_deepseek_tags.py
-|           check_settings.py
-|           verify_data.py
-|           verify_pipeline.py
-|           
-\---__pycache__
-        system_prompts.cpython-313.pyc
-        
+Projektstruktur für: forschungsprojekt-v45
+========================================
+
+forschungsprojekt-v45/
+    .env
+    .gitignore
+    CONTRIBUTING.md
+    LICENSE.txt
+    Procfile
+    README.md
+    app.py
+    delete_test_pdfs.py
+    requirements.txt
+    runtime.txt
+    struktur.txt
+    system_prompts.py
+    .secrets/
+        comparative-studies-ai-models-1bf59eb77077.json
+    .streamlit/
+        config.toml
+        secrets.toml
+    data/
+        examples/
+    docs/
+        CHANGELOG.md
+        FIBEL_Hermeneutic_Engine_v49.md
+        FIBEL_v49.2.md
+        README_v50.5_UPDATE.md
+        docs_v50_architecture.md
+        images/
+            Answer Parity 27122025.png
+            Essence Parity 27122025.png
+            Fazit Enforcer Quellen 21122025.png
+            Fragment 21122025.png
+            Hermeneutic Router 27122025.png
+            Pessoa Beispiel 21122025.png
+            Reranker 21122025.png
+            Tiefenprüfung 21122025.png
+            X Grok 25122025.png
+    modules/
+        __init__.py
+        bulk_export.py
+        bulk_labeling.py
+        citation_rag.py
+        confidence_scoring.py
+        config.py
+        database.py
+        enforcer_config.py
+        evidence_synthesis.py
+        export.py
+        fact_extractor.py
+        hermeneutic_enforcer.py
+        hermeneutic_reranker.py
+        hermeneutic_router.py
+        importer_old.py
+        llm_instructions.py
+        query_classifier.py
+        reranker.py
+        synthesis_utils.py
+        types.py
+        vector_admin.py
+        vector_store.py
+        importers/
+            README.md
+            __init__.py
+            base.py
+            text_parser.py
+            utils.py
+            documents/
+                epub.py
+                fb2.py
+                pdf.py
+            html/
+                chatgpt.py
+                claude.py
+                deepseek.py
+                gemini.py
+                glm.py
+                grok.py
+                hotbot.py
+                kimi.py
+                lmarena.py
+                perplexity.py
+                wikisource.py
+        preprocessing/
+            __init__.py
+            chunk_classifier.py
+        utils/
+            date_extractor.py
+            version_extractor.py
+    scripts/
+        debug/
+            debug_db.py
+            debug_document.py
+            debug_metadata.py
+            debug_pdf.py
+            debug_raw.py
+            html_spy.py
+            inspect_artifacts.py
+            inspect_deepseek_hit.py
+            inspect_index.py
+        maintenance/
+            reindex_db.py
+            repair_pdf_metadata.py
+            reset_vectors.py
+            selective_indexer.py
+            smart_reindex.py
+        utilities/
+            find_quote.py
+            force_import_pdfs.py
+    tests/
+        check_pdf_messages.py
+        check_pdfs.py
+        stress_test_v49.py
+        test_classifier.py
+        test_hermeneutic_enforcer.py
+        test_lakmus.py
+        test_metadata_logic.py
+        test_multilingual_retrieval.py
+        test_preprocessing.py
+        test_ranking.py
+        test_registry_integration.py
+        test_reranker_lakmus.py
+        test_router_v50.py
+        test_rrf.py
+        test_utils_detection.py
+        diagnostics/
+            check_chats.py
+            check_deepseek_tags.py
+            check_settings.py
+            diagnose_details.py
+            diagnose_space.py
+            diagnose_windows_bloat.py
+            generate_structure.py
+            verify_data.py
+            verify_pipeline.py

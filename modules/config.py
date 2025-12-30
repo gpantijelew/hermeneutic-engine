@@ -14,6 +14,8 @@ PHILOSOPHIE:
 
 import os
 import sys
+import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Dict
 
@@ -33,6 +35,56 @@ if hasattr(sys, '_MEIPASS'):  # Falls als exe kompiliert (PyInstaller)
 else:
     # modules/config.py → zwei Ebenen hoch = Projekt-Root
     PROJECT_ROOT = Path(__file__).parent.parent
+
+# ==============================================================================
+# SYSTEM-HYGIENE & LOGGING (NEU: Der Wächter gegen Datenmüll)
+# ==============================================================================
+
+def setup_logging():
+    """
+    Konfiguriert das Logging zentral.
+    Verhindert, dass Bibliotheken Tausende Temp-Dateien erstellen.
+    """
+    # Logs-Verzeichnis erstellen
+    log_dir = PROJECT_ROOT / "logs"
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "engine.log"
+
+    # 1. Google/GRPC Geschwätz unterdrücken (bevor Bibliotheken laden)
+    os.environ['GRPC_VERBOSITY'] = 'ERROR'
+    os.environ['GLOG_minloglevel'] = '2'
+
+    # 2. Root Logger konfigurieren
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+
+    # Verhindern, dass wir Handler duplizieren (Streamlit Reload Problem)
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    # 3. Rotierender File-Handler (Max 5 MB, behält 3 Backups)
+    # Das verhindert riesige Log-Dateien!
+    file_handler = RotatingFileHandler(
+        log_file, maxBytes=5*1024*1024, backupCount=3, encoding='utf-8'
+    )
+    file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(file_formatter)
+    logger.addHandler(file_handler)
+
+    # 4. Console Handler (für Docker/Terminal)
+    console_handler = logging.StreamHandler()
+    console_formatter = logging.Formatter('%(levelname)s: %(message)s')
+    console_handler.setFormatter(console_formatter)
+    logger.addHandler(console_handler)
+
+    # 5. Geschwätzige Bibliotheken stummschalten
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("google").setLevel(logging.WARNING)
+    logging.getLogger("absl").setLevel(logging.WARNING) # WICHTIG für Google Cloud
+    logging.getLogger("fsevents").setLevel(logging.WARNING)
+
+# Logging sofort initialisieren
+setup_logging()
 
 # ==============================================================================
 # PRIMARY MODELS (Kritische hermeneutische Aufgaben)
@@ -104,13 +156,13 @@ EMBEDDING_DIMENSIONS = 768
 def get_model_for_task(task: str) -> str:
     """
     Gibt das konfigurierte Model für eine spezifische Aufgabe zurück.
-    
+
     Args:
         task: Eine der definierten Task-Keys (z.B. 'synthesis', 'enforcer')
-    
+
     Returns:
         Model-Name als String
-    
+
     Raises:
         ValueError: Wenn task unbekannt ist
     """
@@ -126,10 +178,10 @@ def get_model_for_task(task: str) -> str:
         'title_gen': MODEL_TITLE_GEN,
         'question_conv': MODEL_QUESTION_CONV,
     }
-    
+
     if task not in MODEL_REGISTRY:
         raise ValueError(f"Unbekannter Task: '{task}'. Erlaubte Tasks: {list(MODEL_REGISTRY.keys())}")
-    
+
     return MODEL_REGISTRY[task]
 
 # ==============================================================================
@@ -142,9 +194,9 @@ def validate_config() -> bool:
     Nützlich für Startup-Tests.
     """
     import google.generativeai as genai
-    
+
     all_valid = True
-    
+
     # API Key Check
     api_key = os.environ.get('GEMINI_API_KEY')
     if not api_key:
@@ -153,7 +205,7 @@ def validate_config() -> bool:
         all_valid = False
     else:
         print(f"✅ GEMINI_API_KEY gefunden (Länge: {len(api_key)} Zeichen)")
-    
+
     # Service Account Check
     if not os.path.exists(SERVICE_ACCOUNT_KEY_PATH):
         print(f"❌ FEHLER: Service Account Key nicht gefunden!")
@@ -162,12 +214,12 @@ def validate_config() -> bool:
         all_valid = False
     else:
         print(f"✅ Service Account Key gefunden: {SERVICE_ACCOUNT_KEY_PATH}")
-    
+
     if all_valid:
         print("\n✅ Konfiguration vollständig valide!")
     else:
         print("\n⚠️ Konfiguration hat Probleme (siehe oben).")
-    
+
     return all_valid
 
 # ==============================================================================
