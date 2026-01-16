@@ -1,23 +1,16 @@
 """
-Base Classes für alle Importer (v49.3).
+Base Classes für alle Importer (v50.6 - mit HTML→Markdown Konverter).
+
+CHANGELOG v50.6:
+- Hinzugefügt: _html_to_markdown() in ConfigBasedImporter
+- Alle Plattformen (ChatGPT, Kimi, Claude, etc.) behalten jetzt Formatierung
+- Fix: get_text() wird durch Markdown-Konversion ersetzt
 
 Architektur:
     BaseImporter (ABC)
         ├── HTMLImporter (HTML-Parsing + Thinking-Extraktion)
-        └── ConfigBasedImporter (Config-driven für Standard-Chat-Plattformen)
-
-Usage:
-    # Neue Plattform hinzufügen:
-    1. Config-Eintrag in PARSER_CONFIGS hinzufügen
-    2. Importer-Klasse erstellen (erbt von ConfigBasedImporter)
-    3. config_key setzen
-    
-    class NewPlatformImporter(ConfigBasedImporter):
-        config_key = PlatformKey.NEW_PLATFORM.value
-        platform_name = "New Platform"
-        platform_id = "new_platform"
+        └── ConfigBasedImporter (Config-driven + Markdown-Konversion)
 """
-
 import sys
 import os
 from abc import ABC, abstractmethod
@@ -38,7 +31,6 @@ from modules.database import (
     delete_chat
 )
 
-
 # ==============================================================================
 # PLATFORM KEYS (Type-Safe)
 # ==============================================================================
@@ -54,7 +46,6 @@ class PlatformKey(Enum):
     GROK = 'grok'
     GLM = 'glm'
     DEEPSEEK = 'deepseek'
-
 
 # ==============================================================================
 # PARSER CONFIGURATIONS
@@ -182,7 +173,6 @@ PARSER_CONFIGS = {
     }
 }
 
-
 # ==============================================================================
 # CONFIG VALIDATION (v49.3)
 # ==============================================================================
@@ -212,7 +202,6 @@ def validate_parser_configs():
             )
     
     print(f"✅ Alle {len(PARSER_CONFIGS)} Parser-Configs validiert.")
-
 
 # ==============================================================================
 # BASE CLASSES
@@ -397,8 +386,12 @@ class HTMLImporter(BaseImporter):
 
 class ConfigBasedImporter(HTMLImporter):
     """
-    Nutzt PARSER_CONFIGS Dictionary zur Konfiguration (v49.3).
+    Nutzt PARSER_CONFIGS Dictionary zur Konfiguration (v49.6 - mit Markdown-Konverter).
     Standard-Implementierung für die meisten Chat-Plattformen.
+    
+    NEU in v49.6:
+    - _html_to_markdown(): Behält Formatierung (fett, listen, Tabellen, etc.)
+    - Alle Plattformen profitieren automatisch
     
     Subklassen müssen nur setzen:
     - config_key (z.B. PlatformKey.CHATGPT.value)
@@ -414,6 +407,135 @@ class ConfigBasedImporter(HTMLImporter):
     
     config_key: str = None  # Muss von Subklasse gesetzt werden
     
+    def _html_to_markdown(self, element) -> str:
+        """
+        Konvertiert HTML-Content zu Markdown (behält Formatierung).
+        
+        Unterstützt:
+        - <strong>, <b> → **fett**
+        - <em>, <i> → *kursiv*
+        - <ul><li>, <ol><li> → Listen
+        - <hr/> → Trennlinien
+        - <h2>, <h3>, <h4> → Überschriften
+        - <table> → Markdown-Tabellen
+        - <code>, <pre> → Code-Blöcke
+        
+        Args:
+            element: BeautifulSoup-Element mit HTML-Content
+        
+        Returns:
+            Markdown-formatierter Text
+        """
+        if not element:
+            return ""
+        
+        # Strategie: HTML-String manipulieren statt DOM
+        html_str = str(element)
+        
+        # 1. Überschriften
+        html_str = re.sub(r'<h2[^>]*>(.*?)</h2>', r'\n## \1\n', html_str, flags=re.DOTALL)
+        html_str = re.sub(r'<h3[^>]*>(.*?)</h3>', r'\n### \1\n', html_str, flags=re.DOTALL)
+        html_str = re.sub(r'<h4[^>]*>(.*?)</h4>', r'\n#### \1\n', html_str, flags=re.DOTALL)
+        
+        # 2. Fettdruck
+        html_str = re.sub(r'<strong[^>]*>(.*?)</strong>', r'**\1**', html_str, flags=re.DOTALL)
+        html_str = re.sub(r'<b[^>]*>(.*?)</b>', r'**\1**', html_str, flags=re.DOTALL)
+        
+        # 3. Kursiv
+        html_str = re.sub(r'<em[^>]*>(.*?)</em>', r'*\1*', html_str, flags=re.DOTALL)
+        html_str = re.sub(r'<i[^>]*>(.*?)</i>', r'*\1*', html_str, flags=re.DOTALL)
+        
+        # 4. Trennlinien
+        html_str = re.sub(r'<hr\s*/?>', '\n\n---\n\n', html_str)
+        
+        # 5. Listen (komplexer)
+        def replace_list(match):
+            list_content = match.group(1)
+            # Finde alle <li> Items
+            items = re.findall(r'<li[^>]*>(.*?)</li>', list_content, flags=re.DOTALL)
+            if not items:
+                return match.group(0)
+            
+            # Konvertiere zu Markdown-Liste
+            markdown_items = []
+            for item in items:
+                # Entferne innere HTML-Tags (außer strong/em die schon konvertiert wurden)
+                clean_item = re.sub(r'<p[^>]*>(.*?)</p>', r'\1', item, flags=re.DOTALL)
+                markdown_items.append(f"  * {clean_item.strip()}")
+            
+            return '\n' + '\n'.join(markdown_items) + '\n'
+        
+        html_str = re.sub(r'<ul[^>]*>(.*?)</ul>', replace_list, html_str, flags=re.DOTALL)
+        html_str = re.sub(r'<ol[^>]*>(.*?)</ol>', replace_list, html_str, flags=re.DOTALL)
+        
+        # 6. Code-Blöcke
+        html_str = re.sub(r'<code[^>]*>(.*?)</code>', r'`\1`', html_str, flags=re.DOTALL)
+        html_str = re.sub(r'<pre[^>]*>(.*?)</pre>', r'\n```\n\1\n```\n', html_str, flags=re.DOTALL)
+        
+        # 7. Tabellen (vereinfacht)
+        def replace_table(match):
+            # Extrahiere Table-HTML
+            table_html = match.group(0)
+            
+            try:
+                # Parse nur diese Tabelle
+                temp_soup = BeautifulSoup(table_html, 'html.parser')
+                table = temp_soup.find('table')
+                
+                if not table:
+                    return match.group(0)
+                
+                # Header
+                headers = []
+                thead = table.find('thead')
+                if thead:
+                    for th in thead.find_all('th'):
+                        headers.append(th.get_text(strip=True))
+                
+                # Rows
+                rows = []
+                tbody = table.find('tbody')
+                if tbody:
+                    for tr in tbody.find_all('tr'):
+                        row = [td.get_text(strip=True) for td in tr.find_all('td')]
+                        if row:
+                            rows.append(row)
+                
+                # Baue Markdown
+                if headers:
+                    md = '\n\n| ' + ' | '.join(headers) + ' |\n'
+                    md += '| ' + ' | '.join(['---'] * len(headers)) + ' |\n'
+                    for row in rows:
+                        md += '| ' + ' | '.join(row) + ' |\n'
+                    return md + '\n'
+            except:
+                pass
+            
+            return match.group(0)
+        
+        html_str = re.sub(r'<table[^>]*>.*?</table>', replace_table, html_str, flags=re.DOTALL)
+        
+        # 8. Paragraphen → Doppelte Zeilenumbrüche
+        html_str = re.sub(r'<p[^>]*>(.*?)</p>', r'\1\n\n', html_str, flags=re.DOTALL)
+        
+        # 9. Entferne alle verbleibenden HTML-Tags
+        soup = BeautifulSoup(html_str, 'html.parser')
+        text = soup.get_text(separator='', strip=False)
+        
+        # 10. Cleanup
+        # Entferne mehrfache Leerzeilen
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        # Entferne Leerzeichen am Zeilenanfang (außer bei Listen/Überschriften)
+        lines = []
+        for line in text.split('\n'):
+            stripped = line.strip()
+            if stripped.startswith('*') or stripped.startswith('#') or stripped.startswith('-'):
+                lines.append(line)
+            else:
+                lines.append(stripped)
+        
+        return '\n'.join(lines).strip()
+    
     def parse(
         self, 
         content: Any, 
@@ -421,7 +543,7 @@ class ConfigBasedImporter(HTMLImporter):
         **kwargs
     ) -> List[Dict[str, Any]]:
         """
-        Config-basiertes Parsing (v49.3 - mit Progress-Callback).
+        Config-basiertes Parsing (v49.6 - mit Markdown-Konversion).
         
         Args:
             content: HTML-Content (bytes oder str)
@@ -511,7 +633,8 @@ class ConfigBasedImporter(HTMLImporter):
                 
                 content_element = block.select_one(content_selector)
                 if content_element:
-                    content_text = content_element.get_text(separator='\n', strip=True)
+                    # *** NEU in v49.6: Markdown-Konversion statt get_text() ***
+                    content_text = self._html_to_markdown(content_element)
                     
                     # Thinking-Block prüfen (falls vorhanden)
                     thinking_text = self.extract_thinking_block(block)
@@ -612,7 +735,6 @@ class ConfigBasedImporter(HTMLImporter):
             # Kein einzige Nachricht gespeichert → Chat löschen
             delete_chat(chat_id)
             return {'chat_id': None, 'message_count': 0}
-
 
 # ==============================================================================
 # STARTUP VALIDATION (Optional - für Tests)

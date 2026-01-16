@@ -1,5 +1,5 @@
-# app.py - v50.0: Hybrid Cockpit Integration (Full Version)
-APP_VERSION = "v50.0 (Hybrid)"
+# app.py - v50.7: Hybrid Cockpit Integration (Full Version)
+APP_VERSION = "v50.7 (Hybrid)"
 print("=" * 80)
 print(f"🚀 STARTUP: app_forschung_{APP_VERSION}.py lädt...")
 print("=" * 80)
@@ -54,7 +54,7 @@ from modules.vector_admin import render_vector_admin_dashboard
 from modules.vector_store import FirestoreVectorStore
 from modules.citation_rag import CitationRAG
 from modules.synthesis_utils import post_process_synthesis
-from modules.confidence_scoring import calculate_confidence_scores, get_color_for_score
+from modules.confidence_scoring import calculate_confidence_scores
 from modules.export import generate_markdown, generate_json, generate_excel
 
 # Lade Umgebungsvariablen aus der .env-Datei (nur für lokale Entwicklung)
@@ -290,11 +290,16 @@ def render_import_page():
                     messages = importer.parse(chat_text_input, container=container)
 
                     if messages:
-                        result = importer.import_to_firestore(messages, metadata={'source': 'paste'})
-                        if result['chat_id']:
-                            container.success(f"✅ Fertig! {result['message_count']} Nachrichten importiert.")
-                        else:
-                            container.error("❌ Fehler beim Speichern in DB.")
+                         result = importer.import_to_firestore(messages, metadata={'source': 'paste'})
+                         if result['chat_id']:
+                                container.success(f"✅ Fertig! {result['message_count']} Nachrichten importiert.")
+                                # NEU: Cache invalidieren und Chat öffnen
+                                st.cache_data.clear()
+                                st.session_state.chat_id = result['chat_id']
+                                st.session_state.history = load_chat_history(result['chat_id'])
+                                st.rerun()
+                         else:
+                                container.error("❌ Fehler beim Speichern in DB.")
                 except Exception as e:
                     st.error(f"❌ Import-Fehler: {e}")
             else:
@@ -366,15 +371,19 @@ def render_import_page():
 
                     importer = get_importer(platform_key)
                     messages = importer.parse(file_content, container=file_container)
-
                     if messages:
-                        if len(messages) == 1 and messages[0].get('content') == 'Diagnose Mode - Kein Import':
+                         if len(messages) == 1 and messages[0].get('content') == 'Diagnose Mode - Kein Import':
                             continue
-                        res = importer.import_to_firestore(messages, metadata={'container': file_container})
-                        if res['chat_id']:
-                            file_container.success(f"✅ Importiert: {res['message_count']} Nachrichten.")
-                        else:
-                            file_container.error("❌ Fehler beim Speichern.")
+                         res = importer.import_to_firestore(messages, metadata={'container': file_container})
+                         if res['chat_id']:
+                             file_container.success(f"✅ Importiert: {res['message_count']} Nachrichten.")
+                             # NEU: Cache invalidieren und Chat öffnen
+                             st.cache_data.clear()
+                             st.session_state.chat_id = res['chat_id']
+                             st.session_state.history = load_chat_history(res['chat_id'])
+                             st.rerun()
+                         else:
+                             file_container.error("❌ Fehler beim Speichern.")
                     else:
                         file_container.error("❌ Keine Nachrichten gefunden.")
                 except Exception as e:
@@ -831,12 +840,12 @@ elif page == "💬 Chat":
     st.title("🧠 Dein persönliches Chat-Gedächtnis")
 
     # ==========================================================================
-    # v50 HYBRID COCKPIT (INTEGRATION) - FIXED (State Persistence)
+# v50 HYBRID COCKPIT (INTEGRATION) - FIXED (State Persistence)
     # ==========================================================================
     with st.sidebar:
         st.markdown("---")
         st.header("🎛️ Hybrid-Cockpit")
-
+        
         # 1. HAUPTSCHALTER (Mit Key!)
         use_db = st.toggle(
             "🔌 Datenbank-Wissen", 
@@ -844,13 +853,13 @@ elif page == "💬 Chat":
             key="toggle_use_db",
             help="AN: Zugriff auf deine Dokumente (RAG).\nAUS: Freier Chat mit Gemini 3."
         )
-
+        
         selected_rag_ids = None
         use_router = False
-
+        
         if use_db:
             st.caption("🗃️ Datenbank-Steuerung")
-
+            
             # 2. ROUTER (Mit Key!)
             use_router = st.checkbox(
                 "🧠 Auto-Router (v50)", 
@@ -858,22 +867,23 @@ elif page == "💬 Chat":
                 key="check_use_router",
                 help="AN: KI entscheidet Strategie (Fakt vs. Poesie).\nAUS: Standard-Suche."
             )
-
+            
             # 3. DOKUMENTEN-FILTER (Mit Caching & Keys!)
             st.markdown("---")
             c1, c2 = st.columns([4, 1])
             c1.caption("🔍 Fokus (Scope)")
+            
             if c2.button("🔄", help="Liste aktualisieren"):
                 clear_chat_cache()
                 st.rerun()
-
+            
             # HIER IST DER FIX: Wir nutzen die gecachte Liste!
             all_chats_list = get_cached_chat_list()
-
+            
             # Sortieren
             all_chats_list = sorted(all_chats_list, key=lambda x: x['title'].lower())
             chat_options = {c['title']: c['id'] for c in all_chats_list}
-
+            
             # Radio Button mit Key (Wichtig für State)
             filter_mode = st.radio(
                 "Quelle:", 
@@ -881,16 +891,16 @@ elif page == "💬 Chat":
                 label_visibility="collapsed",
                 key="radio_filter_mode"
             )
-
+            
             if filter_mode == "Auswahl treffen":
                 # FIX: State-Persistenz erzwingen
                 # Wir prüfen, ob im Session State schon eine Auswahl liegt
                 current_selection = st.session_state.get("multi_select_docs", [])
-
+                
                 # Wir filtern die Auswahl, damit nur noch existierende Optionen drin sind
                 # (Falls sich die Chat-Liste im Hintergrund geändert hat)
                 valid_selection = [s for s in current_selection if s in chat_options.keys()]
-
+                
                 selected_titles = st.multiselect(
                     "Dokumente wählen:",
                     options=list(chat_options.keys()),
@@ -898,26 +908,27 @@ elif page == "💬 Chat":
                     placeholder="Wähle Chats/Texte...",
                     key="multi_select_docs"
                 )
-
+                
                 if selected_titles:
                     selected_rag_ids = [chat_options[t] for t in selected_titles]
                 else:
                     st.warning("⚠️ Keine Auswahl = Keine Suche!")
-
+        
         st.markdown("---")
         st.sidebar.caption(f"📦 Forschungs-Cockpit {APP_VERSION}")
-
+        
         # --- ADMIN BEREICH ---
         with st.expander("⚙️ Admin-Bereich", expanded=False):
             st.subheader("🔐 Passwort ändern")
             new_password = st.text_input("Neues Passwort:", type="password", key="new_pwd")
+            
             if st.button("Passwort speichern", use_container_width=True):
                 st.warning("⚠️ Online: Passwort muss in Google Secret Manager geändert werden.")
                 st.info("Lokal: Ändere .streamlit/secrets.toml manuell")
-
+        
         # --- KONVERSATIONEN (Mit Cache-Invalidierung!) ---
         st.header("💬 Konversationen")
-
+        
         if st.button("➕ Neuer Chat", use_container_width=True, type="primary"):
             st.session_state.chat_id = None
             st.session_state.history = []
@@ -927,31 +938,41 @@ elif page == "💬 Chat":
             st.session_state.last_error = None
             clear_chat_cache() # Cache löschen, damit neuer Chat sichtbar wird
             st.rerun()
-
+        
         # Liste laden (Gecacht!)
         chat_list = get_cached_chat_list()
-
+        
         for chat in chat_list:
             is_active = (st.session_state.chat_id == chat['id'])
-
+            
             with st.container():
                 # FALL A: UMBENENNEN
                 if st.session_state.rename_chat_id == chat['id']:
-                    new_name = st.text_input("Neuer Name:", value=chat['title'], key=f"rename_input_{chat['id']}", label_visibility="collapsed")
+                    new_name = st.text_input(
+                        "Neuer Name:", 
+                        value=chat['title'], 
+                        key=f"rename_input_{chat['id']}", 
+                        label_visibility="collapsed"
+                    )
+                    
                     c1, c2 = st.columns(2)
+                    
                     if c1.button("✓", key=f"save_{chat['id']}", use_container_width=True):
                         if rename_chat(chat['id'], new_name.strip()):
                             st.session_state.rename_chat_id = None
                             clear_chat_cache() # Cache aktualisieren
                             st.rerun()
+                    
                     if c2.button("✗", key=f"cancel_{chat['id']}", use_container_width=True):
                         st.session_state.rename_chat_id = None
                         st.rerun()
-
+                
                 # FALL B: LÖSCHEN BESTÄTIGEN
                 elif st.session_state.delete_confirm_id == chat['id']:
                     st.warning(f"**{chat['title']}** wirklich löschen?")
+                    
                     c1, c2 = st.columns(2)
+                    
                     if c1.button("Ja, löschen", key=f"confirm_del_{chat['id']}", use_container_width=True, type="primary"):
                         if delete_chat(chat['id']):
                             if st.session_state.chat_id == chat['id']:
@@ -960,14 +981,21 @@ elif page == "💬 Chat":
                             st.session_state.delete_confirm_id = None
                             clear_chat_cache() # Cache aktualisieren
                             st.rerun()
+                    
                     if c2.button("Nein", key=f"cancel_del_{chat['id']}", use_container_width=True):
                         st.session_state.delete_confirm_id = None
                         st.rerun()
-
+                
                 # FALL C: NORMALE ANZEIGE
                 else:
                     cols = st.columns([6, 1, 1])
-                    if cols[0].button(chat['title'], key=f"load_{chat['id']}", use_container_width=True, type="primary" if is_active else "secondary"):
+                    
+                    if cols[0].button(
+                        chat['title'], 
+                        key=f"load_{chat['id']}", 
+                        use_container_width=True, 
+                        type="primary" if is_active else "secondary"
+                    ):
                         st.session_state.chat_id = chat['id']
                         st.session_state.history = load_chat_history(chat['id'])
                         st.session_state.title_generated = True
@@ -975,24 +1003,26 @@ elif page == "💬 Chat":
                         st.session_state.delete_confirm_id = None
                         st.session_state.last_error = None
                         st.rerun()
+                    
                     if cols[1].button("✏️", key=f"edit_{chat['id']}", help="Umbenennen"):
                         st.session_state.rename_chat_id = chat['id']
                         st.rerun()
+                    
                     if cols[2].button("🗑️", key=f"delete_{chat['id']}", help="Löschen"):
                         st.session_state.delete_confirm_id = chat['id']
                         st.rerun()
-
+                    
                     if chat.get('lastUpdated'):
                         st.caption(f"🕒 {format_timestamp(chat['lastUpdated'])}")
-
+        
         st.markdown("---") # Die Linie bleibt!
-
+        
         # ==============================================================================
         # ERWEITERTE MODELLEINSTELLUNGEN (v47 ORIGINAL - WIEDERHERGESTELLT!)
         # ==============================================================================
         with st.expander("⚙️ Modelleinstellungen", expanded=False):
             st.caption("Globale Einstellungen für neue Chats")
-
+            
             available_models = [
                 "gemini-2.5-flash-lite-preview-09-2025", 
                 "gemini-2.5-flash-preview-09-2025",
@@ -1000,27 +1030,51 @@ elif page == "💬 Chat":
                 "gemini-2.5-pro",
                 "gemini-3-pro-preview"
             ]
-
+            
             current_model = st.session_state.global_settings.get('model_name', "gemini-2.5-pro")
-
+            
             try:
                 current_model_index = available_models.index(current_model)
             except ValueError:
                 current_model_index = 0
-
+            
             selected_model = st.selectbox(
                 "Wähle ein Gemini-Modell:",
                 options=available_models,
                 index=current_model_index,
                 help="Das ausgewählte Modell wird für alle neuen Chats verwendet."
             )
-
-            temp = st.slider("Temperature", 0.0, 1.0, st.session_state.global_settings.get('temperature', 0.2), 0.1)
-            top_p = st.slider("Top-P", 0.0, 1.0, st.session_state.global_settings.get('top_p', 0.95), 0.05)
-            use_search = st.checkbox("🔍 Google Search aktivieren", value=st.session_state.global_settings.get('use_search', True))
-            debug_mode = st.checkbox("🐛 Debug-Modus", value=st.session_state.global_settings.get('debug_mode', False))
-            sys_instr = st.text_area("System Instruction", st.session_state.global_settings.get('system_instruction', DEFAULT_SYSTEM_INSTRUCTION), height=250)
-
+            
+            temp = st.slider(
+                "Temperature", 
+                0.0, 1.0, 
+                st.session_state.global_settings.get('temperature', 0.2), 
+                0.1
+            )
+            
+            top_p = st.slider(
+                "Top-P", 
+                0.0, 1.0, 
+                st.session_state.global_settings.get('top_p', 0.95), 
+                0.05
+            )
+            
+            use_search = st.checkbox(
+                "🔍 Google Search aktivieren", 
+                value=st.session_state.global_settings.get('use_search', True)
+            )
+            
+            debug_mode = st.checkbox(
+                "🐛 Debug-Modus", 
+                value=st.session_state.global_settings.get('debug_mode', False)
+            )
+            
+            sys_instr = st.text_area(
+                "System Instruction", 
+                st.session_state.global_settings.get('system_instruction', DEFAULT_SYSTEM_INSTRUCTION), 
+                height=250
+            )
+            
             if st.button("💾 Einstellungen speichern", use_container_width=True):
                 st.session_state.global_settings['model_name'] = selected_model
                 st.session_state.global_settings['temperature'] = temp
@@ -1028,28 +1082,35 @@ elif page == "💬 Chat":
                 st.session_state.global_settings['system_instruction'] = sys_instr
                 st.session_state.global_settings['use_search'] = use_search
                 st.session_state.global_settings['debug_mode'] = debug_mode
-
+                
                 if save_global_settings(selected_model, temp, top_p, sys_instr, use_search, debug_mode):
                     st.success("✓ Gespeichert!")
                     time.sleep(1)
                     st.rerun()
-
+    
     # --- HAUPT-CHAT-INTERFACE (v50 HYBRID) ---
     if st.session_state.last_error:
         st.error(f"🚨 **Ein Fehler ist aufgetreten:**\n\n{st.session_state.last_error}")
+        
         if st.button("❌ Fehlermeldung schließen"):
             st.session_state.last_error = None
             st.rerun()
-
+    
+    # Chat-Historie anzeigen
     for message in st.session_state.history:
         with st.chat_message(message["role"]):
             st.markdown(message["parts"][0]["text"])
-
-    # Edit/Delete Buttons für letzte Nachricht (v47 Original)
+    
+    # ==============================================================================
+    # EDIT/DELETE/EXPORT BUTTONS (v50.6 - EXPORT NEU HINZUGEFÜGT)
+    # ==============================================================================
     if st.session_state.history and len(st.session_state.history) >= 2 and st.session_state.history[-1]['role'] == 'model':
         action_container = st.container()
+        
         with action_container:
-            col1, col2, col3, col4 = st.columns([.7, .1, .1, .1])
+            col1, col2, col3, col4 = st.columns([.6, .1, .1, .2])
+            
+            # EDIT BUTTON
             with col2:
                 if st.button("✏️", key="edit_last_turn", help="Letzte Frage bearbeiten"):
                     try:
@@ -1057,12 +1118,19 @@ elif page == "💬 Chat":
                         if db and st.session_state.chat_id:
                             messages_ref = db.collection('chats').document(st.session_state.chat_id).collection('messages')
                             query = messages_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(2)
-                            for doc in query.stream(): doc.reference.delete()
+                            
+                            for doc in query.stream(): 
+                                doc.reference.delete()
+                            
                             st.session_state.history = st.session_state.history[:-2]
                             st.success("Letzte Runde gelöscht.")
                             time.sleep(1)
                             st.rerun()
-                    except Exception as e: st.error(f"Fehler: {e}")
+                    
+                    except Exception as e: 
+                        st.error(f"Fehler: {e}")
+            
+            # DELETE BUTTON
             with col3:
                 if st.button("🗑️", key="delete_last_turn", help="Letzte Runde löschen"):
                     try:
@@ -1070,79 +1138,181 @@ elif page == "💬 Chat":
                         if db and st.session_state.chat_id:
                             messages_ref = db.collection('chats').document(st.session_state.chat_id).collection('messages')
                             query = messages_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(2)
-                            for doc in query.stream(): doc.reference.delete()
+                            
+                            for doc in query.stream(): 
+                                doc.reference.delete()
+                            
                             st.session_state.history = st.session_state.history[:-2]
                             st.success("Letzte Runde gelöscht.")
                             time.sleep(1)
                             st.rerun()
-                    except Exception as e: st.error(f"Fehler: {e}")
+                    
+                    except Exception as e: 
+                        st.error(f"Fehler: {e}")
+            
+            # EXPORT BUTTON (FIXED v50.6)
+            with col4:
+                # 1. Der Trigger-Button
+                if st.button("📄 Export", key="prep_export_btn", help="Markdown generieren", use_container_width=True):
+                    with st.spinner("Generiere Dokument..."):
+                        from modules.export import generate_markdown, generate_chat_markdown
+                        from modules.database import get_chat_list # Korrekter Import!
 
+                        # Chat-Titel holen
+                        chat_title = "Chat-Protokoll"
+                        if st.session_state.chat_id:
+                            try:
+                                db = get_firestore_client()
+                                chat_doc = db.collection('chats').document(st.session_state.chat_id).get()
+                                if chat_doc.exists:
+                                    chat_title = chat_doc.to_dict().get('title', 'Chat-Protokoll')
+                            except Exception as e:
+                                print(f"Export-Fehler (Titel): {e}")
+
+                        # Prüfen: Haben wir RAG-Daten?
+                        has_rag_sources = (
+                            hasattr(st.session_state, 'last_rag_sources') 
+                            and st.session_state.last_rag_sources
+                            and len(st.session_state.last_rag_sources) > 0
+                        )
+
+                        markdown = None
+                        filename = "export.md"
+
+                        try:
+                            if has_rag_sources:
+                                # Voller Forschungs-Export
+                                all_chats = get_chat_list()
+                                chat_map = {c['id']: c['title'] for c in all_chats}
+
+                                markdown = generate_markdown(
+                                    query=st.session_state.last_rag_query,
+                                    answer=st.session_state.history[-1]["parts"][0]["text"],
+                                    results=st.session_state.last_rag_sources,
+                                    chat_map=chat_map,
+                                    verification_log=None
+                                )
+                                filename = f"Forschungsnotiz_{datetime.now().strftime('%H%M')}.md"
+                            else:
+                                # Einfacher Chat-Export
+                                markdown = generate_chat_markdown(st.session_state.history, chat_title)
+                                filename = f"Chat_{datetime.now().strftime('%H%M')}.md"
+
+                            # WICHTIG: Im State speichern!
+                            st.session_state.export_data = markdown
+                            st.session_state.export_filename = filename
+                            st.success("Fertig!")
+
+                        except Exception as e:
+                            st.error(f"Fehler: {e}")
+                            print(f"Export-Crash: {e}")
+
+                # 2. Der Download-Button (Erscheint dauerhaft, wenn Daten da sind)
+                if "export_data" in st.session_state and st.session_state.export_data:
+                    st.download_button(
+                        label="💾 Download",
+                        data=st.session_state.export_data,
+                        file_name=st.session_state.export_filename,
+                        mime="text/markdown",
+                        key="dl_btn_persistent",
+                        use_container_width=True
+                    )
+
+    # ==============================================================================
     # INPUT & LOGIK-WEICHE
+    # ==============================================================================
     if prompt := st.chat_input("Stelle deine Frage..."):
+        
+        # Chat-ID erstellen, falls noch nicht vorhanden
         if st.session_state.chat_id is None:
             st.session_state.chat_id = create_chat_in_firestore("Neuer Chat")
             if st.session_state.chat_id is None:
                 st.error("Konnte keinen neuen Chat erstellen.")
                 st.stop()
-
+        
+        # User-Message speichern
         st.session_state.history.append({"role": "user", "parts": [{"text": prompt}]})
         save_message(st.session_state.chat_id, "user", prompt)
-
+        
         with st.chat_message("user"):
             st.markdown(prompt)
-
+        
         # --- WEICHE: RAG vs. FREIER CHAT ---
         with st.chat_message("model"):
-
+            
             # PFAD A: DATENBANK (RAG)
             if use_db:
                 # Validierung der Auswahl
                 if filter_mode == "Auswahl treffen" and not selected_rag_ids:
                     st.error("⚠️ Du hast 'Auswahl treffen' gewählt, aber keine Dokumente markiert.")
                     st.stop()
-
+                
                 status_container = st.empty()
+                
                 try:
                     with status_container.status("🔍 Konsultiere Datenbank...", expanded=True) as status:
                         db = get_firestore_client()
                         vs = FirestoreVectorStore(db)
                         rag = CitationRAG(vector_store=vs)
-
+                        
                         status.write("📚 Suche relevante Stellen...")
+                        
                         results = rag.retrieve_with_rrf(
                             prompt, 
                             chat_id=selected_rag_ids, 
                             use_router=use_router
                         )
-
+                        
                         if not results:
                             status.update(label="❌ Nichts gefunden", state="error")
                             final_text = "Ich habe in den ausgewählten Dokumenten keine Informationen dazu gefunden."
                             sources = []
+                        
                         else:
                             status.write("📝 Synthetisiere Antwort...")
                             final_text, sources, intent = rag.generate_answer(prompt, results)
                             status.update(label=f"✅ Fertig ({intent})", state="complete", expanded=False)
-
+                        
+                        # NEU v50.6: Speichere RAG-Metadaten für Export (nur letzte Antwort)
+                        st.session_state.last_rag_sources = sources
+                        st.session_state.last_rag_query = prompt
+                        st.session_state.last_rag_intent = intent
+                        
+                        # TODO v51: In History speichern für dauerhafte Persistenz:
+                        # st.session_state.history.append({
+                        #     "role": "model", 
+                        #     "parts": [{"text": final_text}],
+                        #     "rag_metadata": {"sources": sources, "intent": intent, "query": prompt}
+                        # })
+                    
                     st.markdown(final_text)
-
+                    
                     if sources:
                         with st.expander(f"📚 Quellen ({len(sources)})"):
                             for s in sources:
                                 st.markdown(f"**[{s.get('source_id')}] {s.get('metadata', {}).get('chat_title', 'Dokument')}**")
                                 st.caption(s.get('content')[:200] + "...")
-
+                    
                     st.session_state.history.append({"role": "model", "parts": [{"text": final_text}]})
                     save_message(st.session_state.chat_id, "model", final_text)
-
+                
                 except Exception as e:
                     st.error(f"RAG Fehler: {e}")
-
+            
             # PFAD B: FREIER CHAT (Gemini Pur)
             else:
+                # RAG-State löschen (da kein RAG gelaufen ist)
+                if hasattr(st.session_state, 'last_rag_sources'):
+                    del st.session_state.last_rag_sources
+                if hasattr(st.session_state, 'last_rag_query'):
+                    del st.session_state.last_rag_query
+                if hasattr(st.session_state, 'last_rag_intent'):
+                    del st.session_state.last_rag_intent
+                
                 with st.spinner("Gemini denkt nach..."):
                     try:
                         settings = st.session_state.global_settings
+                        
                         response_text = send_message_with_rest_api(
                             prompt, 
                             st.session_state.history[:-1], 
@@ -1152,16 +1322,17 @@ elif page == "💬 Chat":
                             settings['use_search'], 
                             settings.get('debug_mode', False)
                         )
+                        
                         st.session_state.history.append({"role": "model", "parts": [{"text": response_text}]})
                         save_message(st.session_state.chat_id, "model", response_text)
                         st.session_state.last_error = None
-
                         st.markdown(response_text)
-
+                    
                     except Exception as e:
                         st.session_state.last_error = str(e)
                         st.rerun()
-
+        
+        # Titel generieren (falls noch nicht geschehen)
         if not st.session_state.title_generated and len(st.session_state.history) >= 2:
             generate_and_update_title(st.session_state.chat_id, st.session_state.history)
             st.rerun()
