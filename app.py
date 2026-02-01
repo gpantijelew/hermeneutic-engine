@@ -1,5 +1,5 @@
 # app.py - v50.7: Hybrid Cockpit Integration (Full Version)
-APP_VERSION = "v50.7 (Hybrid)"
+APP_VERSION = "v50.7 (Hybrid 2Gb)"
 print("=" * 80)
 print(f"🚀 STARTUP: app_forschung_{APP_VERSION}.py lädt...")
 print("=" * 80)
@@ -193,7 +193,7 @@ def get_default_settings():
     }
 
 def send_message_with_rest_api(prompt, history, system_instruction, temperature, top_p, use_search, debug_mode=False):
-    """Sendet eine Nachricht an die Gemini API über die REST-Schnittstelle."""
+    """Sendet eine Nachricht an die Gemini API (Mit Mocking für Safety-Filter)."""
     if not configure_genai():
         logger.error("Gemini API konnte nicht konfiguriert werden")
         raise Exception("❌ Gemini API nicht konfiguriert.")
@@ -230,37 +230,84 @@ def send_message_with_rest_api(prompt, history, system_instruction, temperature,
             st.info("🔍 DEBUG: Sende Anfrage an REST API...")
 
         logger.info(f"📤 Sende Gemini-Anfrage: prompt_length={len(prompt)}, history={len(history)}, use_search={use_search}")
-        response = requests.post(url, headers=headers, json=payload, timeout=120)
-        response.raise_for_status()
-        result = response.json()
 
+        # 1. Request senden
+        response = requests.post(url, headers=headers, json=payload, timeout=120)
+
+        result = None
+
+        # 2. Status-Code Behandlung (Claudes Logik)
+        if response.status_code == 200:
+            result = response.json()
+
+        elif response.status_code == 400:
+            error_data = response.json()
+            error_msg = error_data.get('error', {}).get('message', '')
+
+            # Prüfen auf Safety/Prohibited Content
+            if 'PROHIBITED_CONTENT' in str(error_data) or 'SAFETY' in error_msg or 'safety' in error_msg.lower():
+                logger.warning(f"⚠️ Safety Filter triggered: {error_msg}")
+                # Wir bauen ein "Fake"-Resultat, das wie eine echte Antwort aussieht
+                result = {
+                    'candidates': [{
+                        'content': {
+                            'parts': [{
+                                'text': (
+                                    '⚠️ **Sicherheitsfilter aktiviert**\n\n'
+                                    'Diese Anfrage wurde vom Content-Filter blockiert. '
+                                    'Mögliche Gründe:\n'
+                                    '- Sensible Themen (Politik, Religion, etc.)\n'
+                                    '- Mehrdeutige Formulierungen\n'
+                                    '\n💡 **Tipp:** Versuche, die Frage anders zu formulieren.'
+                                )
+                            }],
+                            'role': 'model'
+                        },
+                        'finishReason': 'SAFETY'
+                    }]
+                }
+            else:
+                # Echter 400er Fehler (z.B. Invalid Argument)
+                logger.error(f"API Error 400: {error_data}")
+                raise Exception(f"API Error 400: {error_msg}")
+        else:
+            # Andere HTTP Fehler (500, 403 etc.)
+            response.raise_for_status()
+
+        # 3. Ergebnis verarbeiten (Standard-Pfad für Echte Antwort UND Mock-Antwort)
         if debug_mode:
-            with st.expander("Response-Details (von Google empfangen)"):
+            with st.expander("Response-Details"):
                 st.json(result)
 
-        # Fall 1: Normale Textantwort
         if 'candidates' in result and len(result['candidates']) > 0:
             candidate = result['candidates'][0]
-            if 'content' in candidate and 'parts' in candidate['content'] and candidate['content']['parts'][0].get('text'):
-                text = candidate['content']['parts'][0]['text']
-                logger.info(f"📥 Antwort erhalten: length={len(text)}")
-                return text
 
-            # Fall 2: Grounding Metadata (Google Search genutzt)
-            elif 'groundingMetadata' in candidate or (result.get('usageMetadata', {}).get('toolUsePromptTokenCount', 0) > 0):
-                logger.info("🔍 Google Search verwendet, aber keine direkte Textantwort")
-                return "*(Das Modell hat die Google-Suche verwendet, um den Link zu analysieren, aber keine direkte Textantwort generiert. Bitte stelle eine spezifischere Frage zum Inhalt des Links.)*"
+            # Logging für Analytics (wie von Claude vorgeschlagen)
+            finish_reason = candidate.get('finishReason')
+            if finish_reason == 'SAFETY':
+                logger.info("Analytics: Response was mocked due to SAFETY trigger.")
 
-        # Fall 3: Keine Antwort
-        logger.error(f"Keine Candidates in API-Response: {result}")
+            if 'content' in candidate and 'parts' in candidate['content']:
+                text = candidate['content']['parts'][0].get('text', '')
+                if text:
+                    return text
+
+            # Fall: Google Search Metadata ohne Text
+            if 'groundingMetadata' in candidate or (result.get('usageMetadata', {}).get('toolUsePromptTokenCount', 0) > 0):
+                return "*(Das Modell hat die Google-Suche verwendet, aber keine direkte Textantwort generiert.)*"
+
+        # Fall: PromptFeedback Block (passiert manchmal statt 400er Error)
+        if result.get('promptFeedback', {}).get('blockReason'):
+             return f"⚠️ **Anfrage blockiert.** ({result['promptFeedback']['blockReason']})"
+
         raise Exception(f"Keine gültige Antwort von der API.")
 
     except requests.Timeout:
-        logger.error("API-Timeout nach 120 Sekunden")
+        logger.error("API-Timeout")
         raise Exception("⏱️ Timeout: Die API-Anfrage hat zu lange gedauert.")
 
     except requests.RequestException as e:
-        logger.error(f"Netzwerkfehler: {e.response.status_code if e.response else 'unknown'}")
+        logger.error(f"Netzwerkfehler: {e}")
         raise Exception(f"🌐 Netzwerkfehler: {str(e)}")
 
     except Exception as e:
@@ -425,224 +472,27 @@ def render_analysis_page():
     tab_search, tab_stats = st.tabs(["🔍 Semantische Suche", "📊 Statistik"])
 
     with tab_search:
-        st.subheader("Wissensbasis durchsuchen")
-
-        with st.expander("🔍 Such-Fokus (Scope)", expanded=True):
-            search_mode = st.radio(
-                "Modus:",
-                ["🎯 Investigativ (Nur ausgewählte Quellen)", "🧠 Gedächtnis (Alles durchsuchen)"],
-                index=0,
-                horizontal=True
-            )
-
-            selected_chat_ids = None
-            if search_mode == "🎯 Investigativ (Nur ausgewählte Quellen)":
-                # v48-Feature: Alphabetisch sortieren!
-                sorted_chats = sorted(all_chats, key=lambda x: x['title'].lower())
-                chat_options = {c['title']: c['id'] for c in sorted_chats}
-                selected_titles = st.multiselect(
-                    "Quellen auswählen:",
-                    options=list(chat_options.keys()),
-                    default=[]
-                )
-                if selected_titles:
-                    selected_chat_ids = [chat_options[t] for t in selected_titles]
-                else:
-                    st.warning("⚠️ Keine Quellen gewählt!")
-                    selected_chat_ids = []
-
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            default_query = st.session_state.get('rag_query', "")
-            search_query = st.text_input("Thema / Frage:", value=default_query, placeholder="z.B. Was sagt die KI über Zensur?")
-        with col2:
-            role_filter = st.radio("Suche in:", ["Alles", "Nur KI (Model)", "Nur Ich (User)"], index=1)
-
-        search_btn = st.button("Analysieren & Antworten 🚀", type="primary", use_container_width=True)
-
-        if search_btn and search_query:
-            vector_store = FirestoreVectorStore(db)
-            rag_engine = CitationRAG(vector_store=vector_store)
-            
-            with st.spinner(f"1. Suche relevante Fakten..."):
-                try:
-                    keywords = rag_engine.extract_keywords(search_query)
-                    dynamic_weight = 0.3
-                    raw_results, query_vec = vector_store.hybrid_search(
-                        search_query, 
-                        keywords, 
-                        limit=70, 
-                        filter_role=None,
-                        allowed_chat_ids=selected_chat_ids,
-                        keyword_weight=dynamic_weight
-                    )
-                    results = calculate_confidence_scores(query_vec, raw_results)
-                    
-                    if not results:
-                        st.warning("Keine relevanten Quellen gefunden.")
-                        if 'rag_results' in st.session_state:
-                            del st.session_state.rag_results
-                    else:
-                        # ===================================================================
-                        # NEU v50.3: IMBALANCE-CHECK VOR SYNTHESE!
-                        # ===================================================================
-                        
-                        # Temporäres Reranking für Imbalance-Analyse
-                        with st.spinner("2. Analysiere Chunk-Verteilung..."):
-                            # Temporäres generate_answer() NUR für Imbalance-Info
-                            _ , temp_sources, _ = rag_engine.generate_answer(
-                                search_query, 
-                                results,
-                                strict_parity=False  # Default: Pragmatisch
-                            )
-                        
-                        # Hole Imbalance-Info
-                        imbalance_info = getattr (rag_engine, 'last_imbalance_info', None)
-                        
-                        # ===================================================================
-                        # VARIANTE C: GESTUFTE INTERVENTION
-                        # ===================================================================
-                        
-                        strict_parity_choice = False  # Default
-                        show_synthesis_button = True  # Normalerweise direkt weiter
-                        
-                        if imbalance_info and imbalance_info.severity == "critical":
-                            # CRITICAL (≥10:1) → USER MUSS ENTSCHEIDEN!
-                            
-                            st.error("⚠️ **Kritische Unausgeglichenheit erkannt!**")
-                            
-                            with st.expander("📊 Chunk-Verteilung (Details)", expanded=True):
-                                # Erstelle Tabelle
-                                import pandas as pd
-                                
-                                df_data = []
-                                total_chunks = sum(imbalance_info.doc_distribution.values())
-                                
-                                for doc_title, count in sorted(
-                                    imbalance_info.doc_distribution.items(), 
-                                    key=lambda x: x[1], 
-                                    reverse=True
-                                ):
-                                    percentage = (count / total_chunks) * 100
-                                    df_data.append({
-                                        'Dokument': doc_title,
-                                        'Chunks': count,
-                                        'Anteil': f"{percentage:.1f}%"
-                                    })
-                                
-                                df = pd.DataFrame(df_data)
-                                st.dataframe(df, use_container_width=True)
-                                
-                                st.caption(f"⚠️ Verhältnis größtes:kleinstes = **{imbalance_info.ratio:.1f}:1** (KRITISCH!)")
-                            
-                            st.markdown("""
-**Das schwächste Dokument hat signifikant weniger Material als die anderen.**
-
-Wie soll die Engine vorgehen?
-""")
-                            
-                            parity_mode = st.radio(
-                                "Parität-Modus:",
-                                [
-                                    "🔧 Pragmatisch (Jedes Dokument nutzt verfügbares Material)",
-                                    "⚖️ Strikt (Alle Dokumente auf kleinstes begrenzen)"
-                                ],
-                                key="parity_decision",
-                                help=f"""
-**Pragmatisch:** Größtes Dokument nutzt bis zu {imbalance_info.max_chunks} Chunks, kleinstes {imbalance_info.min_chunks} Chunks.
-
-**Strikt:** ALLE Dokumente werden auf {imbalance_info.min_chunks} Chunks begrenzt (perfekte Gleichheit).
-"""
-                            )
-                            
-                            if parity_mode.startswith("⚖️"):
-                                st.info(f"✅ Alle Dokumente werden auf **{imbalance_info.min_chunks} Chunks** begrenzt (Strikte Parität).")
-                                strict_parity_choice = True
-                            else:
-                                st.info("✅ Jedes Dokument nutzt sein verfügbares Material (Pragmatische Parität).")
-                                strict_parity_choice = False
-                            
-                            # Bei critical: User muss Button klicken!
-                            show_synthesis_button = True
-                        
-                        elif imbalance_info and imbalance_info.severity == "info":
-                            # INFO (5:1-10:1) → ZEIGE INFO-BOX, ABER BLOCKIERE NICHT
-                            
-                            st.info(f"ℹ️ **Hinweis:** Chunk-Verteilung ist ungleich (Verhältnis: {imbalance_info.ratio:.1f}:1)")
-                            
-                            with st.expander("📊 Details anzeigen"):
-                                import pandas as pd
-                                
-                                df_data = []
-                                total_chunks = sum(imbalance_info.doc_distribution.values())
-                                
-                                for doc_title, count in sorted(
-                                    imbalance_info.doc_distribution.items(), 
-                                    key=lambda x: x[1], 
-                                    reverse=True
-                                ):
-                                    percentage = (count / total_chunks) * 100
-                                    df_data.append({
-                                        'Dokument': doc_title,
-                                        'Chunks': count,
-                                        'Anteil': f"{percentage:.1f}%"
-                                    })
-                                
-                                df = pd.DataFrame(df_data)
-                                st.dataframe(df, use_container_width=True)
-                            
-                            st.caption("Die Engine verwendet pragmatische Parität (jedes Dokument nutzt verfügbares Material).")
-                            strict_parity_choice = False
-                            show_synthesis_button = False  # Kein extra Button nötig
-                        
-                        else:
-                            # NONE (< 5:1) → Keine Warnung, direkt weiter
-                            show_synthesis_button = False
-                        
-                        # ===================================================================
-                        # SYNTHESE (mit oder ohne Button, je nach Severity)
-                        # ===================================================================
-                        
-                        run_synthesis = False
-                        
-                        if show_synthesis_button:
-                            # Bei critical/info: Zeige Button
-                            if st.button("🚀 Synthese starten", type="primary", use_container_width=True):
-                                run_synthesis = True
-                        else:
-                            # Bei none: Direkt weiter
-                            run_synthesis = True
-                        
-                        if run_synthesis:
-                            with st.spinner("3. Generiere Antwort mit Zitationen..."):
-                                raw_answer, used_sources, mode_name = rag_engine.generate_answer(
-                                    search_query, 
-                                    results,
-                                    strict_parity=strict_parity_choice  # v50.3: User-Choice!
-                                )
-                                
-                                valid_indices = list(range(1, len(used_sources) + 1))
-                                
-                                with st.spinner("4. Veredle Synthese (Cleanup)..."):
-                                    answer = post_process_synthesis(raw_answer, valid_indices)
-                            
-                            st.session_state.rag_results = used_sources
-                            st.session_state.rag_answer = answer
-                            st.session_state.rag_query = search_query
-                            st.session_state.rag_mode = mode_name
-                
-                except Exception as e:
-                    st.error(f"Fehler: {e}")
-                    import traceback
-                    print(traceback.format_exc())
+        # ==============================================================================
+        # 1. DISPLAY-BLOCK (Zuerst prüfen, ob Ergebnisse da sind!)
+        # ==============================================================================
         if 'rag_results' in st.session_state and 'rag_answer' in st.session_state:
+
+            # --- RESET BUTTON (Um zurück zur Eingabe zu kommen) ---
+            if st.button("🔄 Neue Analyse starten", type="secondary", use_container_width=True):
+                # State bereinigen
+                keys_to_clear = ['rag_results', 'rag_answer', 'rag_query', 'rag_mode', 'verification_log']
+                for k in keys_to_clear:
+                    if k in st.session_state:
+                        del st.session_state[k]
+                st.rerun()
+
+            # --- ERGEBNISSE ANZEIGEN (Original-Code) ---
             results = st.session_state.rag_results
             answer = st.session_state.rag_answer
-            mode = st.session_state.get('rag_mode', 'discourse')  # v48-Feature
+            mode = st.session_state.get('rag_mode', 'discourse')
 
             st.markdown("### 💡 Synthese")
 
-            # v48-Feature: Modus-Anzeige
             if mode == "exegesis":
                 st.caption("📖 **Modus: EXEGESE** (Fokus auf Erklärung & Definition)")
             elif mode == "discourse":
@@ -789,6 +639,223 @@ Wie soll die Engine vorgehen?
             with col_exp3:
                 st.download_button("🤖 Als JSON", json_data, f"{filename_base}.json", "application/json", use_container_width=True)
 
+        # ==============================================================================
+        # 2. INPUT-BLOCK (Nur anzeigen, wenn KEINE Ergebnisse da sind)
+        # ==============================================================================
+        else:
+            st.subheader("Wissensbasis durchsuchen")
+
+            with st.expander("🔍 Such-Fokus (Scope)", expanded=True):
+                search_mode = st.radio(
+                    "Modus:",
+                    ["🎯 Investigativ (Nur ausgewählte Quellen)", "🧠 Gedächtnis (Alles durchsuchen)"],
+                    index=0,
+                    horizontal=True
+                )
+
+                selected_chat_ids = None
+                if search_mode == "🎯 Investigativ (Nur ausgewählte Quellen)":
+                    # v48-Feature: Alphabetisch sortieren!
+                    sorted_chats = sorted(all_chats, key=lambda x: x['title'].lower())
+                    chat_options = {c['title']: c['id'] for c in sorted_chats}
+                    selected_titles = st.multiselect(
+                        "Quellen auswählen:",
+                        options=list(chat_options.keys()),
+                        default=[]
+                    )
+                    if selected_titles:
+                        selected_chat_ids = [chat_options[t] for t in selected_titles]
+                    else:
+                        st.warning("⚠️ Keine Quellen gewählt!")
+                        selected_chat_ids = []
+
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                default_query = st.session_state.get('rag_query', "")
+                search_query = st.text_input("Thema / Frage:", value=default_query, placeholder="z.B. Was sagt die KI über Zensur?")
+            with col2:
+                role_filter = st.radio("Suche in:", ["Alles", "Nur KI (Model)", "Nur Ich (User)"], index=1)
+
+            search_btn = st.button("Analysieren & Antworten 🚀", type="primary", use_container_width=True)
+
+            if search_btn and search_query:
+                vector_store = FirestoreVectorStore(db)
+                rag_engine = CitationRAG(vector_store=vector_store)
+
+                with st.spinner(f"1. Suche relevante Fakten..."):
+                    try:
+                        keywords = rag_engine.extract_keywords(search_query)
+                        dynamic_weight = 0.3
+                        raw_results, query_vec = vector_store.hybrid_search(
+                            search_query, 
+                            keywords, 
+                            limit=70, 
+                            filter_role=None,
+                            allowed_chat_ids=selected_chat_ids,
+                            keyword_weight=dynamic_weight
+                        )
+                        results = calculate_confidence_scores(query_vec, raw_results)
+
+                        if not results:
+                            st.warning("Keine relevanten Quellen gefunden.")
+                            if 'rag_results' in st.session_state:
+                                del st.session_state.rag_results
+                        else:
+                            # ===================================================================
+                            # NEU v50.3: IMBALANCE-CHECK VOR SYNTHESE!
+                            # ===================================================================
+
+                            # Temporäres Reranking für Imbalance-Analyse
+                            with st.spinner("2. Analysiere Chunk-Verteilung..."):
+                                # Temporäres generate_answer() NUR für Imbalance-Info
+                                _ , temp_sources, _ = rag_engine.generate_answer(
+                                    search_query, 
+                                    results,
+                                    strict_parity=False  # Default: Pragmatisch
+                                )
+
+                            imbalance_info = getattr (rag_engine, 'last_imbalance_info', None)
+
+                            # ===================================================================
+                            # VARIANTE C: GESTUFTE INTERVENTION
+                            # ===================================================================
+
+                            strict_parity_choice = False  # Default
+                            show_synthesis_button = True  # Normalerweise direkt weiter
+
+                            if imbalance_info and imbalance_info.severity == "critical":
+                                # CRITICAL (≥10:1) → USER MUSS ENTSCHEIDEN!
+
+                                st.error("⚠️ **Kritische Unausgeglichenheit erkannt!**")
+
+                                with st.expander("📊 Chunk-Verteilung (Details)", expanded=True):
+                                    # Erstelle Tabelle
+                                    import pandas as pd
+
+                                    df_data = []
+                                    total_chunks = sum(imbalance_info.doc_distribution.values())
+
+                                    for doc_title, count in sorted(
+                                        imbalance_info.doc_distribution.items(), 
+                                        key=lambda x: x[1], 
+                                        reverse=True
+                                    ):
+                                        percentage = (count / total_chunks) * 100
+                                        df_data.append({
+                                            'Dokument': doc_title,
+                                            'Chunks': count,
+                                            'Anteil': f"{percentage:.1f}%"
+                                        })
+
+                                    df = pd.DataFrame(df_data)
+                                    st.dataframe(df, use_container_width=True)
+
+                                    st.caption(f"⚠️ Verhältnis größtes:kleinstes = **{imbalance_info.ratio:.1f}:1** (KRITISCH!)")
+
+                                st.markdown("""
+**Das schwächste Dokument hat signifikant weniger Material als die anderen.**
+
+Wie soll die Engine vorgehen?
+""")
+
+                                parity_mode = st.radio(
+                                    "Parität-Modus:",
+                                    [
+                                        "🔧 Pragmatisch (Jedes Dokument nutzt verfügbares Material)",
+                                        "⚖️ Strikt (Alle Dokumente auf kleinstes begrenzen)"
+                                    ],
+                                    key="parity_decision",
+                                    help=f"""
+**Pragmatisch:** Größtes Dokument nutzt bis zu {imbalance_info.max_chunks} Chunks, kleinstes {imbalance_info.min_chunks} Chunks.
+
+**Strikt:** ALLE Dokumente werden auf {imbalance_info.min_chunks} Chunks begrenzt (perfekte Gleichheit).
+"""
+                                )
+
+                                if parity_mode.startswith("⚖️"):
+                                    st.info(f"✅ Alle Dokumente werden auf **{imbalance_info.min_chunks} Chunks** begrenzt (Strikte Parität).")
+                                    strict_parity_choice = True
+                                else:
+                                    st.info("✅ Jedes Dokument nutzt sein verfügbares Material (Pragmatische Parität).")
+                                    strict_parity_choice = False
+
+                                # Bei critical: User muss Button klicken!
+                                show_synthesis_button = True
+
+                            elif imbalance_info and imbalance_info.severity == "info":
+                                # INFO (5:1-10:1) → ZEIGE INFO-BOX, ABER BLOCKIERE NICHT
+
+                                st.info(f"ℹ️ **Hinweis:** Chunk-Verteilung ist ungleich (Verhältnis: {imbalance_info.ratio:.1f}:1)")
+
+                                with st.expander("📊 Details anzeigen"):
+                                    import pandas as pd
+
+                                    df_data = []
+                                    total_chunks = sum(imbalance_info.doc_distribution.values())
+
+                                    for doc_title, count in sorted(
+                                        imbalance_info.doc_distribution.items(), 
+                                        key=lambda x: x[1], 
+                                        reverse=True
+                                    ):
+                                        percentage = (count / total_chunks) * 100
+                                        df_data.append({
+                                            'Dokument': doc_title,
+                                            'Chunks': count,
+                                            'Anteil': f"{percentage:.1f}%"
+                                        })
+
+                                    df = pd.DataFrame(df_data)
+                                    st.dataframe(df, use_container_width=True)
+
+                                st.caption("Die Engine verwendet pragmatische Parität (jedes Dokument nutzt verfügbares Material).")
+                                strict_parity_choice = False
+                                show_synthesis_button = False  # Kein extra Button nötig
+
+                            else:
+                                # NONE (< 5:1) → Keine Warnung, direkt weiter
+                                show_synthesis_button = False
+
+                            # ===================================================================
+                            # SYNTHESE (mit oder ohne Button, je nach Severity)
+                            # ===================================================================
+
+                            run_synthesis = False
+
+                            if show_synthesis_button:
+                                # Bei critical/info: Zeige Button
+                                if st.button("🚀 Synthese starten", type="primary", use_container_width=True):
+                                    run_synthesis = True
+                            else:
+                                # Bei none: Direkt weiter
+                                run_synthesis = True
+
+                            if run_synthesis:
+                                with st.spinner("3. Generiere Antwort mit Zitationen..."):
+                                    raw_answer, used_sources, mode_name = rag_engine.generate_answer(
+                                        search_query, 
+                                        results,
+                                        strict_parity=strict_parity_choice  # v50.3: User-Choice!
+                                    )
+
+                                    valid_indices = list(range(1, len(used_sources) + 1))
+
+                                    with st.spinner("4. Veredle Synthese (Cleanup)..."):
+                                        answer = post_process_synthesis(raw_answer, valid_indices)
+
+                                st.session_state.rag_results = used_sources
+                                st.session_state.rag_answer = answer
+                                st.session_state.rag_query = search_query
+                                st.session_state.rag_mode = mode_name
+
+                                # RERUN UM ERGEBNISSE ANZUZEIGEN (Springt zu Block 1)
+                                st.rerun()
+
+                    except Exception as e:
+                        st.error(f"Fehler: {e}")
+                        import traceback
+                        print(traceback.format_exc())
+
     with tab_stats:
         st.info("Speicher-Status")
         if st.button("Zählen"):
@@ -799,7 +866,6 @@ Wie soll die Engine vorgehen?
                 st.metric("Gespeicherte Wissens-Chunks", count)
             except Exception as e:
                 st.error(f"Fehler: {e}")
-
 # ==============================================================================
 # 4. SESSION STATE
 # ==============================================================================
@@ -838,6 +904,7 @@ elif page == "🧠 Analyse":
     render_analysis_page()
 elif page == "💬 Chat":
     st.title("🧠 Dein persönliches Chat-Gedächtnis")
+
 
     # ==========================================================================
 # v50 HYBRID COCKPIT (INTEGRATION) - FIXED (State Persistence)
@@ -1088,6 +1155,43 @@ elif page == "💬 Chat":
                     time.sleep(1)
                     st.rerun()
     
+        # ==============================================================================
+        # 🚑 NOTFALL-SIDEBAR (Immer sichtbar)
+        # ==============================================================================
+        st.markdown("---")
+        st.error("🚑 Notfall-Eingriff")
+
+        if st.session_state.history:
+            last_msg = st.session_state.history[-1]
+            last_role = last_msg.get('role', '???')
+            last_text = last_msg.get('parts', [{}])[0].get('text', '')
+
+            st.caption(f"Status: Letzte Nachricht von **{last_role.upper()}**")
+            with st.expander("Inhalt prüfen"):
+                st.text(f"Länge: {len(last_text)} Zeichen")
+                st.code(last_text[:100]) # Zeige die ersten 100 Zeichen
+
+            if st.button("💀 Letztes Element löschen (Force)", key="sidebar_force_delete", type="primary"):
+                # 1. DB Bereinigung (Versuch)
+                try:
+                    if st.session_state.chat_id:
+                        from modules.database import get_firestore_client # Sicherstellen, dass Import da ist
+                        db = get_firestore_client()
+                        messages_ref = db.collection('chats').document(st.session_state.chat_id).collection('messages')
+                        # Lösche das zeitlich letzte Dokument
+                        query = messages_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1)
+                        for doc in query.stream():
+                            doc.reference.delete()
+                except Exception as e:
+                    print(f"DB Error: {e}")
+
+                # 2. State Bereinigung
+                st.session_state.history.pop()
+                st.session_state.last_error = None
+                st.rerun()
+        else:
+            st.caption("History ist leer.")
+
     # --- HAUPT-CHAT-INTERFACE (v50 HYBRID) ---
     if st.session_state.last_error:
         st.error(f"🚨 **Ein Fehler ist aufgetreten:**\n\n{st.session_state.last_error}")
@@ -1295,7 +1399,7 @@ elif page == "💬 Chat":
                     
                     st.session_state.history.append({"role": "model", "parts": [{"text": final_text}]})
                     save_message(st.session_state.chat_id, "model", final_text)
-                
+                    st.rerun()  # <--- NEU: Damit die Antwort sicher stehen bleibt!
                 except Exception as e:
                     st.error(f"RAG Fehler: {e}")
             
@@ -1327,7 +1431,7 @@ elif page == "💬 Chat":
                         save_message(st.session_state.chat_id, "model", response_text)
                         st.session_state.last_error = None
                         st.markdown(response_text)
-                    
+                        st.rerun()  # <--- NEU: Damit die Antwort sicher stehen bleibt!
                     except Exception as e:
                         st.session_state.last_error = str(e)
                         st.rerun()
