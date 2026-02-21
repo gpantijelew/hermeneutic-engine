@@ -9,7 +9,7 @@ import uuid
 import os
 import traceback
 import logging
-import google.generativeai as genai
+from google import genai
 from modules.config import MODEL_TITLE_GEN, SERVICE_ACCOUNT_KEY_PATH
 
 # Logging konfigurieren

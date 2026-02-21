@@ -1,16 +1,12 @@
 # modules/bulk_labeling.py
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 from modules.config import MODEL_BULK_LABELING
 import json
 import os
 import re
 from google.cloud import firestore
 from modules.database import get_firestore_client
-
-# API Key sicherstellen
-if os.environ.get("GEMINI_API_KEY"):
-    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
 
 def render_bulk_labeling_ui():
     st.title("🏷️ Enhanced Bulk Labeling (Full Control)")
@@ -168,7 +164,13 @@ def render_bulk_labeling_ui():
 
 def generate_ai_suggestions(chunks):
     """Nutzt Gemini Flash Lite, um Metadaten zu raten."""
-    model = genai.GenerativeModel(MODEL_BULK_LABELING)
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        st.error("Kein API Key gefunden.")
+        return {}
+
+    # --- NEUES SDK: Client initialisieren ---
+    client = genai.Client(api_key=api_key)
 
     # Batching (max 20 für Demo/Speed)
     batch_chunks = chunks[:20] 
@@ -198,8 +200,15 @@ def generate_ai_suggestions(chunks):
     full_prompt = prompt_intro + prompt_data
 
     try:
-        resp = model.generate_content(full_prompt, generation_config={"response_mime_type": "application/json"})
+        # --- NEUES SDK: Aufruf ---
+        resp = client.models.generate_content(
+            model=MODEL_BULK_LABELING,
+            contents=full_prompt,
+            config={"response_mime_type": "application/json"}
+        )
+
         raw_text = resp.text.strip()
+        # JSON Cleaning (falls Markdown Fences dabei sind)
         if raw_text.startswith("```"):
             raw_text = re.sub(r'^```json\s*|\s*```$', '', raw_text, flags=re.MULTILINE)
 

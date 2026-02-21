@@ -1570,7 +1570,7 @@ docs: Update FIBEL with v50.5 changes
 
 **Projekt-Lead:** Grigori Pantijelew  
 **Institution:** Landesinstitut für Schule Bremen  
-**Email:** grigori.pantijelew@lis.bremen.de
+**Email:** hermeneutic-engine@proton.me
 
 **Repository:** https://github.com/gpantijelew/hermeneutic-engine (Private, Public Release Januar 2026)
 

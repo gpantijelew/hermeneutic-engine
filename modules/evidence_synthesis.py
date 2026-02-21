@@ -1,6 +1,9 @@
+# modules/evidence_synthesis.py
 import json
 import logging
-import google.generativeai as genai
+import os
+from google import genai
+from google.genai import types
 from modules.config import MODEL_FACT_EXTRACTION
 from typing import List, Dict, Any, Optional
 

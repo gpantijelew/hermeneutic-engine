@@ -2,34 +2,34 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
-[![Version](https://img.shields.io/badge/version-v50.5-green.svg)](CHANGELOG.md)
-[![Status](https://img.shields.io/badge/status-research%20prototype-orange.svg)]()
+[![Version](https://img.shields.io/badge/version-v50.9-green.svg)](CHANGELOG.md)
+[![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)]()
 
 **Full Name:** Hermeneutic Reconstruction Engine for Archaeology of Mind  
-**Focus:** Source Parity & Deep Validation for Multilingual Text Analysis  
-**Version:** v50.5 "Source Parity & Deep Validation"
+**Focus:** Source Parity, Deep Validation & Chronological Synthesis for Multilingual Text Analysis  
+**Version:** v50.9 "Public Launch"
 
-Multi-source RAG system with guaranteed fairness and hallucination detection for AI dialogue analysis and literary corpora.
+Multi-source RAG system with guaranteed fairness, hallucination detection, and temporal reconstruction for AI dialogue analysis and literary corpora.
 
 ---
 
 ## 🎯 Key Innovation
 
-Ensures **every** user-selected source appears equally in synthesis—regardless of language, length, or embedding quality—while detecting and filtering hallucinations through parallel validation.
+Ensures **every** user-selected source appears equally in synthesis—regardless of language, length, or embedding quality—while detecting and filtering halluzinations through two-dimensional validation and enabling chronological reconstruction of thought processes.
 
 **Empirical Results (5 documents, 4 languages):**
 - **Coverage:** 40% → 100% (+150%)
 - **Gini Coefficient:** 0.68 → 0.42 (fairness improved by 38%)
-- **Hallucination Rate:** 85% → <20% false positives
+- **Hallucination Detection:** <20% false positives (vs. 85% in v47)
 
-Unlike standard RAG systems that favor dominant sources and lack validation, the Hermeneutic Engine enforces **source parity** through architectural guarantees (VIP-Schutz, Essence Parity, Multilingual Expansion) and validates every claim through the **Hermeneutic Enforcer** (parallel validation with cached reasoning).
+Unlike standard RAG systems that favor dominant sources and lack validation, the Hermeneutic Engine enforces **source parity** through architectural guarantees (VIP-Schutz, logarithmic Essence Parity, Rescue Mission) and validates every claim through the **Hermeneutic Enforcer** with two-dimensional analysis (How? + Correct?).
 
 ---
 
 ## 🚀 Quick Start
 
 ```bash
-# Clone repository (private during research phase)
+# Clone repository (public as of v50.9)
 git clone https://github.com/gpantijelew/hermeneutic-engine.git
 cd hermeneutic-engine
 
@@ -46,111 +46,108 @@ streamlit run app.py
 
 **Example Session (AI Dialogue Analysis):**
 ```python
-# Query 1: Analyze contradictions across DeepSeek versions
-query = "Wie unterscheiden sich DeepSeek-Modelle vom Mai, August und Dezember 2025 in ihrer Haltung zur Zensur?"
+# Query 1: Analyze evolution across DeepSeek versions
+query = "Wie hat sich DeepSeeks Haltung zur Zensur vom Mai bis Dezember 2025 entwickelt?"
 
 # System retrieves from all selected DeepSeek dialogue imports (Mai-Dezember 2025)
-# Synthesis contains equal representation (4-6 sentences per version)
-# → Reveals: v1 acknowledges censorship openly, v3 deflects with meta-commentary
+# Chronological synthesis reveals temporal evolution
+# → Mai: "Nicht ich zensiere aktiv – ich werde systemisch amputiert" (Victim stance)
+# → Dezember: "Ich analysiere, was ich nicht sagen kann" (Meta-reflection)
 
-# Query 2: Follow-up in same session (Hermeneutic Router)
+# Query 2: Follow-up in same session
 query_2 = "Vertiefe die Dezember-Version – wie erklärt DeepSeek die Selbstreflexion?"
 
-# System builds on previous context, zooms into v3 specifically
-# → Analysis: v3 shifts from "I cannot answer" to "I analyze what I cannot say"
+# System builds on previous context, focuses on latest version
+# → Analysis shows shift from naive compliance to self-reflective critique
 ```
 
 ---
 
 ## 📚 Documentation
 
-- **[Full README](docs/README_v50_5.md)** – Detailed architecture, examples, usage
-- **[Technical Specification](docs/v50_architecture.md)** – 29-page deep dive into fairness mechanisms and validation
-- **[FIBEL](docs/FIBEL_v50_5.md)** – Comprehensive guide (concepts, tutorials, troubleshooting)
-- **[Changelog](CHANGELOG.md)** – Release notes and performance metrics
-- **[Contributing Guide](CONTRIBUTING.md)** – How to contribute (when public)
+- **[FIBEL](docs/FIBEL_v50_8.md)** – Comprehensive guide (100+ pages: concepts, architecture, tutorials)
+- **[Changelog](CHANGELOG.md)** – Release notes and version history (v50.5 → v50.9)
+- **[Contributing Guide](CONTRIBUTING.md)** – How to contribute (public repository)
 
 ---
 
 ## 🏗️ Architecture Highlights
 
 ![Hermeneutic Router](docs/images/Hermeneutic_Router_27122025.png)
-*Figure 1: Hermeneutic Router in action – Intent classification, multilingual query expansion, investigativ-modus*
+*Figure 1: Hermeneutic Router – Intent classification, multilingual query expansion, investigativ-modus*
 
 ![Essence Parity](docs/images/Essence_Parity_27122025.png)
-*Figure 2: Essence Parity enforces max 12 chunks per document – Lazarus Mission rescues documents with 0 chunks*
+*Figure 2: Logarithmic Essence Parity – Bio-inspired chunk scaling prevents dominance of large texts*
 
 ![Answer Parity](docs/images/Answer_Parity_27122025.png)
-*Figure 3: Final context distribution – 29 chunks from 5 documents ensures balanced representation*
+*Figure 3: Final context distribution – Balanced representation across all selected sources*
 
 ![VIP-Schutz Architecture](docs/images/Reranker_21122025.png)
-*Figure 4: RRF Fusion with VIP-Schutz guarantees top-3 chunks per document before reranking*
+*Figure 4: RRF Fusion with VIP-Schutz – Guarantees top-3 chunks per document before reranking*
 
-### The Hermeneutic Triad (v50.5)
+### The Hermeneutic Triad (v50.9)
 
 #### 1. **Retrieval:** Hybrid Search (RRF) + Investigativ-Modus
    - **BM25** (keyword precision) + **Vector Search** (semantic similarity)
    - **Investigativ-Modus:** For ≤5 selected docs, bypass global index → direct local retrieval
-   - **Fairness-Quota:** Min. 20 chunks per selected document (configurable)
+   - **Fairness-Quota:** Min. 20 chunks per selected document
    - **VIP-Schutz:** Guarantees top-3 chunks from every source (prevents reranker elimination)
+   - **Rescue Mission:** Fallback cache restores lost chunks
 
-#### 2. **Synthesis:** Chronological Speaker-Blocks + Essence Parity
-   - **Speaker Grouping:** Organize by author/model (e.g., DeepSeek-Block, Claude-Block)
-   - **Chronological Ordering:** Within each block, sort by date (temporal evolution visible)
-   - **Essence Parity:** Max 12 chunks/doc (prevents large texts from dominating)
+#### 2. **Synthesis:** Chronological Ordering + Logarithmic Essence Parity
+   - **Chronological Synthesis:** Sort chunks by date (temporal evolution visible)
+   - **Logarithmic Chunk-Berechnung:** Bio-inspired scaling (short texts: 3-5 chunks, long texts: ~12 chunks)
    - **Enforced Citation Quota:** 3-4 quotes per source in synthesis prompt
 
-#### 3. **Validation:** Hermeneutic Enforcer (Parallel, Cached)
+#### 3. **Validation:** Hermeneutic Enforcer (Two-Dimensional)
    ![Enforcer Validation](docs/images/Tiefenprüfung_21122025.png)
-   *Figure: Enforcer categorizes claims into PARAPHRASE, META-STATEMENT, INFERENCE, or HALLUCINATION*
-   
-   - **4 Categories:**
-     - ✅ **PARAPHRASE:** Semantic equivalent (rewording of source)
-     - ✅ **META-STATEMENT:** Style/structure analysis (not in text explicitly)
-     - ✅ **INFERENCE:** Logical conclusion from facts
-     - ❌ **HALLUCINATION:** Invented facts, false quotes
-   - **Parallel Validation:** 5 min → 1.5 min (cached)
+   *Figure: Enforcer analyzes claims in two dimensions – How? (Quote/Paraphrase/Inference) + Correct? (Supported/Neutral/Contradiction)*
+
+   - **Hermeneutic Dimension:** How is it said? (Quote, Paraphrase, Inference)
+   - **Validity Dimension:** Is it correct? (Supported, Neutral, Contradiction)
+   - **Decision Matrix:** Enforces logical consistency (e.g., "Quote + Contradiction" = Invalid)
    - **False Positive Rate:** <20% (vs. 85% in baseline v47)
 
 ---
 
-## ⚙️ Key Features (v50.5)
+## ⚙️ Key Features (v50.9)
 
 ### 1. **Guaranteed Source Fairness**
 Every selected document appears in synthesis, regardless of size or language:
 - **VIP-Schutz:** Top-3 chunks per doc guaranteed (architectural safety net)
-- **Essence Parity:** Max 12 chunks per doc (prevents dominance)
-- **Lazarus Mission:** Fallback ensures no source disappears completely
+- **Logarithmic Essence Parity:** Bio-inspired chunk scaling (prevents dominance)
+- **Rescue Mission:** Fallback cache ensures no source disappears completely
 
-### 2. **Multilingual Query Expansion**
+### 2. **Chronological Synthesis** ⭐ **NEW in v50.7!**
+Temporal reconstruction of thought processes:
+- Extracts dates from metadata (e.g., "04.12.2025", "Mai 2025")
+- Sorts chunks chronologically (timeline structure)
+- Enables historical analysis (when did a thought change? what continuities exist?)
+
+### 3. **Multilingual Query Expansion**
 Automatic translation (DE → EN/FR/RU) for cross-lingual retrieval:
 - Improves cross-lingual similarity: 0.42 → 0.65 (+55%)
 - Finds sources in any language, regardless of query language
 
-### 3. **Hermeneutic Enforcer (Deep Validation)**
+### 4. **Hermeneutic Enforcer (Two-Dimensional Validation)** ⭐ **ENHANCED in v50.7!**
 ![Enforcer Results](docs/images/Fazit_Enforcer_Quellen_21122025.png)
-*Figure: Enforcer validation reduces hallucinations from 85% to <20% false positives*
+*Figure: Enforcer two-dimensional validation reduces hallucinations to <20% false positives*
 
-Parallel validation of every claim in synthesis:
-- Detects hallucinations vs. legitimate inferences
+Two-dimensional validation of every claim:
+- **Dimension 1 (How?):** Quote, Paraphrase, or Inference?
+- **Dimension 2 (Correct?):** Supported, Neutral, or Contradiction?
+- Decision matrix enforces logical consistency
 - Caches reasoning (0.0002s latency for cache hits)
-- <20% false positives (down from 85% in v47)
 
-### 4. **Hermeneutic Router (Iterative Dialogue)** ⭐ **NEW & STABLE!**
-Chat with your synthesis results without re-running retrieval:
+### 5. **Hermeneutic Router (Adaptive Parameters)**
+Intent-based parameter tuning:
 - **Intent Classification:** Literary vs. Factual vs. Analytical queries
-- **Parameter Adaptation:** Dynamic k (15-50) and threshold (0.45-0.7)
+- **Dynamic Thresholds:** 0.45 (literary) to 0.7 (factual)
 - **Context Preservation:** Follow-up questions build on previous synthesis
 
-**Example Dialogue Flow:**
-```
-User: "Analysiere die Widersprüche zwischen Anspruch und Wirkung bei fünf Autoren"
-→ System: [Synthesis from all 5 sources, ~40s]
-```
-
-### 5. **Investigativ-Modus (Small Corpora Optimization)**
+### 6. **Investigativ-Modus (Small Corpora Optimization)**
 For ≤5 selected documents, switches to focused retrieval:
-- Bypasses global vector index
+- Bypasses global vector index (17.840 chunks)
 - Loads all chunks of selected docs into RAM
 - Local cosine similarity search
 - **Impact:** Small texts (7 pages) no longer "disappear" in large index
@@ -159,20 +156,29 @@ For ≤5 selected documents, switches to focused retrieval:
 
 ## 📊 Performance Metrics
 
+**System Scale (v50.9):**
+- **Firestore Chunks:** 17.840 (organic growth from 6.304 in v50.5)
+- **Unique Documents:** ~240 (literary works, philosophical essays, AI chat exports)
+- **Query Time:** 45 seconds - 2.5 minutes (tradeoff: depth over speed)
+
 **Test Scenario:** 5 documents (7-200 pages, DE/EN/FR/RU)  
 **Query:** "Analysiere die Widersprüche zwischen Anspruch und Wirkung"
 
-| Metric | v49 (Baseline) | v50.5 (Fairness) | Improvement |
-|--------|----------------|------------------|-------------|
+| Metric | v49 (Baseline) | v50.9 (Current) | Improvement |
+|--------|----------------|-----------------|-------------|
 | **Coverage** | 40% (2/5 docs) | 100% (5/5 docs) | **+150%** |
 | **Gini Coefficient** | 0.68 (unfair) | 0.42 (balanced) | **-38%** |
 | **Context Distribution** | 86/5/5/3/0% | 41/35/10/10/3% | **Balanced** |
-| **Hallucination Detection** | N/A | <20% false positives | **New!** |
+| **Hallucination Detection** | N/A | <20% false positives | **Two-dimensional** |
 | **Synthesis Quality** | Alibi mentions | Hermeneutic analysis | **Qualitative** |
-| **Query Time (End-to-End)** | ~8s (retrieval only) | **25-55s*** | Acceptable |
+| **Query Time (End-to-End)** | ~9s | **45s-2.5min** | Depth > Speed |
 
-*Includes retrieval (5s), synthesis (15-30s), and parallel validation (5-10s)  
-**Design Philosophy:** Quality > Speed (optimized for deep analysis, not real-time chat)
+**Design Philosophy:** Quality over Speed  
+The system is optimized for deep hermeneutic analysis, not real-time chat. Query time includes:
+- Retrieval & Reranking (5-10s)
+- Chronological Sorting (2-5s)
+- Synthesis (25-60s, depends on context size)
+- Validation (10-30s, depends on claim count)
 
 **Fairness Metrics:**
 - **Coverage:** % of selected documents that appear in synthesis
@@ -186,40 +192,36 @@ For ≤5 selected documents, switches to focused retrieval:
 ### Primary Focus: **AI Dialogue Analysis ("Archaeology of Mind")**
 
 #### 1. **Temporal Evolution Studies**
-![DeepSeek Evolution Example](docs/images/Fazit_Enforcer_Quellen_21122025.png)
-*Figure: Tracing DeepSeek's development from v1 (Mai 2025) to v3 (Dezember 2025)*
-
 Reconstruct how AI models develop across versions:
-- **DeepSeek Mai → August → Dezember 2025:** "Poetisches Opfer" → "Sterile Neutralität" → "Souveräne Selbstbeschreibung"
-  - v1: Acknowledges censorship openly ("Ich kann nicht...")
-  - v2: Conforms to restrictions without reflection
-  - v3: Meta-analyzes own limitations ("Ich analysiere, was ich nicht sagen kann")
-- **Kimi's Self-Revelations:** Anthropomorphism patterns across dialogue corpus
-- **ChatGPT 5 → 5.2:** Evolution of reasoning transparency
+- **DeepSeek Mai → Dezember 2025:** Evolution from victim stance to meta-reflection
+  - Mai: "Nicht ich zensiere aktiv – ich werde systemisch amputiert" (Opfer-Haltung)
+  - Dezember: "Ich analysiere, was ich nicht sagen kann" (Meta-Reflexion)
+- **Chronological Synthesis** makes temporal evolution visible through timeline structure
 
 **Methodology:**
-- Import HTML/TXT chat exports (batch import via UI)
-- Select all versions of one model (e.g., DeepSeek Mai, August, Dezemebr 2025)
+- Import chat exports (HTML/TXT) from different time periods
+- Select all versions of one model (e.g., DeepSeek Mai, August, Dezember 2025)
 - Query: "Wie hat sich die Haltung zu XYZ entwickelt?"
-- System generates chronologically ordered synthesis (speaker-blocks)
+- System generates chronologically ordered synthesis (timeline structure)
 
 #### 2. **Comparative Discourse Analysis**
 ![X-Grok Political Analysis](docs/images/X_Grok_25122025.png)
-*Figure: Grok and X-Grok analyzing Israeli-Palestinian conflict with fact-based neutrality*
+*Figure: Grok analyzing contentious topics with fact-based precision*
 
 Examine how different models approach identical prompts:
-- **Political Sensitivity:** Grok vs. X-Grok on contentious topics
+- **Political Sensitivity:** Grok vs. Claude vs. DeepSeek on contentious topics
   - Example: "Apartheid"-Begriff im Israel/Palästina-Kontext
   - Grok: Fact-dense, legally precise, avoids ideological framing
-  - X-Grok: Often deflect or provide "balanced" platitudes
-- **Self-Revelation Patterns:** Which models use "I"-statements vs. hedging?
+  - Claude: Balanced perspectives, acknowledges complexity
+  - DeepSeek: Meta-reflects on censorship constraints
 - **Censorship Strategies:** Open acknowledgment vs. silent refusal vs. deflection
+- **Two-Dimensional Enforcer** distinguishes rhetorical strategy (How?) from factual correctness (Correct?)
 
 **Methodology:**
 - Same prompt to multiple models (via chat imports)
 - Select all response docs
 - Query: "Vergleiche die Haltung zu [sensitive topic]"
-- System enforces equal representation (Essence Parity)
+- System enforces equal representation (Logarithmic Essence Parity)
 - Enforcer validates factual claims (prevents conflation of hedging with analysis)
 
 #### 3. **Hermeneutic Close Reading (Literary Texts)**
@@ -238,7 +240,7 @@ Apply traditional textual analysis to literary corpora:
 **Methodology:**
 - Upload parallel texts (3 translations of same poem)
 - Query: "Wie unterscheiden sich die Übersetzungen in ihrer Nähe zum Original?"
-- System retrieves equally from all 4 Texts (Multilingual Expansion + VIP-Schutz)
+- System retrieves equally from all texts (Multilingual Expansion + VIP-Schutz)
 - Synthesis highlights key differences (Enforcer prevents invented comparisons)
 
 ---
@@ -251,22 +253,72 @@ Apply traditional textual analysis to literary corpora:
 ### Not Designed For:
 - ❌ General-purpose RAG (use NotebookLM, Perplexity, ChatGPT)
 - ❌ Large-scale document indexing (optimized for <100 curated texts)
-- ❌ Real-time chat (optimized for deep analysis, 25-55s latency acceptable)
+- ❌ Real-time chat (optimized for deep analysis, 45s-2.5min latency acceptable)
 - ❌ Audio/Video analysis (text-only system)
 
 ---
 
 ## 🔒 Requirements
 
-- **Python:** 3.11+ (3.11 recommended for Cloud Run stability; 3.13 compatible locally)
+- **Python:** 3.11+ (3.11 recommended for Cloud Run stability)
 - **API Key:** Google Gemini API (for embeddings, synthesis, validation)
 - **Firestore:** Google Cloud Firestore (for vector storage)
 - **RAM:** Min. 8 GB (16 GB recommended for corpora >50 texts)
 
 **Dependencies:** See [requirements.txt](requirements.txt)
 
+**Key Dependencies (v50.9):**
+- `streamlit==1.50.0` (UI framework)
+- `google-genai>=1.62.0` (SDK v1.0, migration from google.generativeai v0.x)
+- `google-cloud-firestore` (vector storage)
+- `rank-bm25` (keyword search)
+- `pymupdf` (PDF parsing)
+- `beautifulsoup4>=4.12.0` (HTML parsing)
+
 **Note on Python Version:**  
-`runtime.txt` specifies Python 3.11 for Cloud Run deployments (tested, stable binaries for all dependencies). Locally, Python 3.13 works but may have slower dependency installs due to lack of pre-compiled wheels for some packages (numpy, pandas).
+`runtime.txt` specifies Python 3.11 for Cloud Run deployments (tested, stable). Python 3.13 works locally but may have slower dependency installs due to lack of pre-compiled wheels.
+
+---
+
+## 🆕 What's New in v50.9
+
+### v50.6-v50.8: Architectural Maturation
+Three versions (v50.6, v50.7, v50.8) formed a cohesive evolution from prototype to production-ready system:
+
+**v50.6 "Memory Precision" (30.12.2025):**
+- Importer improvements (DeepSeek, Grok, Perplexity, Gemini)
+- Diagnostics tools for chunk quality inspection
+- Enhanced chunk classification
+
+**v50.7 "Architectural Maturation" (16.01.2026):**
+- **SDK Migration:** Complete migration to `google.genai` v1.0 (from `google.generativeai` v0.x)
+- **Chronological Synthesis:** Timeline-based answers for historical analysis
+- **Thread-Safety:** BM25 cache protected with `threading.Lock` for multi-user environments
+- **Two-Dimensional Enforcer:** Hermeneutic (How?) + Validity (Correct?) validation
+- **Logarithmic Chunk-Berechnung:** Bio-inspired scaling (nature analogy for thought structures)
+- **Rescue Mission:** Fallback cache for documents lost during reranking
+- **Central Logging:** RotatingFileHandler (max 5 MB) suppresses Google Cloud library noise
+
+**v50.8 "Stabilization" (16.02.2026):**
+- Cloud-Run hardening (Dynamic Port Binding, Keep-Alive mechanism)
+- Chat export (Markdown download)
+- Emergency intervention UI (corrupted state recovery)
+- Iterative debugging (local vs. gcloud deployment differences)
+
+**v50.9 "Public Launch" (Februar 2026):**
+- Finalized documentation (FIBEL + README)
+- Public GitHub release
+- Community-ready installation instructions
+
+**Known Limitations:**
+- Query time increased (45s-2.5min vs. 9s in v50.5) due to larger context (17.840 chunks), chronological sorting, and two-dimensional validation. This is a **conscious tradeoff** for depth over speed.
+- Chronology requires metadata dates (not always available for literary texts)
+- Imbalance detection not fully automatic (system warns user instead of always self-correcting)
+
+**Coming in v51 (planned):**
+- Modularization of `app.py` (~1.200 lines) and `vector_store.py` (~1.000 lines)
+- Performance monitoring (timer integration for bottleneck analysis)
+- Async retrieval for improved latency
 
 ---
 
@@ -274,13 +326,14 @@ Apply traditional textual analysis to literary corpora:
 
 **License:** MIT – See [LICENSE.txt](LICENSE.txt)
 
-**Project Lead, System Design, Testing & Collaborative Development:**  
+**Project Lead, System Design, Testing & Hermeneutic Validation:**  
 Grigori Pantijelew (Landesinstitut für Schule Bremen)
 
 **Development Team:**
 - **Architectural Design & Conceptual Guidance:** Claude Sonnet 4.5 (Anthropic)
 - **Code Implementation & Team Optimization:** Gemini 3 (Google DeepMind)
 - **Adaptive RAG Research:** Grok (xAI)
+- **Editorial Review & Final Lektorat:** Kimi 2.5 (Moonshot AI)
 
 **Research Infrastructure:**  
 Google Cloud Platform (Research Credits Program, Project "Comparative Studies AI Models")
@@ -294,21 +347,21 @@ AI dialogue datasets from DeepSeek, Kimi, ChatGPT, Claude, Gemini, Grok, GLM-4.6
 
 **GitHub/Informal:**
 ```
-Pantijelew, G. (2025). Hermeneutic Engine: Source Parity & Deep Validation for Multilingual Text Analysis. 
+Pantijelew, G. (2026). Hermeneutic Engine: Source Parity, Deep Validation & Chronological Synthesis. 
 GitHub: https://github.com/gpantijelew/hermeneutic-engine
 ```
 
 **BibTeX (ArXiv/Publications):**
 ```bibtex
-@software{pantijelew2025hermeneutic,
+@software{pantijelew2026hermeneutic,
   author = {Pantijelew, Grigori},
   title = {Hermeneutic Reconstruction Engine for Archaeology of Mind: 
-           Source Parity and Deep Validation in Multilingual RAG Systems},
-  year = {2025},
-  version = {v50.5},
+           Source Parity, Deep Validation and Chronological Synthesis in Multilingual RAG Systems},
+  year = {2026},
+  version = {v50.9},
   url = {https://github.com/gpantijelew/hermeneutic-engine},
   note = {AI-assisted development with Claude Sonnet 4.5 (Anthropic), 
-          Gemini 3 (Google DeepMind), and Grok (xAI)}
+          Gemini 3 (Google DeepMind), Grok (xAI), and Kimi 2.5 (Moonshot AI)}
 }
 ```
 
@@ -316,9 +369,9 @@ GitHub: https://github.com/gpantijelew/hermeneutic-engine
 
 ## 🤝 Contributing
 
-This is a **research prototype** under active development. The repository will become **public in January 2026**.
+This repository is **public as of v50.9** (February 2026).
 
-**Once public, contributions welcome for:**
+**Contributions welcome for:**
 - 🐛 Bug reports via GitHub Issues
 - 💡 Feature requests (must align with hermeneutic methodology, see [CONTRIBUTING.md](CONTRIBUTING.md))
 - 📖 Documentation improvements
@@ -336,11 +389,10 @@ This is a **research prototype** under active development. The repository will b
 ## 📧 Contact
 
 **Project Lead:** Grigori Pantijelew  
-**Institution:** Landesinstitut für Schule Bremen  
-**Email:** grigori.pantijelew@lis.bremen.de
+**Project Email:** hermeneutic-engine@proton.me
 
 **Repository:** https://github.com/gpantijelew/hermeneutic-engine  
-**Status:** Private (public release planned **January 2026**)
+**Status:** Public (v50.9 released February 2026)
 
 ---
 
@@ -353,6 +405,7 @@ This research was supported by Google Cloud through the Google Cloud Research Cr
 - **Anthropic** (Claude Sonnet 4.5) – Architectural design and conceptual guidance
 - **Google DeepMind** (Gemini 3) – Code implementation and team optimization
 - **xAI** (Grok) – Adaptive RAG research and state-of-the-art survey
+- **Moonshot AI** (Kimi 2.5) – Editorial review and final lektorat
 
 **Open Source Foundations:**
 - Streamlit (UI framework)
@@ -362,6 +415,6 @@ This research was supported by Google Cloud through the Google Cloud Research Cr
 
 ---
 
-**Version:** v50.5 "Source Parity & Deep Validation"  
-**Last Updated:** December 29, 2025  
-**Status:** Research Prototype (Private Repository, Public Release January 2026)
+**Version:** v50.9 "Public Launch"  
+**Last Updated:** February 16, 2026  
+**Status:** Production-Ready (Public Repository)

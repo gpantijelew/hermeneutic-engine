@@ -1,6 +1,7 @@
 import re
+import os
 import logging
-import google.generativeai as genai
+from google import genai
 from typing import List, Set
 from modules.config import MODEL_QUESTION_CONV
 
@@ -14,6 +15,7 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
     3. Entfernt ungültige Zitationen (die nicht in used_source_ids sind).
     4. v49.1 FIX: Robust gegen Placeholder-Fehler.
     5. v49.2 FIX: Speaker-Header werden NICHT als Fragmente entfernt!
+    6. v50.10 FIX: Ranking-Zeilen (Platz X) werden behalten!
     """
     if not synthesis_text:
         return ""
@@ -38,7 +40,6 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
             continue
 
         # Citation-Check & Cleanup
-        # Wir entfernen Citations, die NICHT in der valid_ids Liste sind
         def validate_match(match):
             try:
                 cit_id = int(match.group(1))
@@ -58,33 +59,47 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
         # Toleranz: 7 Wörter Minimum für echte Sätze
         if len(text_only_clean.split()) < 7:
             # WHITELIST 1: Speaker-Header (markdown bold: **Name**)
-            # Erkennung: Zeile besteht NUR aus **Text** (kein weiterer Content)
             is_speaker_header = (
                 stripped_line.startswith('**') and 
                 stripped_line.endswith('**') and
-                len(stripped_line.strip('*').strip()) < 50  # Max 50 Zeichen für Namen
+                len(stripped_line.strip('*').strip()) < 50
             )
-            
+
             # WHITELIST 2: Überschriften mit Doppelpunkt
             is_heading = text_only_clean.endswith(':')
-            
+
             # WHITELIST 3: Markdown-Überschriften (### Name)
             is_markdown_heading = stripped_line.startswith('###')
-            
+
+            # --- NEU: WHITELIST 4: Ranking/Struktur-Zeilen ---
+            # Entferne Sternchen und mache klein für den Check
+            clean_start = stripped_line.replace('*', '').strip().lower()
+            is_ranking = (
+                clean_start.startswith('platz') or 
+                clean_start.startswith('rang') or 
+                clean_start.startswith('rank') or
+                clean_start.startswith('text') or   # z.B. "Text 1: ..."
+                clean_start.startswith('quelle')    # z.B. "Quelle A: ..."
+            )
+
             # Wenn Whitelist-Match → BEHALTEN!
             if is_speaker_header:
-                logger.debug(f"✅ Speaker-Header behalten: '{stripped_line}'")
-                temp_lines.append(stripped_line)  # Speaker-Header behalten!
+                temp_lines.append(stripped_line)
                 continue
-            
+
             if is_heading:
-                temp_lines.append(line_validated)  # Überschrift behalten!
+                temp_lines.append(line_validated)
                 continue
-            
+
             if is_markdown_heading:
-                temp_lines.append(stripped_line)  # Markdown-Überschrift behalten!
+                temp_lines.append(stripped_line)
                 continue
-            
+
+            if is_ranking:
+                # logger.info(f"✅ Ranking-Zeile behalten: '{stripped_line}'")
+                temp_lines.append(stripped_line)
+                continue
+
             # Sonst: Fragment entfernen
             logger.warning(f"Fragment entfernt: '{text_only_clean}'")
             continue
@@ -92,21 +107,19 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
         # Frage-Check
         if text_only.endswith('?'):
             questions_to_convert.append(line_validated)
-            # Wir nutzen einen eindeutigen Marker mit ID
             temp_lines.append(f"__QUESTION_PLACEHOLDER_{len(questions_to_convert)-1}__")
         else:
             temp_lines.append(line_validated)
 
-    # 2. Batch-Konvertierung von Fragen (nur wenn nötig)
+    # 2. Batch-Konvertierung von Fragen
     converted_statements = []
     if questions_to_convert:
         converted_statements = _batch_convert_questions(questions_to_convert)
 
-    # 3. Zusammenbau (FIX v49.1: Robustes Regex statt split)
+    # 3. Zusammenbau
     final_lines = []
     for line in temp_lines:
         if "__QUESTION_PLACEHOLDER_" in line:
-            # Sicherer Regex-Zugriff auf die ID
             match = re.search(r'__QUESTION_PLACEHOLDER_(\d+)__', line)
             if match:
                 try:
@@ -114,15 +127,12 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
                     if 0 <= idx < len(converted_statements):
                         final_lines.append(converted_statements[idx])
                     elif 0 <= idx < len(questions_to_convert):
-                        # Fallback auf Originalfrage
                         final_lines.append(questions_to_convert[idx])
                     else:
-                        # Index out of bounds (sollte nicht passieren)
                         continue
                 except ValueError:
                     continue
             else:
-                # Falls der Placeholder kaputt ist, Zeile ignorieren
                 continue
         else:
             final_lines.append(line)
@@ -130,8 +140,6 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
     # Doppelte Leerzeilen entfernen
     result = '\n'.join(final_lines)
     result = re.sub(r'\n{3,}', '\n\n', result)
-
-    # Letzter Cleanup: "Thinking"-Blöcke entfernen, falls sie durchgerutscht sind
     result = re.sub(r'> \*\*Thinking:\*\*.*?(?=\n\n|\Z)', '', result, flags=re.DOTALL)
 
     return result.strip()
@@ -142,33 +150,26 @@ def _batch_convert_questions(questions: List[str]) -> List[str]:
     """
     if not questions:
         return []
-
     try:
-        # Wir nutzen ein schnelles Modell
-        model = genai.GenerativeModel(MODEL_QUESTION_CONV)
-
+        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
         prompt = "Formuliere die folgenden rhetorischen Fragen in neutrale Aussagen um. Behalte alle Quellenangaben [x] exakt bei.\n\n"
         for i, q in enumerate(questions):
             prompt += f"Frage {i}: {q}\n"
-
         prompt += "\nAntwortformat:\nAussage 0: ...\nAussage 1: ...\n(usw.)"
 
-        # Timeout hinzufügen, damit es nicht hängt
-        response = model.generate_content(prompt, request_options={'timeout': 30})
+        response = client.models.generate_content(
+            model=MODEL_QUESTION_CONV,
+            contents=prompt
+        )
         text = response.text
-
         statements = []
         for i in range(len(questions)):
-            # Suche nach "Aussage X: ..."
             match = re.search(f"Aussage {i}:\\s*(.*)", text)
             if match:
                 statements.append(match.group(1).strip())
             else:
-                # Fallback: Original behalten
                 statements.append(questions[i])
-
         return statements
-
     except Exception as e:
         logger.error(f"Fehler bei Frage-Konvertierung: {e}")
         return questions # Fallback: Originale zurückgeben

@@ -7,7 +7,7 @@ utils.py (v49.5 - Minimale Ergänzung zu Grigoris Version)
 """
 
 import os
-import google.generativeai as genai
+from google import genai
 from typing import Tuple, Optional, Dict, List
 
 # Marker (aus alter importer.py) + ERGÄNZUNGEN
@@ -30,12 +30,6 @@ PLATFORM_MARKERS = {
         'ws-noexport'               # Wikisource-spezifisch
     ]
 }
-
-# API Key Setup (Redundant, aber sicher ist sicher für Standalone-Nutzung)
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-
 
 def detect_platform(html_content: bytes) -> Tuple[Optional[str], float, Dict]:
     """
@@ -90,10 +84,18 @@ def get_topic_summary(history: List[Dict]) -> str:
             role = msg.get('role', 'unknown')
             content = msg.get('content', '')[:500]
             context_text += f"{role}: {content}\n"
+
+        api_key = os.environ.get('GEMINI_API_KEY', '')
+        if not api_key:
+            return "Analyse (Kein API Key)"
+
+        # --- NEUES SDK: Client statt GenerativeModel ---
+        client = genai.Client(api_key=api_key)
         
-        model = genai.GenerativeModel("gemini-2.0-flash-lite-001")
-        prompt = f"Fasse das Thema dieses Chats in maximal 3-5 Worten zusammen. Chat:\n{context_text}"
-        response = model.generate_content(prompt)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-lite-001",
+            contents=f"Fasse das Thema dieses Chats in maximal 3-5 Worten zusammen. Chat:\n{context_text}"
+        )
         
         return response.text.strip()
     

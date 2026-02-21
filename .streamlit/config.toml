@@ -2,6 +2,10 @@
 # Headless-Modus (false = Browser öffnet sich automatisch)
 headless = false
 
+# --- FIX: Erlaubt Uploads bis 200 MB ---
+maxUploadSize = 200
+# ---------------------------------------
+
 # CORS & Security
 enableCORS = false
 enableXsrfProtection = false

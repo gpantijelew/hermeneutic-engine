@@ -58,7 +58,8 @@ class LMArenaImporter(HTMLImporter):
                         if reasoning_element:
                             raw_thought = reasoning_element.get_text(separator='\n', strip=True)
                             raw_thought = re.sub(r'^Thought for \d+ seconds', '', raw_thought).strip()
-                            thought_text = f"> **Thinking:**\n> {raw_thought.replace('\n', '\n> ')}\n\n"
+                            newline_replaced = raw_thought.replace('\n', '\n> ')
+                            thought_text = f"> **Thinking:**\n> {newline_replaced}"
 
                         main_text = ""
                         content_element = card.select_one('div.prose')

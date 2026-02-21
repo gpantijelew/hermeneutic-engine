@@ -8,7 +8,7 @@ import os
 import json
 import logging
 from typing import List, Dict, Tuple
-import google.generativeai as genai
+from google import genai
 from modules.config import MODEL_RERANKER
 
 logger = logging.getLogger(__name__)

@@ -1,11 +1,14 @@
-# app.py - v50.7: Hybrid Cockpit Integration (Full Version)
-APP_VERSION = "v50.7 (Hybrid 2Gb)"
+# app.py - v50.8: Hybrid Cockpit Integration (Full Version)
+APP_VERSION = "v50.8 (Hybrid 2Gb)"
 print("=" * 80)
 print(f"🚀 STARTUP: app_forschung_{APP_VERSION}.py lädt...")
 print("=" * 80)
 
-from modules.config import MODEL_CHAT_API
 import os
+from dotenv import load_dotenv
+# Lade Umgebungsvariablen aus der .env-Datei (nur für lokale Entwicklung)
+load_dotenv(override=True)
+from modules.config import MODEL_CHAT_API
 import hmac
 from datetime import datetime
 import streamlit as st
@@ -14,14 +17,16 @@ import json
 import re
 from system_prompts import GEMINI_3_SYSTEM_INSTRUCTION
 DEFAULT_SYSTEM_INSTRUCTION = GEMINI_3_SYSTEM_INSTRUCTION
-import google.generativeai as genai
+from google import genai
+from google.genai import types
+# Initialisiere Gemini API Client
+client = genai.Client(api_key=os.environ.get('GEMINI_API_KEY'))
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 import time
 import traceback
 from typing import Optional, Dict, List, Tuple
-from dotenv import load_dotenv
 
 # Neue Module-Importe
 from modules.database import (
@@ -57,8 +62,6 @@ from modules.synthesis_utils import post_process_synthesis
 from modules.confidence_scoring import calculate_confidence_scores
 from modules.export import generate_markdown, generate_json, generate_excel
 
-# Lade Umgebungsvariablen aus der .env-Datei (nur für lokale Entwicklung)
-load_dotenv(override=False)
 
 # TESTZEILE
 st.write(f"🚀 Die ({APP_VERSION}) wird ausgeführt!")
@@ -163,14 +166,16 @@ GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
 
 @st.cache_resource
 def configure_genai():
-    if GEMINI_API_KEY:
-        try:
-            genai.configure(api_key=GEMINI_API_KEY)
-            return True
-        except Exception as e:
-            st.error(f"❌ Gemini API Konfiguration fehlgeschlagen: {e}")
+    try:
+        if not GEMINI_API_KEY:
+            logger.error("❌ Gemini API Konfiguration fehlgeschlagen: Kein API Key")
             return False
-    return False
+        # Neues SDK braucht kein globales configure() mehr
+        # Client wird direkt in den Modulen initialisiert
+        return True
+    except Exception as e:
+        logger.error(f"❌ Gemini API Konfiguration fehlgeschlagen: {e}")
+        return False
 
 # --- NEU: Caching für die Chat-Liste (Verhindert das Verschwinden der Auswahl!) ---
 @st.cache_data(ttl=600) # 10 Minuten Cache
@@ -189,7 +194,7 @@ def get_default_settings():
         'system_instruction': DEFAULT_SYSTEM_INSTRUCTION, 
         'use_search': True, 
         'debug_mode': False,
-        'model_name': "gemini-3-pro-preview"  # Default für v47
+        'model_name': "gemini-3.1-pro-preview"
     }
 
 def send_message_with_rest_api(prompt, history, system_instruction, temperature, top_p, use_search, debug_mode=False):
@@ -227,9 +232,8 @@ def send_message_with_rest_api(prompt, history, system_instruction, temperature,
         headers = {"Content-Type": "application/json"}
 
         if debug_mode:
-            st.info("🔍 DEBUG: Sende Anfrage an REST API...")
-
-        logger.info(f"📤 Sende Gemini-Anfrage: prompt_length={len(prompt)}, history={len(history)}, use_search={use_search}")
+            st.info(f"🔍 DEBUG: Sende an {MODEL_NAME} (Search={use_search})")
+        logger.info(f"📤 Sende an {MODEL_NAME}: prompt_length={len(prompt)}, history={len(history)}, use_search={use_search}")
 
         # 1. Request senden
         response = requests.post(url, headers=headers, json=payload, timeout=120)
@@ -1092,7 +1096,9 @@ elif page == "💬 Chat":
             
             available_models = [
                 "gemini-2.5-flash-lite-preview-09-2025", 
+                "gemini-3.1-pro-preview",
                 "gemini-2.5-flash-preview-09-2025",
+                "gemini-3-flash-preview",
                 "gemini-3-pro-image-preview",
                 "gemini-2.5-pro",
                 "gemini-3-pro-preview"
@@ -1369,6 +1375,7 @@ elif page == "💬 Chat":
                         
                         if not results:
                             status.update(label="❌ Nichts gefunden", state="error")
+                            intent = "UNKNOWN"
                             final_text = "Ich habe in den ausgewählten Dokumenten keine Informationen dazu gefunden."
                             sources = []
                         
@@ -1434,6 +1441,7 @@ elif page == "💬 Chat":
                         st.rerun()  # <--- NEU: Damit die Antwort sicher stehen bleibt!
                     except Exception as e:
                         st.session_state.last_error = str(e)
+                        # st.error(f"DEBUG: {e}")  # ← temporär!
                         st.rerun()
         
         # Titel generieren (falls noch nicht geschehen)

@@ -28,6 +28,7 @@ Beispiel:
   → Classifier: EXEGESIS (Konzept-Erklärung, keine Diskursivität)
 
 ÄNDERUNGSHISTORIE:
+- v50.7: Migration auf neues google.genai SDK
 - v50.6: Klarere Taxonomie-Dokumentation, orthogonale Beziehung zu QueryType
 - v50: Initiale Version (Adaptive RAG)
 """
@@ -35,9 +36,10 @@ Beispiel:
 import logging
 import json
 import os
-import google.generativeai as genai
+from google import genai
 from enum import Enum
 from typing import Dict, Any
+
 from modules.config import MODEL_ROUTER
 
 logger = logging.getLogger(__name__)
@@ -74,13 +76,13 @@ class HermeneuticRouter:
     
     def __init__(self):
         """
-        Initialisiert den Router.
+        Initialisiert den Router mit neuem google.genai SDK.
         
         Raises:
             Loggt Fehler bei fehlender API-Key (aber wirft keine Exception,
             da Router-Failure nicht fatal sein soll → Fallback auf Defaults)
         """
-        # Selbstständige Authentifizierung
+        # Selbstständige Authentifizierung mit neuem SDK
         api_key = os.environ.get("GEMINI_API_KEY")
         
         if not api_key:
@@ -88,17 +90,14 @@ class HermeneuticRouter:
                 "❌ HermeneuticRouter: Kein GEMINI_API_KEY in Environment! "
                 "Router wird auf Default-Parameter zurückfallen."
             )
+            self.client = None
         else:
             try:
-                genai.configure(api_key=api_key)
+                self.client = genai.Client(api_key=api_key)
                 logger.info("✅ HermeneuticRouter initialized successfully.")
             except Exception as e:
-                logger.error(f"❌ HermeneuticRouter: Konnte genai nicht konfigurieren: {e}")
-        
-        self.model = genai.GenerativeModel(
-            model_name=MODEL_ROUTER,
-            generation_config={"response_mime_type": "application/json"}
-        )
+                logger.error(f"❌ HermeneuticRouter: Konnte Client nicht erstellen: {e}")
+                self.client = None
     
     def route_query(self, query: str) -> Dict[str, Any]:
         """
@@ -158,13 +157,34 @@ OUTPUT (JSON):
 }}
 
 WICHTIG:
-- Antworte NUR mit JSON, kein Präambel
+- Antworte NUR mit dem JSON-Objekt, ohne Markdown-Backticks oder Präambel!
 - Wähle EINE Kategorie (die dominante)
 """
         
         try:
-            response = self.model.generate_content(prompt)
-            result = json.loads(response.text)
+            # Prüfe ob Client verfügbar
+            if not self.client:
+                raise Exception("Client nicht initialisiert")
+            
+            # Neues SDK: generate_content
+            response = self.client.models.generate_content(
+                model=MODEL_ROUTER,
+                contents=prompt
+            )
+            
+            # Extrahiere Text und bereinige
+            result_text = response.text.strip()
+            
+            # Entferne mögliche Markdown-Backticks
+            if result_text.startswith("```json"):
+                result_text = result_text[7:]
+            if result_text.startswith("```"):
+                result_text = result_text[3:]
+            if result_text.endswith("```"):
+                result_text = result_text[:-3]
+            
+            result_text = result_text.strip()
+            result = json.loads(result_text)
             
             # FIX v50.1: Handle Listen gracefully
             if isinstance(result, list):

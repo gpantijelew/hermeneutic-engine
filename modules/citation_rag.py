@@ -1,38 +1,43 @@
-# modules/citation_rag.py - v50.9: DATE HEADER FIX
-import logging
-import json
-import re
-import os
-import time
-import asyncio
-from functools import partial
-from collections import defaultdict
-import google.generativeai as genai
-from typing import List, Dict, Any, Tuple, Optional
+# modules/citation_rag.py - v51.0: INDENTATION FIX & SDK UPDATE
+import logging 
+import json 
+import re 
+import os 
+import time 
+import asyncio 
+from functools import partial 
+from collections import defaultdict 
+from typing import List, Dict, Any, Tuple, Optional 
+from types import SimpleNamespace 
+from datetime import datetime
 
-from modules.config import (
-    MODEL_SYNTHESIS,
-    MODEL_QUERY_EXPANSION,
-    MODEL_ENFORCER
+# --- NEUES SDK ---
+try: 
+    from google import genai 
+    from google.genai import types 
+except ImportError: 
+    raise ImportError("Bitte installiere das neue SDK: pip install google-genai")
+
+from modules.config import ( 
+    MODEL_SYNTHESIS, 
+    MODEL_QUERY_EXPANSION, 
+    MODEL_ENFORCER 
 )
 
-from modules.vector_store import FirestoreVectorStore
-from modules.evidence_synthesis import EvidenceFirstSynthesizer
-from modules.llm_instructions import ENFORCER_INSTRUCTION
-from modules.llm_instructions import EXEGESIS_SYNTHESIS_PROMPT, SYNTHESIS_INSTRUCTION
-from modules.hermeneutic_reranker import HermeneuticReranker
+from modules.vector_store import FirestoreVectorStore 
+from modules.evidence_synthesis import EvidenceFirstSynthesizer 
+from modules.llm_instructions import ENFORCER_INSTRUCTION 
+from modules.llm_instructions import EXEGESIS_SYNTHESIS_PROMPT, SYNTHESIS_INSTRUCTION 
+from modules.hermeneutic_reranker import HermeneuticReranker 
 from modules.hermeneutic_router import HermeneuticRouter
-from types import SimpleNamespace
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-
-class CitationRAG:
-    def __init__(self, vector_store: FirestoreVectorStore = None, model_name: str = MODEL_SYNTHESIS):
-        if vector_store is None:
-            from google.cloud import firestore
-            db = firestore.Client()
+class CitationRAG: 
+    def __init__(self, vector_store: FirestoreVectorStore = None, model_name: str = MODEL_SYNTHESIS): 
+        if vector_store is None: 
+            from google.cloud import firestore 
+            db = firestore.Client() 
             vector_store = FirestoreVectorStore(db)
 
         self.vector_store = vector_store
@@ -48,64 +53,59 @@ class CitationRAG:
             "threshold": 0.65
         }
 
+        # --- FIX: Cache initialisieren ---
+        self._original_results_cache = []
+
         api_key = os.environ.get("GEMINI_API_KEY")
         if api_key:
-            genai.configure(api_key=api_key)
+            self.client = genai.Client(api_key=api_key)
+        else:
+            self.client = None
 
     def expand_query_multilingual(self, query: str) -> str:
         """v50.1: Query Translation für multilingualen Retrieval."""
         try:
-            model = genai.GenerativeModel(MODEL_QUERY_EXPANSION)
+            if not self.client:
+                logger.warning("⚠️ Client nicht verfügbar, überspringe Query-Expansion")
+                return query
 
             prompt = f"""
-Du bist ein Such-Optimierer für multilingualen Retrieval.
 
-USER QUERY (Original): "{query}"
+Du bist ein Such-Optimierer für multilingualen Retrieval. USER QUERY (Original): "{query}" AUFGABE: Übersetze diese Query in folgende Sprachen:
 
-AUFGABE: Übersetze diese Query in folgende Sprachen:
-1. Englisch
-2. Russisch (Kyrillisch)
-3. Französisch
+Englisch
+Russisch (Kyrillisch)
+Französisch OUTPUT-FORMAT: Original + 3 Übersetzungen, durch Leerzeichen getrennt. BEISPIEL: Input: "Wie definiert Adorno den Essay?" Output: "Wie definiert Adorno den Essay? How does Adorno define the essay? Как Адорно определяет эссе? Comment Adorno définit-il l'essai?" WICHTIG:
+Nur die Übersetzungen, kein Präambel!
 
-OUTPUT-FORMAT: Original + 3 Übersetzungen, durch Leerzeichen getrennt.
+Trenne mit Leerzeichen, nicht mit Zeilenumbrüchen!
 
-BEISPIEL:
-Input: "Wie definiert Adorno den Essay?"
-Output: "Wie definiert Adorno den Essay? How does Adorno define the essay? Как Адорно определяет эссе? Comment Adorno définit-il l'essai?"
+Behalte Namen unverändert! """
 
-WICHTIG: 
-- Nur die Übersetzungen, kein Präambel!
-- Trenne mit Leerzeichen, nicht mit Zeilenumbrüchen!
-- Behalte Namen unverändert!
-"""
+            # FIX: Neues SDK nutzt 'contents'
+            response = self.client.models.generate_content(
+                model=MODEL_QUERY_EXPANSION,
+                contents=prompt
+            )
 
-            response = model.generate_content(prompt, request_options={'timeout': 5})
             multilingual_query = response.text.strip()
             multilingual_query = re.sub(r'\n+', ' ', multilingual_query)
-
             logger.info(f"🌐 Query Translation: {query[:50]}... → {len(multilingual_query.split())} words")
-
             return multilingual_query
 
         except Exception as e:
             logger.warning(f"⚠️ Query Translation fehlgeschlagen: {e}. Fallback auf Original.")
             return query
 
-    def retrieve_with_rrf(
-        self, 
-        query: str, 
-        limit: int = 15, 
-        chat_id: Any = None, 
-        use_router: bool = True
-    ) -> List[Dict]:
-        """v50.1: Retrieval mit Router, RRF und Query-Translation."""
+    def retrieve_with_rrf(self, query: str, limit: int = 15, chat_id: Any = None, use_router: bool = True) -> List[Dict]:
+        """ v50.10: Retrieval mit Router, RRF und 'Rescue Mission' für garantierte Abdeckung. """
+        # 1. Router & Parameter-Setup
         if use_router:
             try:
                 route = self.router.route_query(query)
                 dynamic_limit = route["limit"]
                 intent = route["intent"]
                 threshold = route["threshold"]
-
                 logger.info(f"🚀 Retrieval Mode: AUTO ({intent}) | Limit: {dynamic_limit} | Threshold: {threshold}")
             except Exception as e:
                 logger.error(f"❌ Router Error: {e}. Fallback auf Standard-Parameter.")
@@ -116,19 +116,20 @@ WICHTIG:
             dynamic_limit = limit
             intent = "MANUAL"
             threshold = 0.65
-            logger.info(f"🔧 Retrieval Mode: MANUAL | Limit: {dynamic_limit}")
 
+        logger.info(f"🔧 Retrieval Mode: MANUAL | Limit: {dynamic_limit}")
+
+        # Selection Boost: Wenn Dokumente ausgewählt sind, erhöhen wir das Limit
         if chat_id:
             old_limit = dynamic_limit
             dynamic_limit = max(dynamic_limit, 70)
-
             if dynamic_limit > old_limit:
                 logger.info(f"📈 Selection Boost: Limit erhöht von {old_limit} auf {dynamic_limit}")
 
         self.current_context = {"intent": intent, "threshold": threshold}
 
+        # 2. Haupt-Suche
         expanded_query = self.expand_query_multilingual(query)
-
         allowed_ids = chat_id if isinstance(chat_id, list) else [chat_id] if chat_id else None
 
         results, _ = self.vector_store.hybrid_search(
@@ -137,16 +138,148 @@ WICHTIG:
             allowed_chat_ids=allowed_ids
         )
 
+        # --- 🔴 NEU: RESCUE MISSION (Garantierte Abdeckung) ---
+        if allowed_ids and len(allowed_ids) > 1:
+            # Welche Dokumente haben wir gefunden?
+            found_chat_ids = set(r.get('chat_id') for r in results if r.get('chat_id'))
+
+            # Welche fehlen?
+            missing_ids = [cid for cid in allowed_ids if cid not in found_chat_ids]
+
+            if missing_ids:
+                logger.warning(f"⚠️ {len(missing_ids)} ausgewählte Dokumente fehlen im Top-{dynamic_limit}. Starte Rettungsmission...")
+
+                for missing_cid in missing_ids:
+                    # Gezielte Nachsuche NUR in diesem Dokument
+                    rescue_results, _ = self.vector_store.hybrid_search(
+                        query=expanded_query,
+                        limit=3,  # Wir erzwingen die Top 3 dieses Dokuments
+                        allowed_chat_ids=[missing_cid]
+                    )
+
+                    if rescue_results:
+                        # Markiere sie als "gerettet", damit wir das im Log sehen
+                        for res in rescue_results:
+                            res['_is_rescued'] = True
+                            # Gib ihnen einen künstlichen Boost, damit sie nicht sofort wieder rausfliegen
+                            res['_keyword_boost'] = res.get('_keyword_boost', 0) + 0.2
+
+                        results.extend(rescue_results)
+                        logger.info(f"  🚑 Dokument {missing_cid[-6:]}... mit {len(rescue_results)} Chunks gerettet.")
+                    else:
+                        logger.warning(f"  ❌ Dokument {missing_cid[-6:]}... enthält KEINE Treffer (selbst bei gezielter Suche).")
+
+        # --- FIX: Ergebnisse cachen für spätere Rettungsversuche ---
+        self._original_results_cache = results
+        # -----------------------------------------------------------
         return results
+
+    def check_imbalance_only(self, query: str, results: List[Dict], chat_id: Any = None, use_router: bool = True) -> SimpleNamespace:
+        """ Prüft NUR die Chunk-Verteilung, OHNE zu synthetisieren.
+
+        Nutzt die gleiche Logik wie generate_answer() bis zum Punkt
+        der Essenz-Extraktion, stoppt aber VOR dem LLM-Call.
+
+        Returns:
+            SimpleNamespace mit:
+            - severity: "none" | "info" | "critical"
+            - ratio: float (max/min Verhältnis)
+            - doc_distribution: Dict[str, int]
+            - max_chunks: int
+            - min_chunks: int
+        """
+        if not results:
+            return SimpleNamespace(
+                severity="none",
+                ratio=1.0,
+                doc_distribution={},
+                max_chunks=0,
+                min_chunks=0
+            )
+
+        # Router-Logik (falls aktiviert)
+        if use_router:
+            try:
+                route = self.router.route_query(query)
+                rerank_threshold = route["threshold"]
+                intent = route["intent"]
+            except Exception as e:
+                logger.error(f"❌ Router Error: {e}. Fallback auf Standard-Parameter.")
+                rerank_threshold = 0.65
+                intent = "FALLBACK"
+        else:
+            rerank_threshold = 0.65
+            intent = "MANUAL"
+
+        # Scoring
+        is_rrf_result = any(res.get('_rrf_active') for res in results)
+        if is_rrf_result:
+            for res in results:
+                if '_final_score' not in res:
+                    res['_final_score'] = res.get('score', 0.0)
+        else:
+            for res in results:
+                res['_final_score'] = res.get('score', 0.0) + res.get('_keyword_boost', 0.0)
+            results.sort(key=lambda x: x.get('_final_score', 0), reverse=True)
+
+        # Reranking
+        top_candidates = results[:100]
+        reranker = HermeneuticReranker(threshold=rerank_threshold)
+        top_results, _ = reranker.rerank(query, top_candidates, max_results=70)
+
+        # Fallback bei zu wenig Treffern
+        if len(top_results) < 5:
+            reranker_relaxed = HermeneuticReranker(threshold=0.35)
+            top_results, _ = reranker_relaxed.rerank(query, top_candidates, max_results=70)
+
+        # Dokumenten-Verteilung VOR Essenz-Extraktion
+        surviving_docs = defaultdict(int)
+        for res in top_results:
+            chat_id_single = res.get('chat_id', 'unknown')
+            chat_title = res.get('metadata', {}).get('chat_title') or self._get_chat_title(chat_id_single)
+            surviving_docs[chat_title] += 1
+
+        # Imbalance-Berechnung
+        if not surviving_docs:
+            return SimpleNamespace(
+                severity="none",
+                ratio=1.0,
+                doc_distribution={},
+                max_chunks=0,
+                min_chunks=0
+            )
+
+        counts = list(surviving_docs.values())
+        max_c = max(counts)
+        min_c = min(counts)
+        ratio = max_c / min_c if min_c > 0 else 0
+
+        severity = "none"
+        if len(surviving_docs) > 1:
+            if ratio >= 10:
+                severity = "critical"
+            elif ratio >= 5:
+                severity = "info"
+
+        imbalance_info = SimpleNamespace(
+            severity=severity,
+            ratio=ratio,
+            doc_distribution=dict(surviving_docs),
+            max_chunks=max_c,
+            min_chunks=min_c
+        )
+
+        # Speichere für späteren Zugriff
+        self.last_imbalance_info = imbalance_info
+
+        logger.info(f"📊 Imbalance-Check: {severity.upper()} (Ratio: {ratio:.1f}:1)")
+
+        return imbalance_info
 
     def extract_keywords(self, query: str) -> List[str]:
         """Legacy-Funktion."""
         clean_query = query.replace("-", " ").replace("_", " ")
-        ignore = {
-            'wie', 'was', 'wo', 'und', 'oder', 'der', 'die', 'das', 
-            'bei', 'mit', 'von', 'über', 'ist', 'sind', 'jeweils', 
-            'erwähnung', 'auf', 'den', 'dem', 'sagen', 'meinen'
-        }
+        ignore = { 'wie', 'was', 'wo', 'und', 'oder', 'der', 'die', 'das', 'bei', 'mit', 'von', 'über', 'ist', 'sind', 'jeweils', 'erwähnung', 'auf', 'den', 'dem', 'sagen', 'meinen' }
 
         keywords = []
         for w in clean_query.split():
@@ -176,54 +309,47 @@ WICHTIG:
             return f'Doc {chat_id[-8:]}'
 
     def extract_date_from_metadata(self, res: Dict) -> datetime:
-           """
-           Extrahiert Datum aus Chunk-Metadaten für chronologische Sortierung.
+        """ Extrahiert Datum aus Chunk-Metadaten für chronologische Sortierung.
 
-           Unterstützt Formate:
-           - "04.12.2025" (Tag.Monat.Jahr)
-           - "Mai 2025" (Monat Jahr)
-           - "13.10.2025" (Tag.Monat.Jahr)
+        Unterstützt Formate:
+        - "04.12.2025" (Tag.Monat.Jahr)
+        - "Mai 2025" (Monat Jahr)
+        - "13.10.2025" (Tag.Monat.Jahr)
 
-           Returns:
-                 datetime-Objekt oder datetime.min falls kein Datum
-           """
-           meta = res.get('metadata', {})
-           date_str = meta.get('real_date_str', '')
-
-           if not date_str or date_str == 'o.D.':
-                 return datetime.min
-
-           try:
-                 # Format: "04.12.2025"
-                 if '.' in date_str:
-                      return datetime.strptime(date_str, "%d.%m.%Y")
-
-                 # Format: "Mai 2025"
-                 elif ' ' in date_str:
-                      month_map = {
-                              'Januar': 1, 'Februar': 2, 'März': 3, 'April': 4,
-                              'Mai': 5, 'Juni': 6, 'Juli': 7, 'August': 8,
-                              'September': 9, 'Oktober': 10, 'November': 11, 'Dezember': 12
-                      }
-                      parts = date_str.split()
-                      if len(parts) == 2 and parts[0] in month_map:
-                              month = month_map[parts[0]]
-                              year = int(parts[1])
-                              return datetime(year, month, 1)
-
-           except Exception as e:
-                 logger.warning(f"⚠️ Konnte Datum nicht parsen: '{date_str}' → {e}")
-
-           return datetime.min
-
-    def generate_answer(
-        self, 
-        query: str, 
-        results: List[Dict],
-        strict_parity: bool = False
-    ) -> Tuple[str, List[Dict], str]:
+        Returns:
+            datetime-Objekt oder datetime.min falls kein Datum
         """
-        v50.9: ESSENCE PARITY - Intelligente Essenz-Extraktion.
+        meta = res.get('metadata', {})
+        date_str = meta.get('real_date_str', '')
+
+        if not date_str or date_str == 'o.D.':
+            return datetime.min
+
+        try:
+            # Format: "04.12.2025"
+            if '.' in date_str:
+                return datetime.strptime(date_str, "%d.%m.%Y")
+
+            # Format: "Mai 2025"
+            elif ' ' in date_str:
+                month_map = {
+                    'Januar': 1, 'Februar': 2, 'März': 3, 'April': 4,
+                    'Mai': 5, 'Juni': 6, 'Juli': 7, 'August': 8,
+                    'September': 9, 'Oktober': 10, 'November': 11, 'Dezember': 12
+                }
+                parts = date_str.split()
+                if len(parts) == 2 and parts[0] in month_map:
+                    month = month_map[parts[0]]
+                    year = int(parts[1])
+                    return datetime(year, month, 1)
+
+        except Exception as e:
+            logger.warning(f"⚠️ Konnte Datum nicht parsen: '{date_str}' → {e}")
+
+        return datetime.min
+
+    def generate_answer(self, query: str, results: List[Dict], strict_parity: bool = False, dry_run: bool = False) -> Tuple[str, List[Dict], str]:
+        """ v50.9: ESSENCE PARITY - Intelligente Essenz-Extraktion.
 
         Max 12 Chunks pro Dokument (Code-Limit) + Erzwungene Zitat-Quota (Prompt).
         """
@@ -310,60 +436,188 @@ WICHTIG:
 
             # Gruppiere Chunks nach Chat-ID
             docs_map = defaultdict(list)
+            doc_metadata = [] # die Zeile fehlte
             for res in top_results:
                 cid = res.get('chat_id')
                 docs_map[cid].append(res)
 
-            # v50.5: MAX CHUNKS PRO DOKUMENT (Essenz-Extraktion!)
-            max_chunks_per_doc = 12  # HYBRID-LÖSUNG: Begrenzung!
+            # ======================================================================
+            # v50.9: LOGARITHMIC ESSENCE EXTRACTION (Bio-inspired Scaling)
+            # ======================================================================
+            # Philosophie: Logarithmische Skalierung wie in natürlichen Systemen
+            # (Psychophysik, Informationstheorie, ökologische Symbiose)
 
-            logger.info(f"⚖️ Essenz-Extraktion: Max {max_chunks_per_doc} Chunks/Dokument (beste Auswahl!)")
+            import math
 
-            essence_results = []
-            doc_metadata = []  # Für Prompt-Generierung
+            total_budget = 60
+
+            # Berechne logarithmisches Minimum basierend auf PRE-RERANKING Größe
+            # (verhindert, dass aggressive Reranking die Garantien zerstört)
+            doc_minimums = {}
+
+            # Schritt 1: Ermittle ORIGINAL-Chunk-Anzahl (vor Reranking)
+            original_counts = {}
+            for cid in chat_id:
+                # Hole alle Chunks aus dem PRE-RERANKING Pool (das sind die 'results')
+                pre_rerank = [r for r in results if r.get('chat_id') == cid]
+                original_counts[cid] = len(pre_rerank)
+
+            # Schritt 2: Berechne Logarithmus auf dieser Basis
+            for cid in chat_id:
+                original = original_counts.get(cid, 0)
+                if original > 0:
+                    log_min = math.ceil(math.log2(original))
+                    doc_minimums[cid] = log_min
+                else:
+                    doc_minimums[cid] = 0            
+            total_guaranteed = sum(doc_minimums.values())
+            remaining_budget = max(0, total_budget - total_guaranteed)
+
+            logger.info(
+                f"⚖️ Logarithmische Essenz-Extraktion (Bio-inspired):\n"
+                f"   - Total-Budget: {total_budget} Chunks\n"
+                f"   - Garantierte Minima: {doc_minimums}\n"
+                f"   - Total garantiert: {total_guaranteed} Chunks\n"
+                f"   - Verbleibend für Quality: {remaining_budget} Chunks"
+            )
+
+            # Phase 1: Sammle alle Chunks mit Scores + Rescue Mission
+            all_chunks_with_meta = []
+
+            RESCUE_THRESHOLD = 4  # Wenn eine Quelle weniger als 4 Chunks nach Reranking hat
 
             for cid in chat_id:
                 doc_chunks = docs_map.get(cid, [])
 
-                # FALLBACK: Pre-Reranking
+                # RESCUE MISSION: Greift bei 0 ODER wenn unter Schwellwert
+                if len(doc_chunks) < RESCUE_THRESHOLD:
+                    logger.warning(
+                        f"  🚨 Rescue Mission: Dokument {cid[-8:]} hat nur {len(doc_chunks)} Chunks "
+                        f"nach Reranking (Schwellwert: {RESCUE_THRESHOLD})"
+                    )
+
+                    # Hole ALLE Chunks aus dem PRE-RERANKING Pool
+                    pre_rerank_chunks = [r for r in self._original_results_cache if r.get('chat_id') == cid]
+
+                    if pre_rerank_chunks:
+                        # Sortiere nach ursprünglichem Score (vor Reranking)
+                        pre_rerank_chunks.sort(
+                            key=lambda x: x.get('_final_score', 0), 
+                            reverse=True
+                        )
+
+                        # Nimm die besten N aus dem Pre-Reranking Material
+                        # ABER: Nur Chunks mit Score ≥ 0.5 (verhindert Müll-Rettung)
+                        MINIMUM_RESCUE_SCORE = 0.5
+
+                        needed = RESCUE_THRESHOLD - len(doc_chunks)
+                        # Sammle IDs der bereits ausgewählten Chunks
+                        existing_ids = {id(c) for c in doc_chunks}
+
+                        # Filtere: Nur neue Chunks mit Score ≥ 0.5
+                        rescue_candidates = [
+                            c for c in pre_rerank_chunks 
+                            if id(c) not in existing_ids and c.get('_final_score', 0) >= MINIMUM_RESCUE_SCORE
+                        ]
+
+                        if len(rescue_candidates) < needed:
+                            logger.warning(
+                                f"  ⚠️ Nur {len(rescue_candidates)} Quality-Chunks verfügbar "
+                                f"(benötigt: {needed}, Filter: Score ≥ {MINIMUM_RESCUE_SCORE})"
+                            )
+
+                        doc_chunks.extend(rescue_candidates[:needed])                        
+                        logger.info(
+                            f"  ✅ Rescue erfolgreich: +{min(needed, len(rescue_candidates))} Chunks "
+                            f"aus Pre-Reranking wiederhergestellt (Total: {len(doc_chunks)})"
+                        )
+                    else:
+                        logger.error(f"  ❌ Rescue fehlgeschlagen: Keine Pre-Reranking Chunks verfügbar!")
+
+                # Wenn IMMER NOCH leer: Fehler
                 if not doc_chunks:
-                    logger.warning(f"  ⚠️ Dokument {cid[-8:]} hat 0 Chunks nach Reranking → Fallback.")
-                    doc_chunks = [r for r in results if r.get('chat_id') == cid]
+                    logger.error(f"  ❌ Dokument {cid[-8:]} hat KEINE Chunks!")
+                    doc_title = self._get_chat_title(cid)
+                    doc_metadata.append({
+                        'title': doc_title,
+                        'chunks_available': 0,
+                        'chunks_selected': 0,
+                        'date': datetime.min
+                    })
+                    continue
 
-                # Sortiere nach Qualität (Hermeneutic Score = Relevanz!)
-                doc_chunks_sorted = sorted(
-                    doc_chunks, 
-                    key=lambda x: x.get('hermeneutic_score', x.get('_final_score', 0)), 
-                    reverse=True
-                )
+                # Sammle Chunks für Quality-Verteilung
+                for chunk in doc_chunks:
+                    score = chunk.get('hermeneutic_score', chunk.get('_final_score', 0))
+                    all_chunks_with_meta.append({
+                        'chunk': chunk,
+                        'chat_id': cid,
+                        'score': score
+                    })
 
-                # v50.5: Nimm die BESTEN N Chunks (Essenz!)
-                selected = doc_chunks_sorted[:min(len(doc_chunks_sorted), max_chunks_per_doc)]
-                essence_results.extend(selected)
+            # Phase 2: Sortiere global nach Score
+            all_chunks_with_meta.sort(key=lambda x: x['score'], reverse=True)
 
-                # Logging
+            # Phase 3: Garantiere logarithmisches Minimum für jedes Dokument
+            final_selection = {cid: [] for cid in chat_id}
+            used_chunk_ids = set()
+
+            for cid in chat_id:
+                chunks_for_doc = [
+                    c for c in all_chunks_with_meta 
+                    if c['chat_id'] == cid and id(c['chunk']) not in used_chunk_ids
+                ]
+
+                # Nutze das individuell berechnete Minimum
+                guaranteed = chunks_for_doc[:doc_minimums.get(cid, 0)]
+                final_selection[cid] = [c['chunk'] for c in guaranteed]
+
+                for c in guaranteed:
+                    used_chunk_ids.add(id(c['chunk']))
+
+            # Phase 4: Verteile verbleibenden Budget nach Qualität
+            remaining = [
+                c for c in all_chunks_with_meta 
+                if id(c['chunk']) not in used_chunk_ids
+            ]
+
+            for candidate in remaining[:remaining_budget]:
+                final_selection[candidate['chat_id']].append(candidate['chunk'])
+                used_chunk_ids.add(id(candidate['chunk']))
+
+            # Phase 5: Sammle Ergebnisse
+            essence_results = []
+
+            for cid in chat_id:
+                selected = final_selection[cid]
+
                 if selected:
+                    essence_results.extend(selected)
+
                     doc_title = selected[0].get('metadata', {}).get('chat_title') or self._get_chat_title(cid)
-                    avg_score = sum(c.get('hermeneutic_score', c.get('_final_score', 0)) for c in selected) / len(selected)
+                    avg_score = sum(
+                        c.get('hermeneutic_score', c.get('_final_score', 0)) 
+                        for c in selected
+                    ) / len(selected)
 
-                    logger.info(f"  📄 {doc_title}: {len(doc_chunks)} verfügbar → {len(selected)} BESTE ausgewählt (Ø {avg_score:.2f})")
+                    logger.info(
+                        f"  📄 {doc_title}: {len(docs_map.get(cid, []))} verfügbar → "
+                        f"{len(selected)} ausgewählt (Ø {avg_score:.2f})"
+                    )
 
-                    # v50.8 FIX: Ermittle repräsentatives Datum für das Dokument (für Sortierung im Prompt)
                     dates = [self.extract_date_from_metadata(c) for c in selected]
                     valid_dates = [d for d in dates if d != datetime.min]
                     rep_date = min(valid_dates) if valid_dates else datetime.min
 
-                    # Speichere Metadaten für Prompt
                     doc_metadata.append({
                         'title': doc_title,
-                        'chunks_available': len(doc_chunks),
+                        'chunks_available': len(docs_map.get(cid, [])),
                         'chunks_selected': len(selected),
-                        'date': rep_date # WICHTIG für Prompt-Reihenfolge
+                        'date': rep_date
                     })
                 else:
                     doc_title = self._get_chat_title(cid)
-                    logger.error(f"  ❌ {doc_title}: 0 Chunks verfügbar!")
-
+                    logger.error(f"  ❌ {doc_title}: 0 Chunks!")
                     doc_metadata.append({
                         'title': doc_title,
                         'chunks_available': 0,
@@ -413,14 +667,20 @@ WICHTIG:
 
             speaker = meta.get('model_name') or meta.get('speaker') or meta.get('author') or 'Quelle'
 
-            # Stelle sicher, dass chat_title vorhanden ist
+            # Stelle sicher, dass chat_title vorhanden ist (anonymisiert für Synthese)
             if 'chat_title' not in meta or not meta['chat_title']:
                 chat_id_single = res.get('chat_id')
                 if chat_id_single:
-                    meta['chat_title'] = self._get_chat_title(chat_id_single)
+                    raw_title = self._get_chat_title(chat_id_single)
+                    # Entferne Präfixe wie "ChatGPT:", "PDF:", "Gemini:" aus dem Titel
+                    # um zu verhindern, dass sie als "Autoren" interpretiert werden
+                    clean_title = raw_title
+                    for prefix in ['ChatGPT:', 'PDF:', 'Gemini:', 'DeepSeek:', 'Claude:']:
+                        if clean_title.startswith(prefix):
+                            clean_title = clean_title[len(prefix):].strip()
+                    meta['chat_title'] = clean_title
                 else:
                     meta['chat_title'] = 'Unknown'
-
             res['source_id'] = i + 1
             sources_by_speaker[speaker].append(res)
 
@@ -456,40 +716,43 @@ WICHTIG:
         mode_display = "UNKNOWN"
 
         if intent == "ESSENCE_PARITY":
-            # Erstelle Struktur-Vorgabe (jetzt chronologisch sortiert!)
             structure_template = ""
             for i, doc_info in enumerate(doc_metadata):
                 structure_template += f"\n### {i+1}. {doc_info['title']}\n"
-                structure_template += f"[4-6 Sätze zur Frage mit EXAKT 3-4 Zitaten aus den {doc_info['chunks_selected']} verfügbaren Quellen]\n"
+                structure_template += f"[4-6 Sätze mit 3-4 Zitaten]\n"
 
             base_instruction = f"""
-**KRITISCHE REGEL - ESSENCE PARITY:**
 
-Du hast aus {len(doc_metadata)} Texten die **essentiellsten Stellen** zur Frage erhalten.
-Die Quellen sind CHRONOLOGISCH sortiert.
+HERMENEUTISCHE GRUNDREGELN FÜR MULTIPLE QUELLEN:
 
-Die Quellenanzahl variiert ({min(d['chunks_selected'] for d in doc_metadata)} bis {max(d['chunks_selected'] for d in doc_metadata)} Quellen pro Text),
-ABER: **Die Quellenanzahl reflektiert NUR die Original-Textlänge, NICHT die Wichtigkeit!**
+1. MATERIAL-MENGE UND BEDEUTUNG: Die Quellenanzahl pro Text variiert ({min(d['chunks_selected'] for d in doc_metadata)} bis {max(d['chunks_selected'] for d in doc_metadata)} Chunks). Diese Variation reflektiert die Original-Textlänge und thematische Dichte – NICHT automatisch die Wichtigkeit für deine Antwort. Deine Aufgabe: Lass jede Quelle in ihrer eigenen Stimme sprechen, unabhängig von der Chunk-Anzahl.
 
-**JEDER Text hat zur Frage GLEICH VIEL zu sagen!**
+2. CHRONOLOGIE ALS STRUKTUR, NICHT ALS KAUSALITÄT: Die Quellen sind nach Entstehungsdatum sortiert (älteste zuerst). Die Chronologie hilft dir, die Antwort zu strukturieren – sie bedeutet NICHT:
 
-**SYNTHESE-VORGABE (PFLICHT):**
-- EXAKT 1 Absatz pro Text (4-6 Sätze)
-- EXAKT 3-4 Zitate pro Text (wähle die PRÄGNANTESTEN aus den verfügbaren!)
-- GLEICHE Analyse-Tiefe (nicht oberflächlicher bei Texten mit weniger Quellen!)
-- Halte dich STRIKT an diese Reihenfolge in der Analyse (Zeitverlauf):
-{structure_template}
+Dass spätere Texte von früheren "abgeleitet" sind
+Dass frühere Texte spätere "vorwegnehmen"
+Behandle jeden Text in seinem eigenen Kontext.
 
-### VERGLEICHENDE SYNTHESE
-[Vergleiche ALLE {len(doc_metadata)} Perspektiven zur Frage und ihre Entwicklung über die Zeit]
+3. VERGLEICH ALS ANALOGIE, NICHT ALS IDENTITÄT: Wenn du Texte aus verschiedenen Epochen oder Disziplinen vergleichst:
 
-**QUALITÄTS-CHECK:**
-- Sind alle {len(doc_metadata)} Abschnitte GLEICH LANG? (4-6 Sätze)
-- Hat jeder 3-4 Zitate?
-- Ist die Analyse-Tiefe überall gleich?
-- Folgt die Analyse dem Zeitstrahl?
-"""
-            mode_display = "ESSENCE PARITY (Essenz-Extraktion + Erzwungene Gleichheit + Chronologie)"
+Benenne strukturelle Ähnlichkeiten
+Zeige funktionale Parallelen
+Vermeide: Behauptungen historischer Einflüsse ohne Beleg
+Bevorzugte Formulierungen:
+
+"X bietet einen Rahmen zur Analyse von Y"
+"Y zeigt strukturelle Ähnlichkeiten zu Z"
+"A ermöglicht ein Verständnis von B"
+4. VORSICHT BEI STRUKTURELLEN AUSSAGEN: Die Quellen sind oft Fragmente aus größeren Texten. Wenn du über die Gesamt-Struktur eines Textes sprichst (z.B. "prominent platziert", "im Abschluss", "zentrale These"), stelle sicher, dass diese Struktur in den bereitgestellten Quellen sichtbar ist. Wenn du eine Struktur inferierst, markiere das als Interpretation:
+
+Bevorzugt: "Dieser Abschnitt argumentiert..." (sichtbar in der Quelle)
+Vermeiden: "Der Text schließt mit..." (wenn nur ein Fragment vorliegt)
+STRUCTURING YOUR ANSWER: The sources are chronologically ordered (oldest first). Follow this chronological structure in your answer, presenting each source's core contribution to the question.
+
+Conclude with a synthesis of the relationships between the perspectives.
+
+Length may vary between sections – what matters is intellectual substance, not word parity. """
+            mode_display = "ESSENCE PARITY (Gleichbehandlung + Chronologie + Hermeneutische Distanz)"
 
         elif intent == "LITERARY":
             base_instruction = "Dies ist eine LITERARISCHE Analyse. Achte auf Nuancen, Stil und Metaphorik."
@@ -504,59 +767,65 @@ ABER: **Die Quellenanzahl reflektiert NUR die Original-Textlänge, NICHT die Wic
         logger.info(f"🧠 RAG Modus: {mode_display}")
 
         prompt = f"""
+
 FRAGE: "{query}"
 
 MODUS: {mode_display}
 
 {base_instruction}
 
-VERFÜGBARE QUELLEN (CHRONOLOGISCH SORTIERT):
-{context_text}
+VERFÜGBARE QUELLEN (CHRONOLOGISCH SORTIERT): {context_text}
 
-AUFGABE:
-Beantworte die Frage AUSSCHLIESSLICH basierend auf den oben genannten Quellen.
+AUFGABE: Beantworte die Frage AUSSCHLIESSLICH basierend auf den oben genannten Quellen.
 
 WICHTIGE REGELN:
-1. **Quellen-Treue:** Nutze NUR die bereitgestellten Texte.
-2. **Zitation:** Belege jede Aussage mit [Nummer].
-3. **Vollständigkeit:** Alle Dokumente müssen in der Antwort vorkommen.
-4. **Gleichberechtigung:** Gewichte NICHT nach Chunk-Anzahl!
-5. **CHRONOLOGIE:** Die Quellen sind nach Datum sortiert. Deine Antwort MUSS diese zeitliche Entwicklung abbilden (von alt nach neu).
 
-ANTWORT:
-"""
+Quellen-Treue: Nutze NUR die bereitgestellten Texte.
+Zitation: Belege jede Aussage mit [Nummer].
+Vollständigkeit: Alle Dokumente müssen in der Antwort vorkommen.
+Gleichberechtigung: Gewichte NICHT nach Chunk-Anzahl!
+CHRONOLOGIE: Die Quellen sind nach Datum sortiert. Deine Antwort MUSS diese zeitliche Entwicklung abbilden (von alt nach neu).
+ANTWORT: """
+
+        # --- 🔴 NEU: DRY RUN CHECK ---
+        if dry_run:
+            logger.info("Dry Run: Überspringe LLM-Generierung (nur Metriken gesammelt).")
+            # Wir geben einen leeren String zurück, aber die sortierten Ergebnisse (top_results_sorted)
+            # und den Intent, damit die App die Imbalance berechnen kann.
+            return "", top_results_sorted, intent
+        # --- 🔴 ENDE ---
 
         # --- Generation ---
         logger.info("📤 Sende Prompt an LLM...")
-
         max_retries = 3
-
         for attempt in range(max_retries):
             try:
-                model = genai.GenerativeModel(
-                    model_name=MODEL_SYNTHESIS,
-                    system_instruction="Du bist ein präziser Forschungs-Assistent, der alle bereitgestellten Quellen strikt gleichberechtigt behandelt und Essenz über Quantität stellt."
+                if not self.client:
+                    return "❌ API-Client nicht verfügbar.", top_results_sorted, intent
+
+                # FIX: Config korrekt übergeben (types.GenerateContentConfig)
+                response = self.client.models.generate_content(
+                    model=MODEL_SYNTHESIS,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction="Du bist ein präziser Forschungs-Assistent, der alle bereitgestellten Quellen strikt gleichberechtigt behandelt und Essenz über Quantität stellt.",
+                        temperature=0.7
+                    )
                 )
 
-                response = model.generate_content(prompt)
-
-                if not response.parts:
+                if not response.text:
                     logger.error(f"❌ Modell verweigert Antwort. Feedback: {response.prompt_feedback}")
                     return "⚠️ Das Modell konnte keine Antwort generieren (Sicherheitsfilter).", top_results_sorted, intent
 
                 final_text = self.clean_citation_format(response.text)
-
                 logger.info("✅ Antwort empfangen!")
-
                 return final_text, top_results_sorted, intent
 
             except Exception as e:
                 logger.error(f"⚠️ API Versuch {attempt+1} fehlgeschlagen: {e}")
-
                 if attempt < max_retries - 1:
                     time.sleep((attempt + 1) * 2)
                     continue
-
                 return f"❌ API-Limit oder Fehler: {e}", top_results_sorted, intent
 
         return "❌ API nicht verfügbar.", top_results_sorted, intent
@@ -592,17 +861,30 @@ ANTWORT:
         return warnings
 
     def verify_fact_match(self, claim: str, source_text: str, source_meta: Dict) -> Tuple[bool, str]:
-        """Tiefenprüfung via Enforcer (FIXED v50.8)."""
+        """Tiefenprüfung via Enforcer (FINAL FIX v50.10)."""
         try:
             from modules.hermeneutic_enforcer import HermeneuticEnforcer
 
             enforcer = HermeneuticEnforcer()
             sources = [{"content": source_text, "metadata": source_meta}]
 
-            # FIX: Robustes Unpacking, da Enforcer manchmal 2 oder 3 Werte liefert
+            # 1. Aufruf (Name ist korrekt: validate_claim)
             result = enforcer.validate_claim(claim=claim, sources=sources)
 
-            if isinstance(result, tuple):
+            # 2. Ergebnis verarbeiten (Dict vs Tuple)
+            if isinstance(result, dict):
+                # Das ist das neue v50.6 Format!
+                is_valid = result.get("valid", False)
+                h_type = result.get("hermeneutic_type", "unknown")
+                v_cat = result.get("validity_category", "unknown")
+                reason = result.get("reason", "No reason")
+
+                # Wir bauen einen aussagekräftigen String für die UI
+                full_reason = f"[{h_type.upper()}/{v_cat.upper()}] {reason}"
+                return is_valid, full_reason
+
+            elif isinstance(result, tuple):
+                # Legacy Fallback (falls doch noch alter Code läuft)
                 if len(result) == 3:
                     is_valid, classification, reason = result
                     return is_valid, f"[{classification.upper()}] {reason}"
@@ -615,7 +897,8 @@ ANTWORT:
 
         except Exception as e:
             logger.error(f"Enforcer Error: {e}")
-            return True, f"ENFORCER ERROR: {e}"
+            # Wir geben True zurück, damit die App nicht abstürzt, aber loggen den Fehler
+            return True, f"ENFORCER ERROR (Ignored): {e}"
 
     async def verify_facts_parallel(
         self, 

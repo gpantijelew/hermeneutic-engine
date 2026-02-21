@@ -3,7 +3,7 @@ import json
 import logging
 import re
 from typing import List, Dict
-import google.generativeai as genai
+from google import genai
 from modules.config import MODEL_FACT_EXTRACTION
 
 logger = logging.getLogger(__name__)

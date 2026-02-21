@@ -1,16 +1,17 @@
-google-generativeai==0.8.5
-firebase-admin==6.5.0
-requests==2.32.3
-google-auth==2.29.0
-google-cloud-firestore==2.16.0
-python-dotenv==1.0.1
+streamlit==1.50.0
+google-cloud-firestore
+google-genai>=1.62.0
+firebase-admin
+requests>=2.32.0
+google-auth
+python-dotenv
 numpy
 pandas
-openpyxl==3.1.2
-beautifulsoup4==4.12.3
-streamlit==1.50.0
+openpyxl>=3.1.0
+beautifulsoup4>=4.12.0
 # --- NEU für v49 ---
-rank-bm25==0.2.2
+rank-bm25
 # --- NEU für v47 ---
 pymupdf
-ebooklib==0.18
+ebooklib
+# Force Rebuild: v50.8
