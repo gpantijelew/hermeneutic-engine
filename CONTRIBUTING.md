@@ -355,7 +355,7 @@ IMPORTERS = {
 
 **Kontakt:**
 - **GitHub Issues:** Für technische Fragen
-- **Email:** grigori.pantijelew@lis.bremen.de (für methodologische Fragen)
+- **Email:** hermeneutic-engine@proton.me
 
 **Bitte beachte:**
 - Responses können 1-3 Tage dauern (dies ist ein Forschungsprojekt, kein kommerzielles Produkt)
