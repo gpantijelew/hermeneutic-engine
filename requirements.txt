@@ -1,5 +1,6 @@
 streamlit==1.50.0
-google-cloud-firestore
+google-cloud-firestore>=2.15.0
+google-api-core>=2.17.1
 google-genai>=1.62.0
 firebase-admin
 requests>=2.32.0
@@ -14,4 +15,4 @@ rank-bm25
 # --- NEU für v47 ---
 pymupdf
 ebooklib
-# Force Rebuild: v50.8
+# Force Rebuild: v50.8.1
