@@ -57,10 +57,14 @@ class QueryIntent(Enum):
     
     ANALYTICAL: Vergleiche, Entwicklungen, "X vs. Y"
         → retrieval_limit: ~30, threshold: 0.6 (Balance)
+
+    ANALYTICAL_FORENSIC: Dekonstruktion, Motivanalyse, Widersprüche
+        → retrieval_limit: ~35, threshold: 0.45 (Balance + Breite)
     """
     FACTUAL = "factual"
     LITERARY = "literary"
     ANALYTICAL = "analytical"
+    ANALYTICAL_FORENSIC = "analytical_forensic"
 
 
 class HermeneuticRouter:
@@ -68,7 +72,7 @@ class HermeneuticRouter:
     Entscheidet VOR dem Retrieval über die Strategie.
     
     ROLLE IN DER PIPELINE:
-    1. Router analysiert Query → FACTUAL/LITERARY/ANALYTICAL
+    1. Router analysiert Query → FACTUAL/LITERARY/ANALYTICAL/ANALYTICAL_FORENSIC
     2. Retrieval mit adaptiven Parametern (limit, threshold)
     3. Query-Classifier analysiert Results → DISCOURSE/EXEGESIS
     4. Synthesis mit passendem Prompt (beide Infos kombiniert)
@@ -108,7 +112,7 @@ class HermeneuticRouter:
         
         Returns:
             Dict mit:
-            - intent (str): FACTUAL, LITERARY, ANALYTICAL
+            - intent (str): FACTUAL, LITERARY, ANALYTICAL, ANALYTICAL_FORENSIC
             - limit (int): Anzahl Chunks aus DB (15-40)
             - threshold (float): Reranker-Schwelle (0.45-0.75)
             - reasoning (str): Begründung der Entscheidung
@@ -148,9 +152,15 @@ KATEGORIEN:
 → Braucht: Viele Belege für beide Seiten, Balance
 → Parameter: retrieval_limit=30, rerank_threshold=0.6
 
+**ANALYTICAL_FORENSIC**: Dekonstruktion, Motivanalyse, Widersprüche aufdecken,
+"Warum hat X seine Meinung geändert?", "Welche Interessen stecken hinter?",
+"Was verschweigt der Text?", Selbstzeugnisse kritisch hinterfragen
+→ Braucht: Viele Belege, breite Abdeckung für kritische Analyse
+→ Parameter: retrieval_limit=35, rerank_threshold=0.45
+
 OUTPUT (JSON):
 {{
-    "intent": "FACTUAL" | "LITERARY" | "ANALYTICAL",
+    "intent": "FACTUAL" | "LITERARY" | "ANALYTICAL" | "ANALYTICAL_FORENSIC",
     "retrieval_limit": int,
     "rerank_threshold": float,
     "reasoning": "Kurze Begründung (1 Satz)"

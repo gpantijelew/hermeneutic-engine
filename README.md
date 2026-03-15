@@ -4,6 +4,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
 [![Version](https://img.shields.io/badge/version-v50.9-green.svg)](CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)]()
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18774828.svg)](https://doi.org/10.5281/zenodo.18774828)
+[![YouTube](https://img.shields.io/badge/YouTube-Case_Study-red?logo=youtube)](https://youtu.be/HveLGOuWJM0)
 
 **Full Name:** Hermeneutic Reconstruction Engine for Archaeology of Mind  
 **Focus:** Source Parity, Deep Validation & Chronological Synthesis for Multilingual Text Analysis  
@@ -65,9 +67,25 @@ query_2 = "Vertiefe die Dezember-Version – wie erklärt DeepSeek die Selbstref
 
 ## 📚 Documentation
 
-- **[FIBEL](docs/FIBEL_v50_8.md)** – Comprehensive guide (100+ pages: concepts, architecture, tutorials)
+- **[FIBEL](docs/FIBEL_v50_9.md)** – Comprehensive guide (100+ pages: concepts, architecture, tutorials)
 - **[Changelog](CHANGELOG.md)** – Release notes and version history (v50.5 → v50.9)
 - **[Contributing Guide](CONTRIBUTING.md)** – How to contribute (public repository)
+
+---
+
+## 📄 Scientific Publication
+
+> Pantijelew, G. (2026). *Hermeneutic Reconstruction in Multi-Document RAG:
+> Enforcing Source Parity through Architectural Constraints.* Zenodo.
+> [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18774828.svg)](https://doi.org/10.5281/zenodo.18774828)
+
+The paper systematically evaluates HRE against NotebookLM across four discourse archaeology
+tasks (political discourse, rhetorical deconstruction, creative hypothesis validation,
+prompting robustness) and provides the theoretical foundation for VIP Protection,
+Essence Parity, and the Hermeneutic Enforcer.
+
+**Case Study Video:**
+[![YouTube](https://img.shields.io/badge/YouTube-HRE_Case_Study-red?logo=youtube)](https://youtu.be/HveLGOuWJM0)
 
 ---
 
@@ -139,10 +157,11 @@ Two-dimensional validation of every claim:
 - Decision matrix enforces logical consistency
 - Caches reasoning (0.0002s latency for cache hits)
 
-### 5. **Hermeneutic Router (Adaptive Parameters)**
-Intent-based parameter tuning:
-- **Intent Classification:** Literary vs. Factual vs. Analytical queries
-- **Dynamic Thresholds:** 0.45 (literary) to 0.7 (factual)
+### 5. **Hermeneutic Router (Adaptive Parameters)** ⭐ **EXTENDED in v50.9!**
+Intent-based parameter tuning with forensic mode:
+- **Intent Classification:** Literary vs. Factual vs. Analytical vs. Analytical-Forensic queries
+- **ANALYTICAL_FORENSIC:** Deconstruction, motive analysis, exposing contradictions
+- **Dynamic Thresholds:** 0.45 (literary/forensic) to 0.7 (factual)
 - **Context Preservation:** Follow-up questions build on previous synthesis
 
 ### 6. **Investigativ-Modus (Small Corpora Optimization)**
@@ -305,10 +324,15 @@ Three versions (v50.6, v50.7, v50.8) formed a cohesive evolution from prototype 
 - Emergency intervention UI (corrupted state recovery)
 - Iterative debugging (local vs. gcloud deployment differences)
 
-**v50.9 "Public Launch" (Februar 2026):**
-- Finalized documentation (FIBEL + README)
-- Public GitHub release
-- Community-ready installation instructions
+**v50.9 "Public Launch" (März 2026):**
+- **ANALYTICAL_FORENSIC intent:** Deconstruction, motive analysis, counter-reading
+- **Dynamic system instructions:** Four intent-specific LLM personas
+- **Intent propagation:** Router intent passed through entire reranker stack
+- **Multi-source validation:** Citation-blending fix in Hermeneutic Enforcer
+- **Forensic header whitelist:** Post-processing preserves structured forensic output
+- **Markdown import:** `.md` / `.markdown` format support added
+- Public GitHub release + Zenodo preprint publication
+- Community-ready documentation (FIBEL + README finalized)
 
 **Known Limitations:**
 - Query time increased (45s-2.5min vs. 9s in v50.5) due to larger context (17.840 chunks), chronological sorting, and two-dimensional validation. This is a **conscious tradeoff** for depth over speed.
@@ -330,10 +354,9 @@ Three versions (v50.6, v50.7, v50.8) formed a cohesive evolution from prototype 
 Grigori Pantijelew (Landesinstitut für Schule Bremen)
 
 **Development Team:**
-- **Architectural Design & Conceptual Guidance:** Claude Sonnet 4.5 (Anthropic)
-- **Code Implementation & Team Optimization:** Gemini 3 (Google DeepMind)
-- **Adaptive RAG Research:** Grok (xAI)
-- **Editorial Review & Final Lektorat:** Kimi 2.5 (Moonshot AI)
+- **Architectural Design & Conceptual Guidance:** Claude Sonnet 4.6 (Anthropic)
+- **Code Implementation & Technical Integration:** Gemini (Google DeepMind)
+- **Editorial Review & Final Lektorat:** Kimi (Moonshot AI)
 
 **Research Infrastructure:**  
 Google Cloud Platform (Research Credits Program, Project "Comparative Studies AI Models")
@@ -351,7 +374,14 @@ Pantijelew, G. (2026). Hermeneutic Engine: Source Parity, Deep Validation & Chro
 GitHub: https://github.com/gpantijelew/hermeneutic-engine
 ```
 
-**BibTeX (ArXiv/Publications):**
+**Zenodo Preprint:**
+```
+Pantijelew, G. (2026). Hermeneutic Reconstruction in Multi-Document RAG:
+Enforcing Source Parity through Architectural Constraints.
+Zenodo. https://doi.org/10.5281/zenodo.18774828
+```
+
+**BibTeX:**
 ```bibtex
 @software{pantijelew2026hermeneutic,
   author = {Pantijelew, Grigori},
@@ -360,8 +390,18 @@ GitHub: https://github.com/gpantijelew/hermeneutic-engine
   year = {2026},
   version = {v50.9},
   url = {https://github.com/gpantijelew/hermeneutic-engine},
-  note = {AI-assisted development with Claude Sonnet 4.5 (Anthropic), 
-          Gemini 3 (Google DeepMind), Grok (xAI), and Kimi 2.5 (Moonshot AI)}
+  note = {AI-assisted development with Claude Sonnet 4.6 (Anthropic),
+          Gemini (Google DeepMind), and Kimi (Moonshot AI)}
+}
+
+@article{pantijelew2026hre_paper,
+  author = {Pantijelew, Grigori},
+  title = {Hermeneutic Reconstruction in Multi-Document RAG:
+           Enforcing Source Parity through Architectural Constraints},
+  year = {2026},
+  publisher = {Zenodo},
+  doi = {10.5281/zenodo.18774828},
+  url = {https://doi.org/10.5281/zenodo.18774828}
 }
 ```
 
@@ -369,7 +409,7 @@ GitHub: https://github.com/gpantijelew/hermeneutic-engine
 
 ## 🤝 Contributing
 
-This repository is **public as of v50.9** (February 2026).
+This repository is **public as of v50.9** (März 2026).
 
 **Contributions welcome for:**
 - 🐛 Bug reports via GitHub Issues
@@ -392,7 +432,7 @@ This repository is **public as of v50.9** (February 2026).
 **Project Email:** hermeneutic-engine@proton.me
 
 **Repository:** https://github.com/gpantijelew/hermeneutic-engine  
-**Status:** Public (v50.9 released February 2026)
+**Status:** Public (v50.9 released März 2026)
 
 ---
 
@@ -402,10 +442,9 @@ This repository is **public as of v50.9** (February 2026).
 This research was supported by Google Cloud through the Google Cloud Research Credits program (Project "Comparative Studies AI Models"). Computational resources, including Firestore vector storage and Gemini API access, were provided by Google Cloud Platform.
 
 **Development Partners:**
-- **Anthropic** (Claude Sonnet 4.5) – Architectural design and conceptual guidance
-- **Google DeepMind** (Gemini 3) – Code implementation and team optimization
-- **xAI** (Grok) – Adaptive RAG research and state-of-the-art survey
-- **Moonshot AI** (Kimi 2.5) – Editorial review and final lektorat
+- **Anthropic** (Claude Sonnet 4.6) – Architectural design, conceptual guidance, pre-deployment analysis
+- **Google DeepMind** (Gemini) – Code implementation and technical integration
+- **Moonshot AI** (Kimi) – Editorial review and final lektorat
 
 **Open Source Foundations:**
 - Streamlit (UI framework)
@@ -416,5 +455,5 @@ This research was supported by Google Cloud through the Google Cloud Research Cr
 ---
 
 **Version:** v50.9 "Public Launch"  
-**Last Updated:** February 16, 2026  
+**Last Updated:** März 2026  
 **Status:** Production-Ready (Public Repository)

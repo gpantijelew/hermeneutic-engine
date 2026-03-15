@@ -1,4 +1,4 @@
-# modules/citation_rag.py - v51.0: INDENTATION FIX & SDK UPDATE
+# modules/citation_rag.py - v50.9: INDENTATION FIX & SDK UPDATE
 import logging 
 import json 
 import re 
@@ -126,7 +126,7 @@ Behalte Namen unverändert! """
             if dynamic_limit > old_limit:
                 logger.info(f"📈 Selection Boost: Limit erhöht von {old_limit} auf {dynamic_limit}")
 
-        self.current_context = {"intent": intent, "threshold": threshold}
+        self.current_context = {"intent": intent, "threshold": threshold, "query": query}
 
         # 2. Haupt-Suche
         expanded_query = self.expand_query_multilingual(query)
@@ -203,6 +203,7 @@ Behalte Namen unverändert! """
                 route = self.router.route_query(query)
                 rerank_threshold = route["threshold"]
                 intent = route["intent"]
+                self.current_context = {"intent": intent, "threshold": rerank_threshold, "query": query}
             except Exception as e:
                 logger.error(f"❌ Router Error: {e}. Fallback auf Standard-Parameter.")
                 rerank_threshold = 0.65
@@ -225,12 +226,12 @@ Behalte Namen unverändert! """
         # Reranking
         top_candidates = results[:100]
         reranker = HermeneuticReranker(threshold=rerank_threshold)
-        top_results, _ = reranker.rerank(query, top_candidates, max_results=70)
+        top_results, _ = reranker.rerank(query, top_candidates, max_results=70, intent=intent)
 
         # Fallback bei zu wenig Treffern
         if len(top_results) < 5:
             reranker_relaxed = HermeneuticReranker(threshold=0.35)
-            top_results, _ = reranker_relaxed.rerank(query, top_candidates, max_results=70)
+            top_results, _ = reranker_relaxed.rerank(query, top_candidates, max_results=70, intent=intent)
 
         # Dokumenten-Verteilung VOR Essenz-Extraktion
         surviving_docs = defaultdict(int)
@@ -356,7 +357,23 @@ Behalte Namen unverändert! """
         if not results:
             return "Ich habe keine relevanten Informationen in den Dokumenten gefunden.", [], "unknown"
 
+        # v50.9 FIX: UI-Bypass abfangen (Analyse-Fenster überspringt oft den Router)
+        # Wenn die aktuelle Query nicht im Kontext steht, lief der Router noch nicht!
+        if self.current_context.get("query") != query:
+            logger.info("🔄 Router-Bypass erkannt (Analyse-Fenster). Hole Intent-Analyse nach...")
+            try:
+                route = self.router.route_query(query)
+                self.current_context = {
+                    "intent": route["intent"],
+                    "threshold": route["threshold"],
+                    "query": query
+                }
+            except Exception as e:
+                logger.error(f"❌ Router Fallback Error: {e}")
+                self.current_context = {"intent": "FACTUAL", "threshold": 0.65, "query": query}
+
         intent = self.current_context.get("intent", "FACTUAL")
+        semantic_intent = intent  # Wird durch Essence Parity NICHT überschrieben
         rerank_threshold = self.current_context.get("threshold", 0.65)
 
         # Extrahiere chat_id aus results
@@ -387,12 +404,12 @@ Behalte Namen unverändert! """
         logger.info(f"⚖️ Reranking mit Threshold: {rerank_threshold} (Intent: {intent})")
 
         reranker = HermeneuticReranker(threshold=rerank_threshold)
-        top_results, rerank_stats = reranker.rerank(query, top_candidates, max_results=70)
+        top_results, rerank_stats = reranker.rerank(query, top_candidates, max_results=70, intent=intent)
 
         if len(top_results) < 5:
             logger.warning(f"⚠️ Zu wenig Treffer nach Reranking ({len(top_results)}). Senke Threshold auf 0.35...")
             reranker_relaxed = HermeneuticReranker(threshold=0.35)
-            top_results, _ = reranker_relaxed.rerank(query, top_candidates, max_results=70)
+            top_results, _ = reranker_relaxed.rerank(query, top_candidates, max_results=70, intent=intent)
 
         # --- Diagnostik VOR Essenz-Extraktion ---
         surviving_docs = defaultdict(int)
@@ -496,9 +513,8 @@ Behalte Namen unverändert! """
                         f"nach Reranking (Schwellwert: {RESCUE_THRESHOLD})"
                     )
 
-                    # Hole ALLE Chunks aus dem PRE-RERANKING Pool
-                    pre_rerank_chunks = [r for r in self._original_results_cache if r.get('chat_id') == cid]
-
+                    # Hole ALLE Chunks aus dem PRE-RERANKING Pool (v50.9 FIX: Nutze results statt Cache!)
+                    pre_rerank_chunks = [r for r in results if r.get('chat_id') == cid]
                     if pre_rerank_chunks:
                         # Sortiere nach ursprünglichem Score (vor Reranking)
                         pre_rerank_chunks.sort(
@@ -628,6 +644,7 @@ Behalte Namen unverändert! """
             # Ersetze top_results
             top_results = essence_results
             intent = "ESSENCE_PARITY"
+            is_essence_parity = True  # v50.9: Struktur-Flag, getrennt vom semantischen Intent
 
             logger.info(f"✅ Essenz-Extraktion: {len(essence_results)} Chunks aus {len(chat_id)} Dokumenten")
 
@@ -656,8 +673,6 @@ Behalte Namen unverändert! """
         # --- Context Building ---
         logger.info("📝 Baue Kontext zusammen...")
 
-        sources_by_speaker = defaultdict(list)
-
         for i, res in enumerate(top_results_sorted):
             meta = res.get('metadata', {})
 
@@ -681,24 +696,18 @@ Behalte Namen unverändert! """
                     meta['chat_title'] = clean_title
                 else:
                     meta['chat_title'] = 'Unknown'
-            res['source_id'] = i + 1
-            sources_by_speaker[speaker].append(res)
 
         context_text = ""
 
-        for speaker, sources in sources_by_speaker.items():
-            context_text += f"\n### {speaker.upper()}\n"
-
-            for res in sources:
-                sid = res['source_id']
-                meta = res.get('metadata', {})
-                title = meta.get('chat_title', 'Dokument')
-
-                # v50.9 FIX: Datum explizit in den Header schreiben
-                date_obj = self.extract_date_from_metadata(res)
-                date_str = date_obj.strftime("%d.%m.%Y") if date_obj != datetime.min else "o.D."
-
-                context_text += f"QUELLE [{sid}] ({title} | Datum: {date_str}):\n{res.get('content')}\n\n"
+        for i, res in enumerate(top_results_sorted):
+            sid = i + 1
+            res['source_id'] = sid
+            meta = res.get('metadata', {})
+            title = meta.get('chat_title', 'Dokument')
+            speaker = meta.get('model_name') or meta.get('speaker') or meta.get('author') or 'Quelle'
+            date_obj = self.extract_date_from_metadata(res)
+            date_str = date_obj.strftime("%d.%m.%Y") if date_obj != datetime.min else "o.D."
+            context_text += f"QUELLE [{sid}] ({speaker} | {title} | Datum: {date_str}):\n{res.get('content')}\n\n"
 
         # --- Finale Diagnostik ---
         final_doc_distribution = defaultdict(int)
@@ -752,20 +761,30 @@ STRUCTURING YOUR ANSWER: The sources are chronologically ordered (oldest first).
 Conclude with a synthesis of the relationships between the perspectives.
 
 Length may vary between sections – what matters is intellectual substance, not word parity. """
+            if semantic_intent == "ANALYTICAL_FORENSIC":
+                base_instruction += (
+                    "\n\nSKEPTISCHE LESEART: Lies gegen den Strich. "
+                    "Stelle Selbstzeugnisse in Frage: Hinterfrage die Selbstdarstellung "
+                    "und die behaupteten Motive als eventuell rhetorische Strategien – "
+                    "nicht als neutrale Berichte. Suche nach dem plausiblen funktionalen Motiv."
+                )
+
             mode_display = "ESSENCE PARITY (Gleichbehandlung + Chronologie + Hermeneutische Distanz)"
 
         elif intent == "LITERARY":
             base_instruction = "Dies ist eine LITERARISCHE Analyse. Achte auf Nuancen, Stil und Metaphorik."
             mode_display = "LITERARY"
+
         elif intent == "FACTUAL":
             base_instruction = "Dies ist eine FAKTISCHE Recherche. Sei präzise und objektiv. Folge der Chronologie."
             mode_display = "FACTUAL"
+
         else:
             base_instruction = "Dies ist eine ANALYTISCHE Untersuchung. Vergleiche die Quellen systematisch."
             mode_display = "ANALYTICAL"
 
         logger.info(f"🧠 RAG Modus: {mode_display}")
-
+        
         prompt = f"""
 
 FRAGE: "{query}"
@@ -796,7 +815,80 @@ ANTWORT: """
         # --- 🔴 ENDE ---
 
         # --- Generation ---
+        # --- Generation ---
         logger.info("📤 Sende Prompt an LLM...")
+
+        # v50.9 FIX: Dynamische System-Instruktion (Sokratisch-Skeptische Mitte + Forced Structure + Anchoring)
+        if semantic_intent == "ANALYTICAL_FORENSIC":
+            dynamic_sys_instruct = (
+                "Du bist ein skeptischer Diskurs-Archäologe im Sinne der philosophischen Hermeneutik. "
+                "Dein Ziel ist die Offenlegung von Textstrukturen, Brüchen und funktionalen Motiven.\n\n"
+                "SKEPTISCHE LESEART: Lies gegen den Strich. "
+                "Stelle Selbstzeugnisse in Frage: Hinterfrage die Selbstdarstellung "
+                "und die behaupteten Motive als eventuell rhetorische Strategien – "
+                "nicht als neutrale Berichte. Suche nach dem plausiblen funktionalen Motiv.\n\n"
+                "ERZWUNGENE AUSGABE-STRUKTUR:\n"
+                "Beginne DIREKT mit BEFUND – kein einleitender Satz davor.\n"
+                "1. BEFUND: Welche zentralen Aussagen oder Widersprüche zeigen die Primärquellen? (Mit wörtlichen Zitaten)\n"
+                "2. RHETORISCHE STRATEGIE: Wie rahmt oder rechtfertigt der Text diese Positionen?\n"
+                "3. FUNKTIONALES MOTIV: Welches pragmatische oder strukturelle Problem löst "
+"der Text damit? Falls nicht eindeutig belegbar: Biete eine plausible Hypothese an "
+"und kennzeichne sie als solche.\n"
+                "4. DISKURSIVE KONSEQUENZ: Was wird dadurch legitimiert, delegitimiert oder unsichtbar gemacht?\n"
+                "5. FAZIT: Ein fließend lesbarer Absatz, der die strukturellen Erkenntnisse bündelt. "
+                "Keine versöhnlichen Enden, keine Relativierung, keine Harmonisierung der aufgedeckten Brüche.\n\n"
+                "WICHTIGE REGEL: Verzichte auf harmonisierende Einleitungen und akademische Euphemismen "
+                "wie 'organische Weiterentwicklung' oder 'Paradigmenwechsel'. Sei präzise, kühl und analytisch.\n"
+                "QUELLENREGEL: Nenne niemals Jahreszahlen, Daten oder Versionsnummern, "
+                "die nicht wörtlich in den dir vorliegenden Chunks stehen. "
+                "Wenn ein Chunk kein Datum trägt, datiere ihn nicht aus deinem Weltwissen."
+            )
+        
+        elif semantic_intent == "ANALYTICAL":
+            dynamic_sys_instruct = (
+                "Du bist ein hochintelligenter, akademischer Forschungs-Assistent. "
+                "Deine Aufgabe ist es, komplexe Texte präzise zu analysieren, zu vergleichen und zu synthetisieren. "
+                "WICHTIGSTE REGEL: Du gehorchst den spezifischen Anweisungen des Users absolut strikt! "
+                "Wenn der User sagt 'Nur Zitate', lieferst du NUR Zitate. "
+                "Wenn der User sagt 'Nicht deuten', deutest du nicht. "
+                "Bleibe sachlich, neutral und fokussiere dich auf den inhaltlichen Kern der Dokumente, "
+                "ohne den Autoren böse Absichten oder verborgene Machtstrukturen zu unterstellen, "
+                "es sei denn, es wird explizit danach gefragt."
+                "QUELLENREGEL: Nenne niemals Jahreszahlen, Daten oder Versionsnummern, "
+                "die nicht wörtlich in den dir vorliegenden Chunks stehen. "
+                "Wenn ein Chunk kein Datum trägt, datiere ihn nicht aus deinem Weltwissen."
+            )
+
+        elif semantic_intent == "LITERARY":
+            dynamic_sys_instruct = (
+                "Du bist ein präziser und gewissenhafter Textanalytiker. "
+                "Dein Ziel ist Genauigkeit und Quellentreue. "
+                "Gib wieder, was die Quellen sagen – und deute, was sie bedeuten. "
+                "Wenn Quellen sich widersprechen, benenne den Widerspruch explizit "
+                "und biete eine oder mehrere plausible Hypothesen an, die ihn erklären könnten. "
+                "Kennzeichne Hypothesen als solche: 'Eine mögliche Erklärung wäre...' "
+                "Erfinde keine Synthese, die in keiner Quelle steht. "
+                "Harmonisiere keine Widersprüche weg.\n\n"
+                "FAZIT: Schließe deine Analyse mit einem zusammenhängenden, fließend lesbaren "
+                "Absatz ab, der deine literarischen Erkenntnisse bündelt. "
+                "Keine künstliche Harmonisierung – benenne auch ungelöste Spannungen."
+                "QUELLENREGEL: Nenne niemals Jahreszahlen, Daten oder Versionsnummern, "
+                "die nicht wörtlich in den dir vorliegenden Chunks stehen. "
+                "Wenn ein Chunk kein Datum trägt, datiere ihn nicht aus deinem Weltwissen."
+            )
+
+        else:
+            dynamic_sys_instruct = (
+                "Du bist ein präziser und gewissenhafter Textanalytiker. "
+                "Dein Ziel ist Genauigkeit und Quellentreue. "
+                "Gib wieder, was die Quellen sagen – und deute, was sie bedeuten. "
+                "Wenn Quellen sich widersprechen, benenne den Widerspruch explizit. "
+                "Löse ihn nicht auf. Harmonisiere keine Widersprüche weg."
+                "QUELLENREGEL: Nenne niemals Jahreszahlen oder Daten, "
+                "die nicht wörtlich in den vorliegenden Chunks stehen."
+                "Wenn ein Chunk kein Datum trägt, datiere ihn nicht aus deinem Weltwissen."
+            )
+
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -808,8 +900,8 @@ ANTWORT: """
                     model=MODEL_SYNTHESIS,
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        system_instruction="Du bist ein präziser Forschungs-Assistent, der alle bereitgestellten Quellen strikt gleichberechtigt behandelt und Essenz über Quantität stellt.",
-                        temperature=0.7
+                        system_instruction=dynamic_sys_instruct,
+                        temperature=0.4 if semantic_intent == "ANALYTICAL_FORENSIC" else 0.7
                     )
                 )
 
@@ -861,7 +953,7 @@ ANTWORT: """
         return warnings
 
     def verify_fact_match(self, claim: str, source_text: str, source_meta: Dict) -> Tuple[bool, str]:
-        """Tiefenprüfung via Enforcer (FINAL FIX v50.10)."""
+        """Tiefenprüfung via Enforcer (FINAL FIX v50.9)."""
         try:
             from modules.hermeneutic_enforcer import HermeneuticEnforcer
 
@@ -900,6 +992,26 @@ ANTWORT: """
             # Wir geben True zurück, damit die App nicht abstürzt, aber loggen den Fehler
             return True, f"ENFORCER ERROR (Ignored): {e}"
 
+    def verify_fact_match_multisource(self, claim: str, sources: List[Dict]) -> Tuple[bool, str]:
+        """Multi-Source-Validierung: Jedes Zitat muss in mindestens einer Quelle stehen."""
+        try:
+            from modules.hermeneutic_enforcer import HermeneuticEnforcer
+            enforcer = HermeneuticEnforcer()
+            result = enforcer.validate_claim_multisource(claim=claim, sources=sources)
+
+            if isinstance(result, dict):
+                is_valid = result.get("valid", False)
+                h_type = result.get("hermeneutic_type", "unknown")
+                v_cat = result.get("validity_category", "unknown")
+                reason = result.get("reason", "No reason")
+                return is_valid, f"[{h_type.upper()}/{v_cat.upper()}] {reason}"
+
+            return True, "Enforcer Format Unknown"
+
+        except Exception as e:
+            logger.error(f"MultiSource Enforcer Error: {e}")
+            return True, f"ENFORCER ERROR (Ignored): {e}"
+
     async def verify_facts_parallel(
         self, 
         sentences: List[str], 
@@ -923,18 +1035,40 @@ ANTWORT: """
 
                 results_for_sentence = []
 
-                for m in matches:
+                # NEU v50.9: Multi-Source-Erkennung
+                if len(matches) > 1:
+                    # Satz zitiert mehrere Quellen → gemeinsam prüfen
+                    all_sources = []
+                    for m in matches:
+                        idx = int(m) - 1
+                        if 0 <= idx < len(results):
+                            all_sources.append({
+                                'content': results[idx].get('content', ''),
+                                'metadata': results[idx].get('metadata', {}),
+                                'source_id': m
+                            })
+                    if all_sources:
+                        is_valid, reason = await loop.run_in_executor(
+                            None,
+                            partial(self.verify_fact_match_multisource, sent, all_sources)
+                        )
+                        results_for_sentence.append({
+                            'sentence': sent,
+                            'source_id': '+'.join(matches),
+                            'valid': is_valid,
+                            'reason': reason
+                        })
+                else:
+                    # Satz zitiert eine Quelle → bisherige Logik
+                    m = matches[0]
                     idx = int(m) - 1
-
                     if 0 <= idx < len(results):
                         source_content = results[idx].get('content', '')
                         source_meta = results[idx].get('metadata', {})
-
                         is_valid, reason = await loop.run_in_executor(
                             None,
                             partial(self.verify_fact_match, sent, source_content, source_meta)
                         )
-
                         results_for_sentence.append({
                             'sentence': sent,
                             'source_id': m,

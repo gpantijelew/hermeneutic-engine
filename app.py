@@ -1,7 +1,7 @@
-# app.py - v50.8: Hybrid Cockpit Integration (Full Version)
-APP_VERSION = "v50.8 (Hybrid 2Gb)"
+# app.py - v50.9: Hybrid Cockpit Integration (Full Version)
+APP_VERSION = "[v50.9 (Hybrid 2Gb)]"
 print("=" * 80)
-print(f"🚀 STARTUP: app_forschung_{APP_VERSION}.py lädt...")
+print(f"🚀 STARTUP: app{APP_VERSION}.py lädt...")
 print("=" * 80)
 
 import os
@@ -326,7 +326,7 @@ def render_import_page():
     st.title("📥 Daten importieren")
     st.markdown("---")
 
-    tab_paste, tab_upload, tab_json = st.tabs(["📋 Copy-Paste (Text)", "📄 Datei-Upload (HTML/PDF/ePub)", "💾 JSON Backup"])
+    tab_paste, tab_upload, tab_json = st.tabs(["📋 Copy-Paste (Text)", "📄 Datei-Upload (HTML/PDF/ePub/MD)", "💾 JSON Backup"])
 
     # TAB 1: Copy-Paste
     with tab_paste:
@@ -358,8 +358,8 @@ def render_import_page():
 
     # TAB 2: Datei-Upload
     with tab_upload:
-        # 1. Info aktualisiert
-        st.markdown("Unterstützte Formate: `.html`, `.txt`, `.pdf`, `.epub`, `.fb2`")
+        # 1. Info aktualisiert (NEU: .md hinzugefügt)
+        st.markdown("Unterstützte Formate: `.html`, `.txt`, `.pdf`, `.epub`, `.fb2`, `.md`")
 
         parser_mode = st.radio(
             "Modus:", 
@@ -373,10 +373,10 @@ def render_import_page():
             selected_name = st.selectbox("Plattform:", options=list(platform_options.values()))
             manual_platform = next((k for k, v in platform_options.items() if v == selected_name), None)
 
-        # 2. "fb2" erlaubt
+        # 2. Uploader aktualisiert (NEU: "md", "markdown" erlaubt)
         uploaded_files = st.file_uploader(
             "Dateien wählen:", 
-            type=["html", "htm", "txt", "pdf", "epub", "fb2"], 
+            type=["html", "htm", "txt", "pdf", "epub", "fb2", "md", "markdown"], 
             accept_multiple_files=True
         )
 
@@ -386,7 +386,8 @@ def render_import_page():
                 file_container.markdown(f"**📄 {uploaded_file.name}**")
                 try:
                     file_content = uploaded_file
-                    if uploaded_file.name.lower().endswith(('.html', '.htm', '.txt')):
+                    # NEU: .md Dateien direkt in den Speicher lesen
+                    if uploaded_file.name.lower().endswith(('.html', '.htm', '.txt', '.md', '.markdown')):
                         file_content = uploaded_file.read()
 
                     platform_key = 'text_fallback'
@@ -402,9 +403,11 @@ def render_import_page():
                             platform_key = 'pdf'
                         elif filename.endswith('.epub'):
                             platform_key = 'epub'
-                        # 3. FB2-Weiche hinzugefügt
                         elif filename.endswith('.fb2'):
                             platform_key = 'fb2'
+                        # 3. NEU: Markdown-Weiche hinzugefügt
+                        elif filename.endswith(('.md', '.markdown')):
+                            platform_key = 'markdown'
                         elif filename.endswith('.txt'):
                             platform_key = 'text_fallback'
                             if isinstance(file_content, bytes):
@@ -428,7 +431,7 @@ def render_import_page():
                          res = importer.import_to_firestore(messages, metadata={'container': file_container})
                          if res['chat_id']:
                              file_container.success(f"✅ Importiert: {res['message_count']} Nachrichten.")
-                             # NEU: Cache invalidieren und Chat öffnen
+                             # Cache invalidieren und Chat öffnen
                              st.cache_data.clear()
                              st.session_state.chat_id = res['chat_id']
                              st.session_state.history = load_chat_history(res['chat_id'])
@@ -711,14 +714,9 @@ def render_analysis_page():
 
                             # Temporäres Reranking für Imbalance-Analyse
                             with st.spinner("2. Analysiere Chunk-Verteilung..."):
-                                # Temporäres generate_answer() NUR für Imbalance-Info
-                                _ , temp_sources, _ = rag_engine.generate_answer(
-                                    search_query, 
-                                    results,
-                                    strict_parity=False  # Default: Pragmatisch
-                                )
 
-                            imbalance_info = getattr (rag_engine, 'last_imbalance_info', None)
+                                # NEU – ein Aufruf, kein LLM-Call, kein weggeworfenes Ergebnis:
+                                imbalance_info = rag_engine.check_imbalance_only(search_query, results)
 
                             # ===================================================================
                             # VARIANTE C: GESTUFTE INTERVENTION

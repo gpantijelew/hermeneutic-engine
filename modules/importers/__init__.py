@@ -39,6 +39,7 @@ from .html.wikisource import WikisourceImporter  # NEU!
 from .documents.pdf import PDFImporter
 from .documents.epub import EPubImporter
 from .documents.fb2 import FB2Importer
+from .documents.markdown import MarkdownImporter
 
 # Fallback & Utils
 from .text_parser import TextParserImporter
@@ -73,6 +74,7 @@ IMPORTERS: Dict[str, Type[BaseImporter]] = {
     'pdf': PDFImporter,
     'epub': EPubImporter,
     'fb2': FB2Importer,
+    'markdown': MarkdownImporter,
 }
 
 # Metadaten für UI-Darstellung (v49.5 - mit Wikisource)
@@ -160,6 +162,12 @@ IMPORTER_METADATA: Dict[str, dict] = {
         'formats': ['.fb2'],
         'experimental': False,
         'description': 'Import von FB2 E-Books'
+    },
+    'markdown': {
+        'name': 'Markdown Document',
+        'formats': ['.md', '.markdown'],
+        'experimental': False,
+        'description': 'Import von Markdown-Texten, Buchfragmenten und Typora-Notizen'
     },
     'text_fallback': {
         'name': 'Text-Parser (Fallback)',

@@ -1,54 +1,54 @@
 # 🤝 Contributing to Hermeneutic Engine
 
-Danke für dein Interesse an diesem Projekt! Die Hermeneutic Engine ist ein **Forschungsprototyp**, der sich noch in aktiver Entwicklung befindet.
+Thank you for your interest in this project! The Hermeneutic Engine is a **research prototype** that has been **production-ready** since v50.9 (February 2026) and is publicly available.
 
 ---
 
-## 🎯 Projekt-Philosophie
+## 🎯 Project Philosophy
 
-Dieses Projekt ist **kein** Standard-RAG-Tool, sondern ein **spezialisiertes Forschungswerkzeug**. Beiträge sollten diese Philosophie respektieren:
+This project is **not** a standard RAG tool, but a **specialized research instrument**. Contributions should respect this philosophy:
 
-- ✅ **Tiefe über Breite**: Hermeneutische Präzision wichtiger als Features
-- ✅ **Qualität über Quantität**: Kleine, kuratierte Datenmengen
-- ✅ **Reproduzierbarkeit**: Alle Änderungen müssen wissenschaftlich nachvollziehbar sein
-- ❌ **Keine Feature-Creep**: Neue Features nur, wenn sie die Kern-Mission unterstützen
+- ✅ **Depth over Breadth**: Hermeneutic precision matters more than features
+- ✅ **Quality over Quantity**: Small, curated datasets
+- ✅ **Reproducibility**: All changes must be scientifically traceable
+- ❌ **No Feature Creep**: New features only if they support the core mission
 
 ---
 
-## 🚀 Wie du beitragen kannst
+## 🚀 How You Can Contribute
 
 ### 1. Bug Reports
 
-**Bevor du einen Bug meldest:**
-- Prüfe, ob der Bug schon in [Issues](../../issues) gemeldet wurde
-- Stelle sicher, dass du die neueste Version nutzt (`git pull`)
-- Teste, ob der Bug auch in einem frischen Virtual Environment auftritt
+**Before reporting a bug:**
+- Check if the bug is already reported in [Issues](../../issues)
+- Make sure you're using the latest version (`git pull`)
+- Test if the bug occurs in a fresh virtual environment
 
-**Was in einen guten Bug Report gehört:**
+**What makes a good bug report:**
 ```markdown
-**Beschreibung:**
-Kurze Beschreibung des Problems
+**Description:**
+Brief description of the problem
 
-**Reproduktion:**
-1. Gehe zu "Analyse-Tab"
-2. Stelle Query "..."
-3. Beobachte Fehler X
+**Steps to Reproduce:**
+1. Go to "Analysis Tab"
+2. Enter query "..."
+3. Observe error X
 
 **Expected Behavior:**
-Was sollte passieren?
+What should happen?
 
 **Actual Behavior:**
-Was passiert stattdessen?
+What happens instead?
 
 **Environment:**
 - OS: Windows 11 / macOS 14 / Ubuntu 24
-- Python: 3.13.1
+- Python: 3.11+
 - Streamlit: 1.50.0
-- Hermeneutic Engine: v49.2
+- Hermeneutic Engine: v50.9
 
 **Logs:**
 ```python
-# Füge relevante Logs/Tracebacks hier ein
+# Paste relevant logs/tracebacks here
 ```
 ```
 
@@ -56,205 +56,205 @@ Was passiert stattdessen?
 
 ### 2. Feature Requests
 
-**Bitte beachte:**
-- Neue Features müssen die **Kern-Mission** unterstützen (hermeneutische Analyse, nicht allgemeines RAG)
-- Features, die die Engine "wie NotebookLM" machen wollen, werden abgelehnt (das ist bereits gelöst!)
-- Features müssen **wissenschaftlich begründbar** sein
+**Please note:**
+- New features must support the **core mission** (hermeneutic analysis, not general-purpose RAG)
+- Features that want to make the engine "like NotebookLM" will be declined
+- Features must be **scientifically justifiable**
 
-**Was in einen guten Feature Request gehört:**
+**What makes a good feature request:**
 ```markdown
-**Use-Case:**
-Welches Forschungsproblem löst dieses Feature?
+**Use Case:**
+What research problem does this feature solve?
 
-**Methodologische Begründung:**
-Warum ist dieses Feature für hermeneutische Analyse wichtig?
+**Methodological Justification:**
+Why is this feature important for hermeneutic analysis?
 
-**Alternative Lösungen:**
-Welche anderen Ansätze hast du in Betracht gezogen?
+**Alternative Solutions:**
+What other approaches have you considered?
 
-**Beispiel:**
-Zeige ein konkretes Beispiel, wo das Feature helfen würde
+**Example:**
+Show a concrete example where the feature would help
 ```
 
 ---
 
 ### 3. Code Contributions
 
-#### Voraussetzungen
+#### Prerequisites
 
-- Grundkenntnisse in Python 3.13+
-- Verständnis für RAG-Systeme
-- Kenntnisse in Streamlit (für UI-Änderungen)
-- Verständnis für hermeneutische Methoden (idealerweise)
+- Basic knowledge of Python 3.11+
+- Understanding of RAG systems
+- Familiarity with Streamlit (for UI changes)
+- Understanding of hermeneutic methods (ideally)
 
 #### Development Setup
 
 ```bash
-# 1. Fork das Repo
-# 2. Clone deinen Fork
-git clone https://github.com/DEIN-USERNAME/hermeneutic-engine.git
+# 1. Fork the repository
+# 2. Clone your fork
+git clone https://github.com/YOUR-USERNAME/hermeneutic-engine.git
 cd hermeneutic-engine
 
-# 3. Erstelle einen Branch
-git checkout -b feature/dein-feature-name
+# 3. Create a branch
+git checkout -b feature/your-feature-name
 
-# 4. Installiere Dependencies
+# 4. Install dependencies
 pip install -r requirements.txt
 
-# 5. Konfiguriere Environment
-cp .env.example .env  # Falls vorhanden
-# Füge deinen GEMINI_API_KEY hinzu
+# 5. Configure environment
+cp .env.example .env  # If available
+# Add your GEMINI_API_KEY
 
-# 6. Teste die App
+# 6. Test the app
 streamlit run app.py
 ```
 
-#### Code-Konventionen
+#### Code Conventions
 
-**Python-Style:**
-- Folge [PEP 8](https://pep8.org/)
-- Nutze Type Hints wo möglich
-- Docstrings für alle öffentlichen Funktionen
+**Python Style:**
+- Follow [PEP 8](https://pep8.org/)
+- Use type hints where possible
+- Docstrings for all public functions
 
-**Beispiel:**
+**Example:**
 ```python
 def calculate_confidence_scores(
     query_vector: List[float], 
     results: List[Dict]
 ) -> List[Dict]:
     """
-    Fügt jedem Ergebnis einen Confidence Score hinzu.
+    Adds a confidence score to each result.
     
     Args:
-        query_vector: Embedding-Vektor der Query
-        results: Liste von Retrieval-Ergebnissen
+        query_vector: Embedding vector of the query
+        results: List of retrieval results
     
     Returns:
-        Sortierte Liste mit Confidence Scores (0-100)
+        Sorted list with confidence scores (0-100)
     """
     # Implementation...
 ```
 
-**Commit-Messages:**
+**Commit Messages:**
 ```bash
 # Format: <type>: <subject>
-# Typen: feat, fix, docs, style, refactor, test, chore
+# Types: feat, fix, docs, style, refactor, test, chore
 
 git commit -m "feat: Add parallel validation to Enforcer"
 git commit -m "fix: Correct RRF k-parameter calculation"
-git commit -m "docs: Update FIBEL with v49.2 changes"
+git commit -m "docs: Update FIBEL with v50.9 changes"
 ```
 
 ---
 
 #### Testing
 
-**Bevor du einen Pull Request erstellst:**
+**Before creating a pull request:**
 
-1. **Teste deine Änderungen lokal:**
+1. **Test your changes locally:**
    ```bash
-   # Startup-Test
+   # Startup test
    python -m modules.config
    
-   # Feature-Test
+   # Feature test
    streamlit run app.py
-   # Manuell testen: Chat, Import, Analyse
+   # Manually test: Chat, Import, Analysis
    ```
 
-2. **Prüfe auf Regressions:**
-   - Alte Features müssen weiter funktionieren
-   - Teste mindestens: Chat, Import (HTML), RAG-Analyse
+2. **Check for regressions:**
+   - Old features must continue to work
+   - Test at minimum: Chat, Import (HTML), RAG Analysis
 
-3. **Code-Qualität:**
+3. **Code quality:**
    ```bash
-   # Optional: Nutze Linter
+   # Optional: Use linters
    flake8 modules/
-   mypy modules/  # Für Type-Checking
+   mypy modules/  # For type checking
    ```
 
 ---
 
 #### Pull Request Process
 
-1. **Update deine Dokumentation:**
-   - Füge neue Features zu `README.md` hinzu
-   - Update `FIBEL_v49.2.md` mit technischen Details
-   - Füge Docstrings im Code hinzu
+1. **Update your documentation:**
+   - Add new features to `README.md`
+   - Update `FIBEL_v50_8.md` with technical details
+   - Add docstrings in the code
 
-2. **Erstelle den PR:**
+2. **Create the PR:**
    ```markdown
-   **Was ändert dieser PR?**
-   Kurze Beschreibung (1-2 Sätze)
+   **What does this PR change?**
+   Brief description (1-2 sentences)
    
-   **Warum ist diese Änderung nötig?**
-   Methodologische Begründung
+   **Why is this change necessary?**
+   Methodological justification
    
-   **Wie wurde es getestet?**
-   - [ ] Startup-Test erfolgreich
-   - [ ] Feature X getestet
-   - [ ] Keine Regressions
+   **How was it tested?**
+   - [ ] Startup test successful
+   - [ ] Feature X tested
+   - [ ] No regressions
    
-   **Breaking Changes?**
-   Ja/Nein - Falls ja, welche?
+   **Breaking changes?**
+   Yes/No - If yes, which ones?
    ```
 
-3. **Review-Prozess:**
-   - Der Project Lead (Grigori) reviewed alle PRs
-   - Änderungswünsche werden als Review-Comments hinzugefügt
-   - Nach Approval wird der PR gemerged
+3. **Review process:**
+   - The Project Lead (Grigori) reviews all PRs
+   - Change requests will be added as review comments
+   - After approval, the PR will be merged
 
 ---
 
-### 4. Dokumentations-Beiträge
+### 4. Documentation Contributions
 
-**Dokumentation ist genauso wichtig wie Code!**
+**Documentation is just as important as code!**
 
-**Was du verbessern kannst:**
-- Typos/Grammatik in README.md oder FIBEL
-- Fehlende Erklärungen zu komplexen Features
-- Beispiele für Use-Cases
-- Übersetzungen (z.B. README in andere Sprachen)
+**What you can improve:**
+- Typos/grammar in README.md or FIBEL
+- Missing explanations for complex features
+- Examples for use cases
+- Translations (e.g., README in other languages)
 
-**Prozess:**
-1. Bearbeite die Markdown-Datei direkt
-2. Erstelle einen PR mit klarer Beschreibung
-3. Keine Tests nötig für reine Docs-Änderungen
+**Process:**
+1. Edit the Markdown file directly
+2. Create a PR with clear description
+3. No tests needed for pure documentation changes
 
 ---
 
-## 🔬 Spezielle Bereiche für Beiträge
+## 🔬 Special Areas for Contributions
 
-### A) Importer für neue Plattformen
+### A) Importers for New Platforms
 
-**Gesucht:** Parser für weitere Chat-Plattformen
+**Wanted:** Parsers for additional chat platforms
 
-**Was du brauchst:**
-1. HTML-Export von der Plattform
-2. Grundkenntnisse in BeautifulSoup
-3. Verständnis für die Importer-Architektur
+**What you need:**
+1. HTML export from the platform
+2. Basic knowledge of BeautifulSoup
+3. Understanding of the importer architecture
 
-**So fügst du einen neuen Importer hinzu:**
+**How to add a new importer:**
 
 ```python
-# modules/importers/html/deine_plattform.py
+# modules/importers/html/your_platform.py
 
 from modules.importers.base import BaseImporter
 from bs4 import BeautifulSoup
 
-class DeinePlattformImporter(BaseImporter):
-    platform_name = "Deine Plattform"
+class YourPlatformImporter(BaseImporter):
+    platform_name = "Your Platform"
     
-    # Signaturen für Auto-Detection
+    # Signatures for auto-detection
     signatures = [
-        'data-platform="deine-plattform"',
-        'class="deine-plattform-message"'
+        'data-platform="your-platform"',
+        'class="your-platform-message"'
     ]
     
     def parse(self, html_content, container=None):
         soup = BeautifulSoup(html_content, 'html.parser')
         messages = []
         
-        # Finde alle Nachrichten-Blöcke
+        # Find all message blocks
         for msg_block in soup.find_all('div', class_='message'):
             role = 'user' if 'user-message' in msg_block.get('class', []) else 'model'
             content = msg_block.find('span', class_='content').get_text()
@@ -267,82 +267,83 @@ class DeinePlattformImporter(BaseImporter):
         return messages
 ```
 
-**Registriere den Importer:**
+**Register the importer:**
 ```python
 # modules/importers/__init__.py
 
-from .html.deine_plattform import DeinePlattformImporter
+from .html.your_platform import YourPlatformImporter
 
 IMPORTERS = {
-    # ... bestehende Importer
-    'deine_plattform': DeinePlattformImporter,
+    # ... existing importers
+    'your_platform': YourPlatformImporter,
 }
 ```
 
 ---
 
-### B) Neue Enforcer-Kategorien
+### B) New Enforcer Categories
 
-**Aktuell gibt es 4 Kategorien:**
-- Paraphrase
-- Meta-Aussage
-- Inferenz
-- Halluzination
+**Currently (v50.9), the Enforcer uses Two-Dimensional Validation:**
 
-**Du könntest neue hinzufügen, z.B.:**
-- **QUOTATION**: Direktes Zitat (muss wörtlich übereinstimmen)
-- **TEMPORAL**: Zeitbezogene Aussage (muss mit Datum validiert werden)
-- **NUMERICAL**: Zahlen-Aussage (muss exakt sein)
+**Dimension 1 (Hermeneutics – How is it said?):**
+- Quote (Direct quotation)
+- Paraphrase (Reformulation)
+- Inference (Logical derivation)
 
-**Anleitung:**
-1. Erweitere `modules/hermeneutic_enforcer.py` (Prompt anpassen)
-2. Update `modules/llm_instructions.py` (neue Kategorie dokumentieren)
-3. Teste mit Edge-Cases
+**Dimension 2 (Validity – Is it correct?):**
+- Supported (Source confirms)
+- Neutral (Source is silent)
+- Contradiction (Source contradicts)
 
----
+**You could add additional dimensions or categories, e.g.:**
+- **TEMPORAL**: Time-related statement (must be validated with dates)
+- **NUMERICAL**: Numerical statement (must be exact)
+- **COMPARATIVE**: Comparative statement (multiple sources involved)
 
-### C) Performance-Optimierungen
-
-**Bekannte Bottlenecks:**
-- BM25 Index Rebuild (bei >10k Chunks langsam)
-- Enforcer bei >100 Sätzen (selbst mit Parallelisierung)
-- Embedding-Erstellung für große Importe
-
-**Wenn du Performance-Experte bist:**
-- Profiling mit `cProfile`
-- Vorschläge für Caching-Strategien
-- Optimierungen für Firestore-Queries
+**Instructions:**
+1. Extend `modules/hermeneutic_enforcer.py` (adapt prompt)
+2. Update Decision Matrix (ensure logical consistency)
+3. Test with edge cases
 
 ---
 
-## 🚫 Was wir NICHT akzeptieren
+### C) Performance Optimizations
 
-❌ **Features, die die Kern-Mission verwässern:**
-- "Ich möchte 1 Million Dokumente indizieren" → Das ist nicht unser Use-Case
-- "Ich möchte Audio/Video analysieren" → Außerhalb des Scopes
-- "Ich möchte ein allgemeines Wissensmanagement-Tool" → Nutze NotebookLM
+**Known bottlenecks:**
+- BM25 Index Rebuild (slow with >10k chunks)
+- Enforcer with >100 sentences (even with parallelization)
+- Embedding creation for large imports
 
-❌ **Breaking Changes ohne Diskussion:**
-- Keine großen Refactorings ohne vorherige Issue-Diskussion
-- Keine Änderungen an der Kern-Architektur (Triade) ohne Begründung
-
-❌ **Code ohne Tests:**
-- Neue Features müssen manuell testbar sein
-- Falls möglich: Unit Tests hinzufügen (noch nicht Pflicht, aber empfohlen)
+**If you're a performance expert:**
+- Profiling with `cProfile`
+- Suggestions for caching strategies
+- Optimizations for Firestore queries
 
 ---
 
-## 📚 Ressourcen für Mitwirkende
+## 🚫 What We Don't Accept
 
-**Technische Dokumentation:**
-- [FIBEL v49.2](FIBEL_Hermeneutic_Engine_v49.md) – Vollständige technische Specs
-- [Model-Config](modules/config.py) – Zentrale Model-Zuordnung
-- [Importer-Architektur](modules/importers/README.md) – Wie Parser funktionieren
+❌ **Features that dilute the core mission:**
+- "I want to index 1 million documents" → This is not our use case
+- "I want to analyze audio/video" → Out of scope
+- "I want a general knowledge management tool" → Use NotebookLM
 
-**Wissenschaftlicher Hintergrund:**
-- **Hermeneutik:** Gadamer, "Wahrheit und Methode" (1960)
-- **RAG-Systeme:** Lewis et al., "Retrieval-Augmented Generation" (2020)
-- **LLM-Philosophie:** Bender & Koller, "Climbing towards NLU" (2020)
+❌ **Breaking changes without discussion:**
+- No major refactorings without prior issue discussion
+- No changes to the core architecture (Triad) without justification
+
+❌ **Code without tests:**
+- New features must be manually testable
+- If possible: Add unit tests (not mandatory yet, but recommended)
+
+---
+
+## 📚 Resources for Contributors
+
+**Technical Documentation:**
+- [FIBEL v50.9](docs/FIBEL_v50_8.md) – Complete technical specs (100+ pages)
+- [Model Config](modules/config.py) – Central model mapping
+- [Importer Architecture](modules/importers/README.md) – How parsers work
 
 **Best Practices:**
 - [Google Python Style Guide](https://google.github.io/styleguide/pyguide.html)
@@ -351,30 +352,30 @@ IMPORTERS = {
 
 ---
 
-## 💬 Fragen?
+## 💬 Questions?
 
-**Kontakt:**
-- **GitHub Issues:** Für technische Fragen
+**Contact:**
+- **GitHub Issues:** For technical questions
 - **Email:** hermeneutic-engine@proton.me
 
-**Bitte beachte:**
-- Responses können 1-3 Tage dauern (dies ist ein Forschungsprojekt, kein kommerzielles Produkt)
-- Für dringende Bugs: Markiere Issue mit Label `critical`
+**Please note:**
+- Responses may take 1-3 days (this is a research project, not a commercial product)
+- For urgent bugs: Mark issue with `critical` label
 
 ---
 
-## 🙏 Danke!
+## 🙏 Thank You!
 
-Jeder Beitrag – ob Code, Dokumentation oder Bug Report – hilft, dieses Forschungswerkzeug zu verbessern.
+Every contribution – whether code, documentation, or bug report – helps improve this research tool.
 
-**Besonderer Dank an:**
-- Alle, die Issues melden
-- Alle, die Typos korrigieren
-- Alle, die das Projekt weiterempfehlen
+**Special thanks to:**
+- Everyone who reports issues
+- Everyone who corrects typos
+- Everyone who recommends the project
 
-**Dein Name könnte hier stehen!** 🌟
+**Your name could be here!** 🌟
 
 ---
 
-**Version:** v49.2  
-**Stand:** 26. Dezember 2025
+**Version:** v50.9  
+**Last Updated:** February 16, 2026

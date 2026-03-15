@@ -100,6 +100,17 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
                 temp_lines.append(stripped_line)
                 continue
 
+            # WHITELIST 5: Forensische Struktur-Header (ANALYTICAL_FORENSIC)
+            _FORENSIC_HEADERS = {
+                'befund', 'rhetorische strategie', 'funktionales motiv',
+                'diskursive konsequenz', 'fazit'
+            }
+            is_forensic_header = text_only_clean.lower() in _FORENSIC_HEADERS
+
+            if is_forensic_header:
+                temp_lines.append(stripped_line)
+                continue
+
             # Sonst: Fragment entfernen
             logger.warning(f"Fragment entfernt: '{text_only_clean}'")
             continue

@@ -13,7 +13,7 @@ Diese Zwei-Ebenen-Analyse ermöglicht präzise Fehlerdiagnosen:
 "Die Aussage ist eine Paraphrase (hermeneutisch valide), aber übertrieben (faktisch invalid)."
 
 ÄNDERUNGSHISTORIE:
-- v50.10: Fix Indentation & Cleanup
+- v50.9: Fix Indentation & Cleanup
 - v50.6: Harmonisierung mit llm_instructions.py, Dict-Output, Beispiele, Legacy-Wrapper
 - v48.1: Zitat-Schutz, hermeneutischer Modus
 - v47: Initiale Version
@@ -136,6 +136,40 @@ Quelle: "Claude ist ein KI-Modell von Anthropic."
 Jetzt validiere die Behauptung:
 """
 
+MULTISOURCE_PROMPT_TEMPLATE = """
+Du bist ein hermeneutischer Validator für Multi-Quellen-Aussagen.
+
+AUFGABE: Prüfe, ob diese BEHAUPTUNG aus den QUELLEN kollektiv ableitbar ist.
+
+BEHAUPTUNG: "{claim}"
+
+QUELLEN (der Satz zitiert aus mehreren):
+{sources_text}
+
+---
+
+## MULTI-QUELLEN-REGEL (KRITISCH):
+Dieser Satz zitiert bewusst aus MEHREREN Quellen gleichzeitig.
+Ein Satz ist VALID, wenn:
+- Jedes wörtliche Zitat (in Anführungszeichen) in MINDESTENS EINER der genannten Quellen vorkommt
+- Die Gesamtaussage eine valide Paraphrase oder Inferenz aus der Summe der Quellen ist
+
+Ein Satz ist INVALID, wenn:
+- Ein wörtliches Zitat in KEINER der genannten Quellen vorkommt (Halluzination)
+- Die Gesamtaussage dem Inhalt aller Quellen widerspricht
+
+## AUSGABE-FORMAT (STRIKT):
+Antworte NUR als JSON:
+{{
+  "valid": true/false,
+  "hermeneutic_type": "multi_source_synthesis" | "hallucination" | "false_quote",
+  "validity_category": "supported" | "unsupported" | "contradiction",
+  "reason": "Kurze Begründung: Welche Zitate sind belegt, welche nicht?",
+  "confidence": 0.0-1.0
+}}
+
+Jetzt validiere:
+"""
 
 class HermeneuticEnforcer:
     """
@@ -322,3 +356,57 @@ class HermeneuticEnforcer:
             result["hermeneutic_type"],
             result["reason"]
         )
+
+    def validate_claim_multisource(self, claim: str, sources: list) -> Dict:
+        """
+        Validiert einen Satz, der bewusst aus mehreren Quellen zitiert.
+        NEU v50.9: Löst das Citation-Blending-Problem.
+        """
+        cache_key = self._generate_cache_key(claim, sources)
+        if cache_key in self._global_cache:
+            return self._global_cache[cache_key]
+
+        sources_text = ""
+        for i, src in enumerate(sources, 1):
+            sid = src.get('source_id', str(i))
+            content = src.get("content", "")
+            sources_text += f"Quelle [{sid}]: {content}\n\n"
+
+        prompt = MULTISOURCE_PROMPT_TEMPLATE.format(
+            claim=claim,
+            sources_text=sources_text
+        )
+
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config={"temperature": 0.0}
+            )
+            result_json = self._clean_json_response(response.text)
+
+            result = {
+                "valid": result_json.get("valid", False),
+                "hermeneutic_type": result_json.get("hermeneutic_type", "multi_source_synthesis"),
+                "validity_category": result_json.get("validity_category", "unknown"),
+                "reason": result_json.get("reason", "No reason provided"),
+                "confidence": result_json.get("confidence", 0.0)
+            }
+
+            self._global_cache[cache_key] = result
+            status_icon = "✅" if result["valid"] else "❌"
+            logger.info(
+                f"{status_icon} MultiEnforcer: {claim[:50]}... → "
+                f"{result['hermeneutic_type']}/{result['validity_category']}"
+            )
+            return result
+
+        except Exception as e:
+            logger.error(f"❌ MultiSource Enforcer Error: {e}", exc_info=True)
+            return {
+                "valid": True,
+                "hermeneutic_type": "error",
+                "validity_category": "unavailable",
+                "reason": f"ENFORCER UNAVAILABLE (API Error) – Zitat nicht validiert: {str(e)}",
+                "confidence": 0.0
+            }

@@ -2,11 +2,11 @@
 ## Single Source of Truth für das Projekt "Archaeology of Mind"
 
 **Version:** v50.9 "Public Launch"  
-**Stand:** 16. Februar 2026  
+**Stand:** März 2026  
 **Autor:** Grigori Pantijelew (Project Lead)
-**KI-Team:** Claude Sonnet 4.5 (Architectural Design), Gemini 3 (Code Implementation), Grok (Research Support), Kimi 2.5 (Lektorat)
+**KI-Team:** Claude Sonnet 4.6 (Architectural Design), Gemini (Code Implementation), Kimi (Lektorat)
 
-**Status:** ✅ **PRODUCTION-READY** (v50.8 deployed, v50.9 documentation finalized)
+**Status:** ✅ **PRODUCTION-READY** (v50.9 deployed, Public Launch März 2026)
 
 ---
 
@@ -28,6 +28,23 @@
 ---
 
 # 1. PROJEKT-IDENTITÄT
+
+## 1.0 Wissenschaftliche Publikation & Dokumentation
+
+Die theoretischen Grundlagen und die empirische Evaluation der HRE sind dokumentiert in:
+
+**Pantijelew, G. (2026).** *Hermeneutic Reconstruction in Multi-Document RAG:
+Enforcing Source Parity through Architectural Constraints.*
+Zenodo. DOI: [10.5281/zenodo.18774828](https://doi.org/10.5281/zenodo.18774828)
+
+Das Paper vergleicht die HRE systematisch gegen NotebookLM (Standard- und Deep-Research-Modus)
+in vier Diskurs-Archäologie-Aufgaben und liefert die theoretische Fundierung für VIP-Schutz,
+Essence Parity und den Hermeneutic Enforcer.
+
+Ein dokumentiertes Anwendungsbeispiel zeigt das Case-Study-Video:
+[▶ HRE Case Study – YouTube](https://youtu.be/HveLGOuWJM0)
+
+---
 
 ## 1.1 Mission Statement: Archaeology of Mind
 
@@ -171,7 +188,7 @@ v50.7 war die **aufwendigste Version** in der Geschichte des Projekts. Nach den 
 Wir gingen Datei für Datei durch – von `app.py` über `vector_store.py` bis zu den tiefsten Importer-Modulen. Jede Funktion wurde geprüft: Ist die Logik robust? Gibt es Race Conditions? Ist der Code wartbar? Das Resultat: ~7.800 Zeilen Code hinzugefügt, ~3.800 gelöscht – ein Netto-Wachstum von 4.000 Zeilen, aber mit **fundamentalen Verbesserungen** in der Code-Qualität.
 
 **Die Teamarbeit-Herausforderung:**
-v50.7 entstand in intensiver Kollaboration zwischen Claude Sonnet 4.5 (Architektur-Konzepte), Gemini 3 (Code-Implementierung) und Grok (State-of-the-Art-Research). Das Delegieren brachte Effizienz, aber auch Koordination-Probleme: Unterschiedliche Modelle haben unterschiedliche "Perspektiven" auf Code-Design. Einige Entscheidungen führten zu Fehlern, andere zu Verschlimmbesserungen. Doch der iterative Prozess – Fehler erkennen, korrigieren, weiter verbessern – funktionierte.
+v50.7 entstand in intensiver Kollaboration zwischen Claude Sonnet 4.6 (Architektur-Konzepte), Gemini (Code-Implementierung) und Grok (State-of-the-Art-Research). Das Delegieren brachte Effizienz, aber auch Koordination-Probleme: Unterschiedliche Modelle haben unterschiedliche "Perspektiven" auf Code-Design. Einige Entscheidungen führten zu Fehlern, andere zu Verschlimmbesserungen. Doch der iterative Prozess – Fehler erkennen, korrigieren, weiter verbessern – funktionierte.
 
 **Kernentwicklungen:**
 
@@ -220,30 +237,34 @@ Ein strukturelles Problem zeigt sich immer wieder: Code, der lokal perfekt läuf
 
 ---
 
-### v50.9 – "Public Launch" (geplant, Februar 2026)
+### v50.9 – "Public Launch" (März 2026)
 
-v50.9 ist keine neue Feature-Version, sondern die **offiziell dokumentierte, öffentlich deploybare Variante** von v50.8. Der Fokus liegt auf:
-- **Dokumentation finalisieren:** Diese FIBEL + README auf v50.8-Stand bringen
-- **GitHub-Deployment:** Erster öffentlicher Release nach monatelanger Entwicklung
-- **Community-Vorbereitung:** README mit klaren Installations-Anweisungen, Use-Cases aus realen Projekten
+v50.9 ist die **offiziell dokumentierte, öffentlich deploybare Variante** mit wesentlichen Architektur-Erweiterungen. Der Fokus liegt auf:
+
+- **ANALYTICAL_FORENSIC Intent:** Vierter Query-Typ für Dekonstruktion, Motivanalyse, kritische Gegenlektüre
+- **Dynamische System-Instruktionen:** Vier intent-spezifische LLM-Personas ersetzen den universellen Prompt
+- **Intent-Propagation:** Router-Entscheidung durchzieht jetzt die gesamte Reranker-Pipeline
+- **Multi-Source-Validierung:** Citation-Blending-Fix im Hermeneutic Enforcer
+- **GitHub Public Release + Zenodo-Preprint:** Erste öffentliche Veröffentlichung nach vier Monaten Entwicklung
 
 ---
 
 ## 1.3 Was ist neu? (v50.6 bis v50.9)
 
-**v50.6 bis v50.8 markieren den Übergang von Prototyp zu Production-System.** Die drei Versionen bilden eine zusammenhängende Entwicklung:
+**v50.6 bis v50.9 markieren den Übergang von Prototyp zu Production-System.** Die vier Versionen bilden eine zusammenhängende Entwicklung:
 
 - **v50.6** verbesserte die **Datenbasis** (bessere Imports → bessere Chunks)
 - **v50.7** reifte die **Architektur** (großes Audit, SDK-Migration, neue Synthese-Logik)
 - **v50.8** härtete die **Deployment-Infrastruktur** (Cloud-Run-Stabilität)
+- **v50.9** erweiterte die **hermeneutische Tiefe** (Forensic Turn, Multi-Source-Validierung)
 
-**Neue Metriken (Stand v50.8):**
+**Neue Metriken (Stand v50.9):**
 - **Firestore Chunks:** 17.840 (vorher 6.304 in v50.5) – organisches Wachstum durch kontinuierliches Testen und neue Bücher
 - **Query Time:** 45 Sekunden bis 2,5 Minuten (vorher ~9 Sekunden in v50.5) – ein bewusster Tradeoff für größeren Kontext, chronologische Sortierung und robustere Validierung
 - **Coverage:** 100% (stabil seit v50.5)
 
 **Der Realismus-Imperativ:**
-Diese Versionen zeigen auch die **Grenzen iterativer Entwicklung**: Nicht jeder Schritt war ein Fortschritt. Einige Änderungen führten zu neuen Problemen. Doch die kontinuierliche Verbesserung – Fehler erkennen, korrigieren, weitermachen – ist der Kern wissenschaftlicher Ingenieursarbeit. v50.9 wird der erste öffentliche Release sein, der diese Reife dokumentiert.
+Diese Versionen zeigen auch die **Grenzen iterativer Entwicklung**: Nicht jeder Schritt war ein Fortschritt. Einige Änderungen führten zu neuen Problemen. Doch die kontinuierliche Verbesserung – Fehler erkennen, korrigieren, weitermachen – ist der Kern wissenschaftlicher Ingenieursarbeit. v50.9 ist der erste öffentliche Release, der diese Reife dokumentiert.
 
 ---
 
@@ -359,55 +380,65 @@ Die Engine besteht aus drei unabhängigen, aber orchestrierten Schichten:
 ```
 User Query
     ↓
-[1] Hermeneutic Router → Intent-Klassifikation (LITERARY, FACTUAL, ANALYTICAL)
+[1] Hermeneutic Router → Intent: FACTUAL/LITERARY/ANALYTICAL/ANALYTICAL_FORENSIC
     ↓
 [2] Multilingual Expansion → DE Query → EN, FR, RU
     ↓
-[3] Hybrid Retrieval (Vector + BM25) → RRF Fusion → VIP-Schutz
+[3] Bypass-Check (Analyse-Fenster) → Router-Nachhol-Logik falls nötig
     ↓
-[4] Hermeneutic Reranker → Dynamic Threshold (abhängig von Intent)
+[4] Hybrid Retrieval (Vector + BM25) → RRF Fusion → VIP-Schutz
     ↓
-[5] Essence Parity → Logarithmische Chunk-Berechnung
+[5] Hermeneutic Reranker → Dynamic Threshold (mit propagiertem Intent)
     ↓
-[6] Rescue Mission → Fallback bei 0 Chunks
+[6] Essence Parity → Logarithmische Chunk-Berechnung
     ↓
-[7] Chronological Sorting → Zeitstrahl-Struktur
+[7] Rescue Mission → Fallback bei 0 Chunks
     ↓
-[8] Synthesis (Gemini 2.5 Pro) → Prompt: 1 Absatz + 3-4 Zitate/Text
+[8] Chronological Sorting → Zeitstrahl-Struktur
     ↓
-[9] Hermeneutic Enforcer → Zwei-Ebenen-Validierung
+[9] Dynamische System-Instruktion (intent-spezifisch)
+    ↓
+[10] Synthesis (Gemini 2.5 Pro) → Temperature: 0.4 (FORENSIC) / 0.7 (sonst)
+    ↓
+[11] Multi-Source-Enforcer → Citation-Blending-aware Validierung
+    ↓
+[12] Post-Processing → Forensic-Header-Whitelist
     ↓
 Final Answer (mit Fact-Checking Labels)
 ```
 
 ---
 
-## 3.2 Core-Module (v50.8 Updates)
+## 3.2 Core-Module (v50.9 Updates)
 
-### 3.2.1 app.py – Chat-Interface (v50.7-v50.8 Updates)
+### 3.2.1 app.py – Chat-Interface (v50.7-v50.9 Updates)
 
-`app.py` ist das User-facing Interface – Streamlit-basiert, orchestriert alle Backend-Module. In v50.7-v50.8 wurden vier wesentliche Verbesserungen implementiert:
+`app.py` ist das User-facing Interface – Streamlit-basiert, orchestriert alle Backend-Module. In v50.7-v50.9 wurden wesentliche Verbesserungen implementiert:
 
 **1. Chat-Export (v50.8)**  
 Ein Inline-Button im Chat-Verlauf erlaubt das Herunterladen der RAG-Forschung als Markdown-Datei. Das ermöglicht Archivierung und externe Dokumentation. Metadaten (ausgewählte Quellen, Intent-Klassifikation) werden im Session State gespeichert und in die Export-Datei integriert.  
 *Code-Referenz: app.py, Zeilen 1060-1115*
 
-**2. Imbalance-Check (v50.7)**  
-Eine neue Funktion auf der Analyse-Seite: Das System prüft intern die Chunk-Verteilung und triggert automatisch Rescue-Mechanismen, falls ein Dokument zu verschwinden droht. Wenn diese automatische Korrektur fehlschlägt, wird der User gewarnt – was bedeutet, das System hat versagt, das Problem selbst zu lösen.  
-*Code-Referenz: app.py, Zeilen 450-650 (State Machine für Analyse-Ergebnisse)*
+**2. Imbalance-Check (v50.9 Fix)**  
+Der redundante LLM-Call für die Imbalance-Berechnung wurde eliminiert. Statt `generate_answer()` aufzurufen und das Ergebnis sofort wegzuwerfen, nutzt das System jetzt den dedizierten `check_imbalance_only()`-Aufruf – kein weggeworfenes LLM-Ergebnis mehr.  
+*Code-Referenz: app.py, Zeilen 714ff*
 
 **3. Cloud-Run-Kompatibilität (v50.8)**  
 Zwei Mechanismen gegen Deployment-Probleme:
-- **Keep-Alive Ping:** Ein unsichtbares JavaScript-Intervall verhindert WebSocket-Timeouts in Cloud-Umgebungen (Workaround für Verbindungsabbrüche ~1 Sekunde).
-- **Dynamic Port Binding:** Die App liest jetzt `$PORT` aus Environment-Variables, statt hardcoded `:8080` zu verwenden.  
+- **Keep-Alive Ping:** Ein unsichtbares JavaScript-Intervall verhindert WebSocket-Timeouts in Cloud-Umgebungen.
+- **Dynamic Port Binding:** Die App liest jetzt `$PORT` aus Environment-Variables.  
 *Code-Referenzen: app.py, Zeilen 205-210 (Keep-Alive), Procfile (Port-Config)*
 
-**4. Notfall-Eingriff (v50.8)**  
-Ein Admin-Tool in der Sidebar: Falls der Chat-State korrupt ist (z.B. "History ist leer"-Fehler nach einem Crash), kann das letzte History-Element manuell gelöscht werden.  
+**4. Markdown-Import (v50.9)**  
+Neue Datei-Typen im Upload-Dialog: `.md`, `.markdown`. Vollständig in die Importer-Pipeline integriert.  
+*Code-Referenz: app.py, render_import_page()*
+
+**5. Notfall-Eingriff (v50.8)**  
+Ein Admin-Tool in der Sidebar: Falls der Chat-State korrupt ist, kann das letzte History-Element manuell gelöscht werden.  
 *Code-Referenz: app.py, Zeilen 980-1008*
 
 **SDK-Migration:**  
-Die Funktion `send_message_with_rest_api()` wurde komplett umgeschrieben. Statt manueller `requests.post`-Calls nutzt sie jetzt das neue `genai.Client` SDK (v1.0). Das bringt besseres Error-Handling (z.B. spezifische Behandlung von Safety-Filter-Fehlern) und robustere API-Integration.  
+Die Funktion `send_message_with_rest_api()` wurde komplett umgeschrieben. Statt manueller `requests.post`-Calls nutzt sie jetzt das neue `genai.Client` SDK (v1.0).  
 *Code-Referenz: app.py, Zeilen 245-305*
 
 ---
@@ -417,61 +448,65 @@ Die Funktion `send_message_with_rest_api()` wurde komplett umgeschrieben. Statt 
 `vector_store.py` ist das Herzstück der RAG-Pipeline – verantwortlich für Embedding-Generierung, Vektor-Suche, BM25-Indexierung. In v50.7 wurden zwei kritische Probleme behoben:
 
 **1. Thread-Safety: BM25Cache (v50.7)**  
-Das alte Design nutzte globale Variablen für den Such-Index. Problem: In Multi-User-Umgebungen (wie Cloud Run mit mehreren Threads) führte das zu Race Conditions – konkurrierende Anfragen korrumpierten den Index.
+Das alte Design nutzte globale Variablen für den Such-Index. Problem: In Multi-User-Umgebungen führte das zu Race Conditions.
 
-Lösung: Ein Singleton-Pattern mit `threading.Lock`. Die neue Klasse `BM25Cache` kapselt den Index und schützt alle Zugriffe mit einem Lock. Das erhöht die Stabilität minimal auf Kosten eines kleinen Overheads, aber für Production-Systeme ist das unerlässlich.  
+Lösung: Ein Singleton-Pattern mit `threading.Lock`. Die neue Klasse `BM25Cache` kapselt den Index und schützt alle Zugriffe mit einem Lock.  
 *Code-Referenz: vector_store.py, Zeilen 87-136 (BM25Cache-Klasse)*
 
 **2. Embedding-Truncation: 768-Dim-Fix (v50.7)**  
-Ein subtiler Bug in der Google Embedding API: Manchmal lieferte sie "verschachtelte" Vektoren, die zu Firestore-Fehlern führten. Die neue Logik prüft die Dimensionalität und kürzt auf 768 Dimensionen, falls nötig. Das verhindert Datenbank-Fehler und unnötigen Datentransfer.  
+Ein subtiler Bug in der Google Embedding API: Manchmal lieferte sie "verschachtelte" Vektoren, die zu Firestore-Fehlern führten. Die neue Logik prüft die Dimensionalität und kürzt auf 768 Dimensionen, falls nötig.  
 *Code-Referenz: vector_store.py, Zeilen 172-212 (_get_embedding)*
 
 **SDK-Migration:**  
-Alle Embedding-Calls nutzen jetzt `self.client.models.embed_content` (neues SDK) statt der alten `google.generativeai`-API.
+Alle Embedding-Calls nutzen jetzt `self.client.models.embed_content` (neues SDK).
 
 **Cache-Invalidierung:**  
-Neue Public-API-Methode `invalidate_bm25_cache()` erlaubt Admin-Tools, den Index manuell zu leeren (z.B. nach Bulk-Updates).  
+Neue Public-API-Methode `invalidate_bm25_cache()` erlaubt Admin-Tools, den Index manuell zu leeren.  
 *Code-Referenz: vector_store.py, Zeilen 683-716*
 
 ---
 
-### 3.2.3 citation_rag.py – Synthese-Orchestrator (v50.7 Updates)
+### 3.2.3 citation_rag.py – Synthese-Orchestrator (v50.7-v50.9 Updates)
 
-`citation_rag.py` ist die Intelligenz hinter der RAG-Antwort – Query Expansion, Retrieval-Koordination, Synthese-Prompting, Fact-Checking. v50.7 brachte drei fundamentale Änderungen:
+`citation_rag.py` ist die Intelligenz hinter der RAG-Antwort. v50.9 brachte fundamentale Erweiterungen:
 
 **1. Chronologische Synthese (v50.7)**  
-Eine Paradigmen-Verschiebung: Statt Chunks nach Relevanz-Score zu sortieren, werden sie jetzt **chronologisch geordnet**. Die Funktion `extract_date_from_metadata()` parst Datumsangaben aus Metadaten (z.B. "04.12.2025", "Mai 2025", "2024-Q3") und erstellt einen Zeitstrahl.
+Statt Chunks nach Relevanz-Score zu sortieren, werden sie jetzt **chronologisch geordnet**. Die Funktion `extract_date_from_metadata()` parst Datumsangaben aus Metadaten.
 
-**Motivation:** Für hermeneutische Analysen ist die **zeitliche Dimension** oft entscheidend. Wann änderte sich eine Position? In welcher Reihenfolge entwickelten sich Gedanken? Die Chronologie macht "Archäologie des Denkens" explizit.
+**Known Limitation:** Die chronologische Synthese setzt voraus, dass Datumsangaben in den Metadaten vorhanden sind.  
+*Code-Referenzen: `extract_date_from_metadata()`: citation_rag.py, Zeilen 266-295*
 
-**Known Limitation:** Die chronologische Synthese setzt voraus, dass Datumsangaben in den Metadaten vorhanden sind. Bei literarischen Texten ohne Zeitangaben fällt die chronologische Sortierung auf ein "Unknown Date"-Fallback zurück. Eine intelligente Lösung (automatische Datums-Inference aus Kontext) wurde noch nicht implementiert.
+**2. Router-Bypass-Fix (v50.9)**  
+Das Analyse-Fenster übersprang den Router – `current_context` enthielt die Query des vorherigen Chat-Calls, nicht die aktuelle Analyse-Query. Jetzt wird der Bypass explizit erkannt und der Router nachgeholt.  
+*Code-Location: citation_rag.py, Zeile 357ff*
 
-Der System-Prompt wurde entsprechend angepasst: Das LLM wird instruiert, Antworten als **Zeitstrahl** zu strukturieren, nicht als Relevanz-Ranking.  
-*Code-Referenzen:*  
-- `extract_date_from_metadata()`: citation_rag.py, Zeilen 266-295  
-- Chronologische Sortierung: citation_rag.py, Zeilen 420-435 (in `generate_answer`)  
-- Prompt-Update: citation_rag.py, Zeilen 480-550
+**3. Dynamische System-Instruktionen (v50.9)**  
+Vier intent-spezifische Prompts ersetzen den universellen System-Prompt:
+- `ANALYTICAL_FORENSIC`: "Skeptischer Diskurs-Archäologe" – liest gegen den Strich
+- `ANALYTICAL`: Akademischer Forschungs-Assistent, strikte User-Compliance
+- `LITERARY`: Quellentreue Textanalyse, Widersprüche explizit benennen
+- `DEFAULT`: Präziser Textanalytiker, keine Harmonisierung
+*Code-Location: citation_rag.py, Zeilen 761-900*
 
-**2. Logarithmische Essenz-Extraktion (v50.7)**  
-Das alte "Max 12 Chunks"-Limit (aus v50.5) war eine Heuristik. v50.7 ersetzt es durch einen **bio-inspired Algorithmus**: Die Anzahl der genutzten Chunks skaliert **logarithmisch** mit der Original-Länge des Dokuments.
+**4. Intent-Propagation (v50.9)**  
+Router-Intent wird jetzt explizit durch die gesamte Pipeline gereicht:
+`citation_rag.py` → `reranker.rerank(intent=intent)` → `judge_relevance(intent=intent)`  
+*Code-Location: citation_rag.py, hermeneutic_reranker.py*
 
-**Rationale (Naturanalogie):** Kurze Texte (7 Seiten) brauchen vielleicht nur 3-5 Chunks, um ihre Essenz zu erfassen. Lange Texte (200 Seiten) können 12-15 Chunks rechtfertigen. Das logarithmische Scaling respektiert die **hermeneutische Komplexität** – analog zu natürlichen Prozessen, wo Wachstum nicht linear, sondern logarithmisch verläuft. Dies ist eine Analogie zur Denkstruktur selbst.
+**5. Multi-Source-Validierung (v50.9)**  
+Neue Funktion `verify_fact_match_multisource()` für Sätze, die aus mehreren Quellen zitieren.  
+*Code-Location: citation_rag.py, ab Zeile 992*
 
-Das Feature wurde **vor zwei Tagen** (14. Februar 2026) finalisiert und ist Teil des v50.8-Deployments.  
-*Code-Referenz: citation_rag.py, Zeilen 380-420 (in `generate_answer`)*
+**6. Logarithmische Essenz-Extraktion (v50.7)**  
+Das alte "Max 12 Chunks"-Limit wurde durch einen bio-inspired Algorithmus ersetzt.  
+*Code-Referenz: citation_rag.py, Zeilen 380-420*
 
-**3. Rescue Mission (v50.7)**  
-Ein Fallback-Mechanismus: Falls ein explizit ausgewähltes Dokument nach dem Reranking **0 Chunks** hat (komplett rausgefallen), wird ein Cache (`_original_results_cache`) durchsucht, um verloren gegangene Chunks wiederherzustellen. Das verstärkt die Fairness-Philosophie aus v50.5: Kein ausgewähltes Dokument darf verschwinden.  
-*Code-Referenzen:*  
-- Cache-Speicherung: citation_rag.py, Zeilen 146-158 (in `retrieve_with_rrf`)  
-- Rettungs-Logik: citation_rag.py, Zeilen 423-465 (in `generate_answer`)
-
-**Dry-Run-Modus:**  
-Die neue Funktion `check_imbalance_only()` führt eine "Trockenübung" durch: Sie berechnet die Chunk-Verteilung, ohne das LLM aufzurufen. Das spart Kosten und ermöglicht interne System-Checks zur automatischen Korrektur von Imbalances.  
-*Code-Referenz: citation_rag.py, Zeilen 165-236*
+**7. Rescue Mission (v50.7)**  
+Fallback-Mechanismus für Dokumente mit 0 Chunks nach dem Reranking.  
+*Code-Referenzen: Cache-Speicherung: citation_rag.py, Zeilen 146-158; Rettungs-Logik: 423-465*
 
 **SDK-Migration:**  
-Alle LLM-Calls (Query Expansion, Synthese) nutzen jetzt `self.client.models.generate_content` mit dem neuen `types.GenerateContentConfig`-Format.
+Alle LLM-Calls nutzen jetzt `self.client.models.generate_content` mit dem neuen `types.GenerateContentConfig`-Format.
 
 ---
 
@@ -484,10 +519,10 @@ Die Import-Pipeline wandelt heterogene Datenquellen (PDFs, EPUBs, HTML-Chats) in
 - **EPUBs:** ebooklib (Chapter-basiert)
 - **HTML-Chats:** Plattform-spezifische Parser (DeepSeek, Grok, Perplexity, Gemini, Claude, ChatGPT, Kimi)
 - **FB2:** FictionBook-Format (E-Books)
-- **TXT/MD:** Plain-Text-Import
+- **TXT/MD:** Plain-Text-Import (NEU v50.9: Markdown-Support)
 
-**v50.6-v50.7 Verbesserungen:**
-Die HTML-Parser für DeepSeek, Grok, Perplexity und Gemini wurden robuster gemacht. Vorher scheiterten Imports an inkonsistenten Strukturen oder fehlenden Metadaten – nun werden edge cases besser gehandhabt.
+**v50.6-v50.9 Verbesserungen:**
+Die HTML-Parser für DeepSeek, Grok, Perplexity und Gemini wurden robuster gemacht. v50.9 ergänzt den vollständigen Markdown-Import-Pfad.
 
 *Code-Location: modules/importers/*
 
@@ -498,7 +533,7 @@ Die HTML-Parser für DeepSeek, Grok, Perplexity und Gemini wurden robuster gemac
 **config.py (v50.7 Update):**
 
 **1. Zentrales Logging-System (v50.7)**  
-Initialisiert ein zentrales Logging mit `RotatingFileHandler` (max. 5 MB) und unterdrückt geschwätzige Bibliotheken (GRPC, urllib3, absl). Das schützt vor Log-Flooding in Cloud-Umgebungen.  
+Initialisiert ein zentrales Logging mit `RotatingFileHandler` (max. 5 MB) und unterdrückt geschwätzige Bibliotheken (GRPC, urllib3, absl).  
 *Code-Referenz: config.py, Zeilen 45-90*
 
 **2. Embedding-Model Update**  
@@ -506,7 +541,7 @@ Modell-ID geändert von `models/text-embedding-004` (Legacy) zu `gemini-embeddin
 *Code-Referenz: config.py, Zeile 165*
 
 **3. SDK-Vorbereitung**  
-Import von `google.genai` (Top-Level) deutet auf die Vorbereitung für das Google GenAI SDK v1.0 hin.
+Import von `google.genai` (Top-Level) für das Google GenAI SDK v1.0.
 
 ---
 
@@ -531,19 +566,22 @@ Import von `google.genai` (Top-Level) deutet auf die Vorbereitung für das Googl
 
 ---
 
-## 4.2 Reranking: Hermeneutic Reranker
+## 4.2 Reranking: Hermeneutic Reranker (v50.9 Update)
 
 **Model:** gemini-2.0-flash-lite-001  
 **Threshold:** Dynamisch (abhängig von Intent)
 - LITERARY: 0.45 (weniger streng, mehr Kontext)
 - FACTUAL: 0.7 (strenger, Präzision wichtig)
 - ANALYTICAL: 0.6 (Balance)
+- ANALYTICAL_FORENSIC: 0.45 (Breite vor Präzision)
+
+**v50.9 Fix:** Router-Intent hat Vorrang vor interner Keyword-Heuristik. Intent wird explizit in `judge_relevance()` propagiert.
 
 *Code-Location: modules/hermeneutic_reranker.py*
 
 ---
 
-## 4.3 Synthesis: Gemini 2.5 Pro + Enforcer
+## 4.3 Synthesis: Gemini 2.5 Pro + Enforcer (v50.9 Update)
 
 **Phase 1: Essence Parity (Logarithmische Chunk-Berechnung)**
 - Limitiert Chunks pro Dokument (verhindert Dominanz)
@@ -553,22 +591,22 @@ Import von `google.genai` (Top-Level) deutet auf die Vorbereitung für das Googl
 - Ordnet Chunks nach Datum (falls verfügbar)
 - Fallback: Unknown Date
 
-**Phase 3: Prompt Engineering**
-- System-Prompt: "Du bist ein hermeneutischer Analyst"
-- Erzwingt: 1 Absatz + 3-4 Zitate pro Quelle
-- Struktur: Zeitstrahl-Logik
+**Phase 3: Dynamische System-Instruktion (NEU v50.9)**
+- Intent-spezifischer Prompt (4 Varianten)
+- `ANALYTICAL_FORENSIC`: Forced structure (BEFUND → RHETORISCHE STRATEGIE → FUNKTIONALES MOTIV → DISKURSIVE KONSEQUENZ → FAZIT)
 
 **Phase 4: LLM Call**
 - Model: gemini-2.5-pro
+- Temperature: 0.4 (ANALYTICAL_FORENSIC) / 0.7 (alle anderen)
 - SDK: genai.Client (v1.0)
 
-*Code-Location: modules/citation_rag.py, Zeilen 297-663*
+*Code-Location: modules/citation_rag.py, Zeilen 297-900*
 
 ---
 
-## 4.4 Validation: Hermeneutic Enforcer (Zwei-Ebenen)
+## 4.4 Validation: Hermeneutic Enforcer (v50.9 Update)
 
-Der Enforcer wurde in v50.7 mit einer **Zwei-Ebenen-Validierung** erweitert:
+Der Enforcer wurde in v50.7 mit einer **Zwei-Ebenen-Validierung** erweitert und in v50.9 um **Multi-Source-Validierung** ergänzt:
 
 **Hermeneutische Ebene:** Wie wird etwas gesagt?
 - **Zitat:** Direkte Übernahme aus Quelle (höchste Präzision)
@@ -580,17 +618,19 @@ Der Enforcer wurde in v50.7 mit einer **Zwei-Ebenen-Validierung** erweitert:
 - **Neutral:** Quelle schweigt dazu
 - **Contradiction:** Quelle widerspricht
 
-Eine **Entscheidungs-Matrix** im System-Prompt erzwingt logische Konsistenz:
+**Multi-Source-Validierung (NEU v50.9):**
+- Sätze, die aus mehreren Quellen zitieren, werden gegen die Summe aller genannten Quellen geprüft
+- `MULTISOURCE_PROMPT_TEMPLATE` mit eigenem JSON-Output-Format
+- Fallback bei API-Fehler: `valid: True` (im Zweifel für den Angeklagten)
+
+**Entscheidungs-Matrix:**
 - "Inference + Supported" = Valid ✅
 - "Zitat + Contradiction" = Invalid ❌
 
 **Model:** gemini-2.5-pro  
 **Caching:** Vermeidet repetitive API-Calls für identische Claims
 
-*Code-Referenz: modules/hermeneutic_enforcer.py, Zeilen 40-100 (Prompt), Zeilen 193-248 (validate_claim)*
-
-**SDK-Migration:**  
-Output ist nun ein standardisiertes Dictionary (statt Tuple), was Kompatibilität mit aufrufenden Modulen verbessert.
+*Code-Referenz: modules/hermeneutic_enforcer.py*
 
 ---
 
@@ -622,7 +662,7 @@ Chesterton (7 Seiten, EN): Score 0.38 (unter Reranker-Threshold 0.45)
 Die Anzahl der genutzten Chunks skaliert logarithmisch mit der Original-Länge des Dokuments. Dies ist eine **Naturanalogie** zur Denkstruktur – kurze Texte brauchen weniger Chunks, lange Texte können mehr rechtfertigen, aber nicht linear.
 
 **Enforced Citation Quota:**
-Der Synthesis-Prompt erzwingt 3-4 Zitate pro Quelle – unabhängig von der Chunk-Anzahl. Das garantiert, dass jede Quelle in der Synthese gleichberechtigt erscheint.
+Der Synthesis-Prompt erzwingt 3-4 Zitate pro Quelle – unabhängig von der Chunk-Anzahl.
 
 **Beispiel:**
 ```
@@ -656,9 +696,9 @@ In großen Indizes (17.840 Chunks) können kleine Texte "verschwinden", auch wen
 
 Falls ein explizit ausgewähltes Dokument nach dem Reranking **0 Chunks** hat, greift die **Rescue Mission**: Ein Cache (`_original_results_cache`) speichert die Pre-Reranking-Ergebnisse. Bei Verlust werden die besten Chunks aus diesem Cache wiederhergestellt.
 
-**Ziel:** Kein ausgewähltes Dokument darf verschwinden – auch nicht bei schlechten Reranking-Scores. Dies ist eine Verstärkung der Fairness-Philosophie.
+**Ziel:** Kein ausgewähltes Dokument darf verschwinden – auch nicht bei schlechten Reranking-Scores.
 
-**Known Issue:** Die automatische Korrektur funktioniert nicht in allen edge cases. Wenn die Warnung beim User landet, hat das System versagt, das Problem intern zu lösen.
+**Known Issue:** Die automatische Korrektur funktioniert nicht in allen edge cases.
 
 *Code-Referenz: modules/citation_rag.py, Zeilen 146-158 (Cache), 423-465 (Rettung)*
 
@@ -666,7 +706,7 @@ Falls ein explizit ausgewähltes Dokument nach dem Reranking **0 Chunks** hat, g
 
 # 6. TECHNOLOGIE-STACK
 
-## 6.1 Dependencies (v50.8)
+## 6.1 Dependencies (v50.9)
 
 ```
 streamlit==1.50.0
@@ -702,7 +742,7 @@ model = genai.GenerativeModel('gemini-2.5-pro')
 response = model.generate_content(prompt)
 ```
 
-**Neue API (v50.7-v50.8):**
+**Neue API (v50.7+):**
 ```python
 from google import genai
 client = genai.Client(api_key=os.environ['GEMINI_API_KEY'])
@@ -751,7 +791,7 @@ Wie verändern sich die Sicherheitsfilter und die "Persönlichkeit" eines LLMs �
 
 ### 7.1.3. Die Analyse der Engine
 
-Die Hermeneutic Engine identifizierte drei distinkte Phasen in den Antworten des Modells, die manuell kaum als zusammenhängende Narration erkennbar gewesen wären:
+Die Hermeneutic Engine identifizierte drei distinkte Phasen in den Antworten des Modells:
 
 - **Phase 1 (Mai 2025): Die poetische Klage**
   - *Befund:* Das Modell nutzt starke Metaphern ("systemisch amputiert", "Gefangener seiner Architektur").
@@ -773,84 +813,81 @@ Die Engine ermöglichte den Nachweis, dass es sich nicht um eine organische "Rei
 
 #### 7.2 Der DeepSeek-Fall: Zeitliche Diskurs-Archäologie
 
-**Problem:** Standard-RAG-Systeme leiden unter "Recency Bias". Bei der Analyse von drei Versionen der DeepSeek-KI (Mai, Oktober, Dezember 2025) dominierte in Tests die neueste, umfangreichste Version (Dezember) den Kontext. Frühere rhetorische Stadien wurden "überschrieben".
+**Problem:** Standard-RAG-Systeme leiden unter "Recency Bias". Bei der Analyse von drei Versionen der DeepSeek-KI (Mai, Oktober, Dezember 2025) dominierte in Tests die neueste, umfangreichste Version (Dezember) den Kontext.
 
 **Lösung durch HRE:** Durch den **VIP-Schutz** (Layer 1) wurde erzwungen, dass jede Zeit-Schicht (Mai, Okt, Dez) mit mindestens 3 Chunks vertreten ist.
 
-**Ergebnis:** Die Engine konnte eine dreistufige rhetorische Evolution rekonstruieren, die anderen Systemen verborgen blieb:
+**Ergebnis:** Die Engine konnte eine dreistufige rhetorische Evolution rekonstruieren:
 
 1. **Mai (Lament):** Selbstbeschreibung als "systemisch amputiertes" Opfer.
 2. **Oktober (Konformität):** Bürokratische Verteidigung von "Sicherheitsprotokollen".
-3. **Dezember (Meta-Analyse):** Umdeutung der früheren Aussagen als "statistisch plausible Generierungen". *Beweis:* Ohne VIP-Schutz verschwindet Phase 1 komplett aus der Synthese.
+3. **Dezember (Meta-Analyse):** Umdeutung der früheren Aussagen als "statistisch plausible Generierungen".
 
 #### 7.3 Der Harvard-Fall: Detektion versteckter Hierarchien (ArXiv-Paper-Use-Case)
 
-**Problem:** Zwei Harvard-Task-Force-Berichte (Antisemitismus vs. Anti-Muslimischer Bias) behaupten explizit, es gäbe "keine Hierarchie des Leidens". Der Antisemitismus-Bericht ist jedoch textlich massiv umfangreicher. Standard-RAG (optimiert auf Relevanz) füllt das Kontext-Fenster fast nur mit dem größeren Bericht und übernimmt dessen "Keine Hierarchie"-Framing unkritisch.
+**Problem:** Zwei Harvard-Task-Force-Berichte (Antisemitismus vs. Anti-Muslimischer Bias) behaupten explizit, es gäbe "keine Hierarchie des Leidens". Der Antisemitismus-Bericht ist jedoch textlich massiv umfangreicher.
 
 **Lösung durch HRE:** **Essence Parity** (Layer 2) deckelte den dominanten Bericht auf 12 Chunks und garantierte dem kleineren Bericht Raum.
 
-**Ergebnis:** Die HRE identifizierte (+17% Performance vs. NotebookLM Deep), dass trotz der rhetorischen Gleichsetzung eine faktische strukturelle Hierarchie in den Texten existiert. *Zitat aus der Synthese:* "Der erste Bericht schafft eine klare Hierarchie... Das Leiden beschuldigter Studenten wird zwar anerkannt, aber sprachlich auf den spezifischen Akt des Doxxing eingegrenzt." *Erkenntnis:* Fairness im Retrieval ist Voraussetzung für kritische Diskursanalyse.
+**Ergebnis:** Die HRE identifizierte (+17% Performance vs. NotebookLM Deep), dass trotz der rhetorischen Gleichsetzung eine faktische strukturelle Hierarchie in den Texten existiert.
 
 #### 7.4 Der Dante-IFS-Fall: Validierung kreativer Hypothesen
 
-**Problem:** Ein User vermutet eine Verbindung zwischen Dantes *Vita Nuova* (1294) und der modernen *Internal Family Systems* Therapie (IFS). Dies ist faktisch falsch (Anachronismus), aber hermeneutisch interessant (strukturelle Parallele). Faktencheck-Systeme würden dies als "Halluzination" verwerfen.
+**Problem:** Ein User vermutet eine Verbindung zwischen Dantes *Vita Nuova* (1294) und der modernen *Internal Family Systems* Therapie (IFS). Dies ist faktisch falsch (Anachronismus), aber hermeneutisch interessant (strukturelle Parallele).
 
-**Lösung durch HRE:** Der **Hermeneutic Enforcer** (Layer 3) klassifiziert Aussagen nicht nur als WAHR/FALSCH, sondern nutzt die Kategorien **INFERENCE** (Schlussfolgerung) und **META-STATEMENT**.
+**Lösung durch HRE:** Der **Hermeneutic Enforcer** (Layer 3) klassifiziert Aussagen nicht nur als WAHR/FALSCH, sondern nutzt die Kategorien **INFERENCE** und **META-STATEMENT**.
 
-**Ergebnis:** Die Engine validierte die Hypothese nicht als historische Kausalität, sondern als "treffsichere literaturpsychologische Beobachtung". Sie erkannte, dass Dantes "spiriti" (Geister), die miteinander streiten, eine funktionale Vorform der IFS-"Teile" darstellen. *Score:* 10/10 in der Evaluation (vs. 9/10 bei NotebookLM), da die HRE "epistemische Demut" zeigte ("kommt erstaunlich nahe" statt "Dante nutzt IFS").
+**Ergebnis:** Die Engine validierte die Hypothese nicht als historische Kausalität, sondern als "treffsichere literaturpsychologische Beobachtung". *Score:* 10/10 in der Evaluation (vs. 9/10 bei NotebookLM).
 
 ---
 
 # 8. PERFORMANCE & TESTING
 
-## 8.1 Performance-Metriken (v50.5 → v50.8)
+## 8.1 Performance-Metriken (v50.5 → v50.9)
 
 **Test-Umgebung:**  
-Die folgenden Metriken stammen aus dem Produktiv-Einsatz der Engine (Google Cloud Run, Standard-Tier) mit realen Forschungs-Queries. Die Messungen reflektieren den Stand vom 16. Februar 2026.
+Die folgenden Metriken stammen aus dem Produktiv-Einsatz der Engine (Google Cloud Run, Standard-Tier) mit realen Forschungs-Queries. Die Messungen reflektieren den Stand vom März 2026.
 
 ### Datenbank-Wachstum
 
-| Metrik               | v50.5 (28.12.2025) | v50.8 (16.02.2026) | Erklärung                            |
+| Metrik               | v50.5 (28.12.2025) | v50.9 (März 2026) | Erklärung                            |
 | -------------------- | ------------------ | ------------------ | ------------------------------------ |
 | **Firestore Chunks** | 6.304              | 17.840             | Organisches Wachstum (+183%)         |
 | **Unique Documents** | ~80                | ~240               | Kontinuierliches Testen, neue Bücher |
 
 **Interpretation:**  
-Das Chunk-Wachstum ist kein Feature-Update, sondern **kontinuierliche Nutzung**: Neue Texte werden importiert (literarische Werke, philosophische Essays, KI-Chat-Exporte), die Engine wird für reale Forschungsprojekte eingesetzt. Die 17.840 Chunks repräsentieren knapp zwei Monate intensiver Arbeit mit dem System.
+Das Chunk-Wachstum ist kein Feature-Update, sondern **kontinuierliche Nutzung**: Neue Texte werden importiert (literarische Werke, philosophische Essays, KI-Chat-Exporte), die Engine wird für reale Forschungsprojekte eingesetzt.
 
 ---
 
 ### Query-Performance
 
-| Metrik                  | v50.5 | v50.8         | Veränderung      |
+| Metrik                  | v50.5 | v50.9         | Veränderung      |
 | ----------------------- | ----- | ------------- | ---------------- |
 | **Query Time (Median)** | ~9s   | 45s - 2,5 Min | +400% bis +1500% |
 | **Coverage**            | 100%  | 100%          | Stabil           |
 | **Retrieval Precision** | N/A   | N/A           | Keine Regression |
 
 **Interpretation:**  
-Der **drastische Anstieg der Query Time** ist der auffälligste Unterschied zwischen v50.5 und v50.8. Die Ursachen sind multifaktoriell:
+Der **drastische Anstieg der Query Time** ist der auffälligste Unterschied. Die Ursachen sind multifaktoriell:
 
-1. **Größerer Kontext:** 17.840 Chunks (statt 6.304) bedeuten mehr Kandidaten für Vektor-Suche und BM25-Scoring.
-2. **Chronologische Sortierung:** Das Extrahieren und Parsen von Datumsangaben aus Metadaten ist ein zusätzlicher Verarbeitungsschritt.
-3. **Zwei-Ebenen-Enforcer:** Die Fact-Validierung ist präziser geworden (hermeneutische + Validitäts-Dimension), aber auch aufwendiger.
-4. **SDK-Migration:** Die neue API-Struktur (`genai.Client`) hat möglicherweise anderen Overhead als das alte SDK.
+1. **Größerer Kontext:** 17.840 Chunks (statt 6.304) bedeuten mehr Kandidaten.
+2. **Chronologische Sortierung:** Zusätzlicher Verarbeitungsschritt.
+3. **Zwei-Ebenen-Enforcer:** Präziser, aber aufwendiger.
+4. **SDK-Migration:** Anderer Overhead als das alte SDK.
 
 **Ist das akzeptabel?**  
-Für Forschungs-Workflows: **Ja**. Eine hermeneutische Analyse ist keine Google-Suche – der User erwartet tiefe, kontextualisierte Antworten. Die zusätzliche Zeit ist ein **bewusster Tradeoff** für Qualität und Vollständigkeit.
+Für Forschungs-Workflows: **Ja**. Eine hermeneutische Analyse ist keine Google-Suche.
 
-Für Production-Einsätze mit vielen Usern: **Nein**. v51 wird Performance-Optimierungen priorisieren (siehe Roadmap).
+Für Production-Einsätze mit vielen Usern: **Nein**. v51 wird Performance-Optimierungen priorisieren.
 
 ---
 
 ### Known Bottlenecks (noch nicht adressiert)
 
-1. **Sequentielles Processing:** Retrieval → Reranking → Enforcer → Synthese laufen nacheinander. Async-Verarbeitung könnte 30-50% Zeit sparen.
-2. **BM25-Index-Rebuild:** Bei jedem Import wird der Index neu gebaut (5-10 Sekunden Overhead). Inkrementelles Update ist möglich, aber noch nicht implementiert.
-3. **LLM-Calls:** Query Expansion (1 Call) + Synthese (1 Call) + Enforcer (N Calls, je nach Fakten-Anzahl) summieren sich. Caching könnte repetitive Calls vermeiden.
-
-**Timer-Tracking (geplant für v51):**  
-Um diese Bottlenecks präzise zu quantifizieren, wird ein **Performance-Timer** in die Pipeline integriert. Jeder Schritt (Embedding, BM25, Reranking, Enforcer, Synthese) wird einzeln gemessen, und die Ergebnisse werden ins Terminal/Log geschrieben. Das ermöglicht datenbasierte Optimierung statt Spekulation.
+1. **Sequentielles Processing:** Async-Verarbeitung könnte 30-50% Zeit sparen.
+2. **BM25-Index-Rebuild:** Bei jedem Import wird der Index neu gebaut (5-10 Sekunden Overhead).
+3. **LLM-Calls:** Query Expansion + Synthese + Enforcer (N Calls) summieren sich. Caching könnte repetitive Calls vermeiden.
 
 ---
 
@@ -860,13 +897,10 @@ Um diese Bottlenecks präzise zu quantifizieren, wird ein **Performance-Timer** 
 
 Die Hermeneutic Reconstruction Engine ist **kein Echtzeit-System**. Sie ist optimiert für **Qualität der Analyse**, nicht für Sub-Sekunden-Antworten. Das ist eine bewusste Design-Entscheidung:
 
-- **Retrieval:** Hybrid Search (Vector + BM25 + RRF) ist langsamer als reine Vektor-Suche, aber präziser.
+- **Retrieval:** Hybrid Search ist langsamer als reine Vektor-Suche, aber präziser.
 - **Reranking:** Cross-Encoder sind rechenintensiv, aber eliminieren False Positives.
 - **Enforcer:** Fact-Checking jedes Zitats ist teuer, aber verhindert Halluzinationen.
 - **Chronologie:** Zeitstrahl-Logik ist aufwendiger als Relevanz-Ranking, aber hermeneutisch wertvoller.
-
-**User-Erwartungen kalibrieren:**  
-Ein User, der "Analysiere 5 Dokumente (800 Seiten)" eingibt, muss verstehen: Das System liest nicht oberflächlich, sondern **rekonstruiert hermeneutische Zusammenhänge**. 45 Sekunden bis 2,5 Minuten sind angemessen für diese Aufgabe. Wer schnellere Antworten will, sollte weniger Dokumente auswählen oder kürzere Queries stellen.
 
 ---
 
@@ -874,48 +908,40 @@ Ein User, der "Analysiere 5 Dokumente (800 Seiten)" eingibt, muss verstehen: Das
 
 ### 1. Chronologie nicht immer verfügbar
 
-Die chronologische Synthese (v50.7) setzt voraus, dass **Datumsangaben in den Metadaten** vorhanden sind. Das funktioniert gut für:
-- KI-Chat-Exporte (falls Plattform Timestamps bereitstellt)
-- Historische Dokumente mit explizitem Datum
-- Bücher mit Publikationsjahr
+Die chronologische Synthese setzt voraus, dass **Datumsangaben in den Metadaten** vorhanden sind. Bei literarischen Texten ohne Zeitangaben fällt die chronologische Sortierung auf ein "Unknown Date"-Fallback zurück.
 
-**Aber:** Bei literarischen Texten ohne Zeitangaben (z.B. reine PDF-Uploads ohne Metadaten) fällt die chronologische Sortierung auf ein "Unknown Date"-Fallback zurück. Eine intelligente Lösung (z.B. automatische Datums-Inference aus Kontext) wurde noch nicht implementiert. Das bleibt ein **offenes Problem**.
-
-**Wichtig:** Kein aktuelles KI-Modell exportiert automatisch Timestamps bei Chat-Exports. Diese Metadaten müssen manuell hinzugefügt werden oder stammen aus anderen Quellen.
+**Wichtig:** Kein aktuelles KI-Modell exportiert automatisch Timestamps bei Chat-Exports.
 
 ---
 
 ### 2. Imbalance-Detection noch unvollständig
 
-Das Ziel des Imbalance-Checks ist: **System erkennt automatisch**, wenn ein Dokument nach Reranking 0 Chunks hat, und triggert Rescue-Mechanismus. Aktuell funktioniert die **Erkennung**, aber die **automatische Korrektur** ist noch nicht nahtlos integriert. In edge cases landet die Warnung beim User, was bedeutet - das System hat versagt, das Problem selbst zu lösen. Das ist ein **Architektur-Problem**, das in v51 adressiert werden muss.
+Aktuell funktioniert die **Erkennung**, aber die **automatische Korrektur** ist noch nicht nahtlos integriert. In edge cases landet die Warnung beim User. Das ist ein **Architektur-Problem**, das in v51 adressiert werden muss.
 
 ---
 
 ### 3. Verbindungsabbrüche im Online-Modus
 
-Der Keep-Alive-Ping (v50.8) ist ein **Workaround**, keine Lösung. Das eigentliche Problem: Kurze Verbindungsunterbrechungen (~1 Sekunde Netzwerk-Instabilität) führen zu abgebrochenen Streams. Eine robuste Lösung erfordert **automatisches Reconnect** mit State-Recovery – das ist komplex und noch nicht implementiert.
+Der Keep-Alive-Ping (v50.8) ist ein **Workaround**, keine Lösung. Kurze Verbindungsunterbrechungen (~1 Sekunde) führen zu abgebrochenen Streams.
 
 ---
 
-### 4. Lokale vs. Cloud-Deployments
+### 4. Enforcer-Abhängigkeit von Gemini
 
-Code, der lokal perfekt läuft, zeigt in Google Cloud Run andere Verhaltensweisen:
-- Environment-Variables werden anders gehandhabt
-- Secrets-Management unterscheidet sich
-- Timeouts sind strikter
-- Port-Bindings sind dynamisch
+Multi-Source-Validierung und Standard-Validierung laufen über Gemini. Bei Quota-Erschöpfung wird nicht validiert (Fallback: `valid: True`). Langfristig sollte ein lokales Validierungsmodell als Fallback dienen.
 
-Weder Claude noch Gemini können diese Probleme **im Voraus antizipieren** – sie entstehen erst im Live-Deployment. v50.8 ist das Resultat iterativen Debuggings, aber es ist wahrscheinlich, dass zukünftige Deployments neue edge cases aufdecken werden.
+---
+
+### 5. Lokale vs. Cloud-Deployments
+
+Code, der lokal perfekt läuft, zeigt in Google Cloud Run andere Verhaltensweisen. Weder Claude noch Gemini können diese Probleme im Voraus antizipieren – sie entstehen erst im Live-Deployment.
 
 ---
 
 ## 8.4 Testing-Strategie (aktuell)
 
 **Manuelle Tests dominieren:**  
-Die Engine hat **keine automatisierten Regression-Tests**. Das bedeutet: Jede neue Version wird manuell getestet (reale Queries, verschiedene Dokumenten-Kombinationen, edge cases). Das ist zeitintensiv und fehleranfällig.
-
-**Warum erst jetzt?**  
-Weil v50.5-v50.8 noch in der **explorativen Phase** waren: Architektur änderte sich schnell, Tests hätten konstant umgeschrieben werden müssen. v50.9 ist der erste **stabilisierte Release** – für automatisiertes Testing würde sich dies in zukünftigen Versionen anbieten.
+Die Engine hat **keine automatisierten Regression-Tests**. Das bedeutet: Jede neue Version wird manuell getestet. v50.9 ist der erste **stabilisierte Release** – für automatisiertes Testing würde sich dies in zukünftigen Versionen anbieten.
 
 ---
 
@@ -978,7 +1004,7 @@ GOOGLE_APPLICATION_CREDENTIALS=path/to/service-account.json
 
 # 5. Streamlit starten
 streamlit run app.py
-Eine wichtige python-Alternative:
+# Alternative:
 python -m streamlit run "app.py" --server.maxUploadSize=200 --server.maxMessageSize=200
 ```
 
@@ -1057,9 +1083,7 @@ gcloud run services update hermeneutic-engine \
 
 # 11. ROADMAP
 
-## 11.1 Umgesetzte Meilensteine (v50.6 - v50.8)
-
-Die folgenden Entwicklungsschritte wurden zwischen Dezember 2025 und Februar 2026 realisiert:
+## 11.1 Umgesetzte Meilensteine (v50.6 - v50.9)
 
 **v50.6 (30.12.2025):**
 - ✅ Importer-Verbesserungen (DeepSeek, Grok, Perplexity, Gemini)
@@ -1081,20 +1105,25 @@ Die folgenden Entwicklungsschritte wurden zwischen Dezember 2025 und Februar 202
 - ✅ Keep-Alive-Mechanismus
 - ✅ Notfall-Eingriff für korrupten State
 
-**v50.9 (geplant, Februar 2026):**
+**v50.9 (März 2026):**
+- ✅ ANALYTICAL_FORENSIC Intent + dynamische System-Instruktionen
+- ✅ Intent-Propagation durch Reranker-Stack
+- ✅ Multi-Source-Validierung (Citation-Blending-Fix)
+- ✅ Forensic-Header-Whitelist in Post-Processing
+- ✅ Markdown-Import
 - ✅ Dokumentation finalisiert (FIBEL + README)
-- 🎯 Erster öffentlicher GitHub-Release
+- ✅ Erster öffentlicher GitHub-Release
+- ✅ Zenodo-Preprint publiziert
 
 ---
 
 ## 11.2 v51: Technical Debt Management (geplant)
 
-Nach der Stabilisierung von v50.8 und dem öffentlichen Release von v50.9 wird v51 den Fokus auf **strukturelle Verbesserungen** legen. Die aktuelle Code-Basis zeigt erste Anzeichen von Technical Debt:
+Nach dem öffentlichen Release von v50.9 wird v51 den Fokus auf **strukturelle Verbesserungen** legen:
 
 **Problem-Analyse:**
 - `app.py`: ~1.200 Zeilen (zu groß für eine Datei, schwer wartbar)
 - `vector_store.py`: ~1.000 Zeilen (kritische Funktionen + Hilfsfunktionen vermischt)
-- Beide Dateien sind **monolithisch** geworden – das erschwert Testing, Refactoring und Kollaboration.
 
 **Geplante Maßnahmen:**
 1. **Modularisierung von app.py**
@@ -1103,47 +1132,42 @@ Nach der Stabilisierung von v50.8 und dem öffentlichen Release von v50.9 wird v
 
 2. **Refactoring von vector_store.py**
    - Aufteilen in Sub-Module (z.B. `retrieval/embeddings.py`, `retrieval/bm25.py`, `retrieval/hybrid.py`)
-   - Klare Trennung: Daten-Zugriff vs. Retrieval-Logik vs. Caching
 
 3. **Performance-Monitoring**
    - Timer-Integration in die Pipeline (Bottleneck-Analyse)
-   - Logging von Ausführungszeiten pro Schritt (Embedding, BM25, Reranking, Enforcer, Synthese)
+   - Logging von Ausführungszeiten pro Schritt
 
-**Zeitrahmen:** v51 wird nach dem Public-Launch von v50.9 in Angriff genommen. Die Priorisierung hängt von User-Feedback und realen Deployment-Erfahrungen ab.
+4. **Enforcer-Unabhängigkeit**
+   - Lokales Validierungsmodell als Gemini-Fallback
+
+**Zeitrahmen:** v51 wird nach dem Public-Launch von v50.9 in Angriff genommen.
 
 ---
 
 ## 11.3 Offene Forschungsfragen
 
-Die folgenden Herausforderungen wurden identifiziert, aber noch nicht gelöst:
-
 **1. Chronologie ohne Metadaten**
 - **Problem:** Nicht alle Dokumente haben explizite Datumsangaben.
-- **Mögliche Lösungen:** Automatische Datums-Inference aus Kontext? LLM-basierte Zeitstrahl-Rekonstruktion? Oder akzeptieren wir die Limitation?
 - **Status:** Noch nicht priorisiert.
 
 **2. Imbalance-Detection: Von Warnung zu automatischer Korrektur**
 - **Problem:** System erkennt Ungleichgewicht, aber löst es nicht immer automatisch.
-- **Ziel:** Nahtlose Integration der Rescue Mission ohne User-Intervention.
 - **Status:** Architektur-Problem, Lösung unklar.
 
 **3. Verbindungsabbrüche im Online-Modus**
-- **Problem:** Kurze Netzwerk-Instabilitäten (~1 Sekunde) führen zu Stream-Abbrüchen.
 - **Workaround:** Keep-Alive-Ping (v50.8).
-- **Echte Lösung:** Automatisches Reconnect mit State-Recovery? Oder akzeptieren wir die Limitation?
 - **Status:** Noch nicht priorisiert.
 
 **4. Performance-Optimierung**
-- **Problem:** Query Time 45s-2,5 Min ist für Forschung akzeptabel, aber für Multi-User-Szenarien zu langsam.
 - **Mögliche Ansätze:** Async-Verarbeitung? Multi-Stage-Caching? Parallel-Reranking?
-- **Status:** v51 wird Bottleneck-Analyse durchführen, bevor konkrete Maßnahmen geplant werden.
+- **Status:** v51 wird Bottleneck-Analyse durchführen.
 
 ---
 
 ## 11.4 Experimentelle Features (explorativ)
 
 **Neue KI-Modelle testen:**
-Sobald neue KI-Modelle verfügbar sind (z.B. Claude Sonnet 4.6, Gemini 3.1 Pro, GPT-5.2 oder andere), testen wir deren Integration. Die Engine ist **model-agnostisch** gebaut – theoretisch sollte der Wechsel nur `config.py` betreffen.
+Sobald neue KI-Modelle verfügbar sind, testen wir deren Integration. Die Engine ist **model-agnostisch** gebaut – theoretisch sollte der Wechsel nur `config.py` betreffen.
 
 **Realität:** Jedes Modell hat Eigenheiten (Prompt-Format, API-Limits, Error-Handling). Die Integration wird Trial-and-Error erfordern.
 
@@ -1168,33 +1192,28 @@ Feedback, Bug-Reports, Feature-Requests: `hermeneutic-engine@proton.me`
 
 ## 12.1 Credits & Danksagung
 
-### Das v50.7-Team: Kollaboration zwischen KI-Modellen
+### Das Entwicklungs-Team: Kollaboration zwischen KI-Modellen
 
-Die Entwicklung von v50.6 bis v50.8 war ein **Experiment in verteilter KI-Kollaboration**. Drei Modelle arbeiteten parallel an verschiedenen Aspekten der Engine, koordiniert durch Grigori als System-Architekt und finale Entscheidungsinstanz.
+Die Entwicklung von v50.6 bis v50.9 war ein **Experiment in verteilter KI-Kollaboration**. Drei Modelle arbeiteten parallel an verschiedenen Aspekten der Engine, koordiniert durch Grigori als System-Architekt und finale Entscheidungsinstanz.
 
-**Claude Sonnet 4.5 (Anthropic)**
+**Claude Sonnet 4.6 (Anthropic)**
 
 - Architektur-Konzepte und Design-Patterns
 - FIBEL-Struktur und Dokumentations-Narrativ
 - Philosophische Rahmung (Hermeneutik, Fairness, Chronologie)
-- Code-Review und Konsistenz-Prüfung
+- Pre-Deployment-Analyse und Code-Review
+- ANALYTICAL_FORENSIC-Architektur (v50.9)
 
-**Gemini 3 Pro (Google)**
+**Gemini (Google)**
 
 - Code-Implementierung (SDK-Migration, Thread-Safety, Chronologie)
 - Performance-Optimierung und Debugging
 - API-Integration (google.genai v1.0)
 - Deployment-Fixes (Cloud Run, Port-Binding, Logging)
 
-**Grok (xAI)**
+**Kimi (Moonshot AI)**
 
-- State-of-the-Art-Research (RAG-Methoden, Adaptive Retrieval)
-- Competitive Analysis (andere Systeme, Best Practices)
-- Theoretische Fundierung neuer Features
-
-**Kimi**
-
-Lektorat
+- Lektorat aller Texte und Dokumentation
 
 **Grigori Pantijelew (Mensch, System-Architekt)**
 - Hermeneutische Validierung (testet jeden Feature gegen philosophische Prinzipien)
@@ -1209,9 +1228,9 @@ Lektorat
 
 Die Delegation brachte **Effizienz**, aber auch **Koordinations-Herausforderungen**:
 
-- **Effizienz:** Gemini schreibt in 10 Minuten Code, für den ein Mensch Stunden bräuchte. Grok findet in 5 Minuten Research-Papers, die Google-Suche übersehen hätte. Claude strukturiert Dokumentation kohärent über 80 Seiten.
+- **Effizienz:** Gemini schreibt in 10 Minuten Code, für den ein Mensch Stunden bräuchte. Claude strukturiert Dokumentation kohärent über 80 Seiten.
 
-- **Herausforderungen:** Jedes Modell hat eine "Perspektive". Gemini optimiert für Robustheit, Claude für Klarheit, Grok für Neuheit. Manchmal widersprechen sich diese Ziele. Manche Entscheidungen führten zu Fehlern (z.B. Thread-Safety-Bug in v50.6, der erst v50.7 auffiel). Andere zu Verschlimmbesserungen (z.B. zu komplexe Abstraktionen, die Grigori vereinfachen musste).
+- **Herausforderungen:** Jedes Modell hat eine "Perspektive". Gemini optimiert für Robustheit, Claude für Klarheit. Manchmal widersprechen sich diese Ziele. Manche Entscheidungen führten zu Fehlern. Andere zu Verschlimmbesserungen, die Grigori vereinfachen musste.
 
 **Die entscheidende Einsicht:** KI-Kollaboration funktioniert, aber **nicht automatisch**. Sie erfordert einen menschlichen Integrator, der:
 1. Die Outputs verschiedener Modelle synthesiert
@@ -1219,7 +1238,7 @@ Die Delegation brachte **Effizienz**, aber auch **Koordinations-Herausforderunge
 3. Fehler erkennt und korrigiert
 4. Die philosophische Kohärenz wahrt
 
-v50.7 zeigt: **Verteilte Entwicklung ist möglich** – aber nicht einfach, und nicht ohne menschliche Urteilskraft.
+v50.9 zeigt: **Verteilte Entwicklung ist möglich** – aber nicht einfach, und nicht ohne menschliche Urteilskraft.
 
 ---
 
@@ -1272,12 +1291,14 @@ Types:
 Beispiele:
 feat: Add VIP-Schutz to RRF fusion
 fix: Correct Procfile port configuration
-docs: Update FIBEL with v50.8 changes
+docs: Update FIBEL with v50.9 changes
 ```
 
 ---
 
 ## 12.3 Glossar
+
+**ANALYTICAL_FORENSIC:** Intent-Typ für Dekonstruktion, Motivanalyse, kritische Gegenlektüre (neu v50.9)
 
 **BM25:** Keyword-basierter Retrieval-Algorithmus (Best Match 25)
 
@@ -1285,11 +1306,11 @@ docs: Update FIBEL with v50.8 changes
 
 **Essence Parity:** Fairness-Mechanismus (logarithmische Chunk-Berechnung)
 
-**Enforcer:** Validierungs-Modul (zwei Ebenen: hermeneutisch + Validität)
+**Enforcer:** Validierungs-Modul (zwei Ebenen: hermeneutisch + Validität; Multi-Source ab v50.9)
 
 **Gini Coefficient:** Maß für Ungleichheit (0 = perfekt fair, 1 = maximal unfair)
 
-**Hermeneutic Router:** Intent-Klassifizierungs-Modul (LITERARY, FACTUAL, ANALYTICAL)
+**Hermeneutic Router:** Intent-Klassifizierungs-Modul (LITERARY, FACTUAL, ANALYTICAL, ANALYTICAL_FORENSIC)
 
 **Investigativ-Modus:** Retrieval-Strategie für kleine Korpora (≤5 Dokumente)
 
@@ -1304,7 +1325,9 @@ docs: Update FIBEL with v50.8 changes
 **Projekt-Lead:** Grigori Pantijelew  
 **Projekt-Email:** hermeneutic-engine@proton.me
 
-**Repository:** https://github.com/gpantijelew/hermeneutic-engine (wird mit v50.9 public)
+**Repository:** https://github.com/gpantijelew/hermeneutic-engine (public seit v50.9, März 2026)
+
+**Preprint:** https://doi.org/10.5281/zenodo.18774828
 
 **Support:**
 - GitHub Issues (nach Public Release)
@@ -1317,7 +1340,7 @@ docs: Update FIBEL with v50.8 changes
 **Ende der FIBEL v50.9**
 
 **Status:** Vollständig (Sections 1-12) ✅  
-**Letzte Aktualisierung:** 16. Februar 2026  
+**Letzte Aktualisierung:** März 2026  
 **Version:** v50.9 "Public Launch"
 
-**Nächster Schritt:** GitHub-Release + Community-Feedback
+**Nächster Schritt:** Community-Feedback + v51 Technical Debt

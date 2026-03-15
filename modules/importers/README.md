@@ -8,7 +8,7 @@ Dieses Modul handhabt den Import von Chat-Verläufen aus verschiedenen Quellen.
 - `utils.py`: Hilfsfunktionen (`detect_platform`, `get_topic_summary`).
 - `text_parser.py`: Fallback-Parser, der LLMs nutzt, um unstrukturierten Text zu zerlegen.
 - `html/`: Parser für HTML-Exporte (ChatGPT, Gemini, Claude, etc.).
-- `documents/`: Parser für Dokumente (PDF, ePub).
+- `documents/`: Parser für Dokumente (PDF, ePub, fb2, markdown).
 
 ## Neuen Importer hinzufügen
 

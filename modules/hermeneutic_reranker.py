@@ -1,5 +1,5 @@
 # modules/hermeneutic_reranker.py
-""" Hermeneutic Reranker: LLM-as-Judge für RAG-Systeme (v51.0 - SDK Migration).
+""" Hermeneutic Reranker: LLM-as-Judge für RAG-Systeme (v50.9 - SDK Migration).
 
 VERBESSERUNGEN v49.2:
 
@@ -120,7 +120,7 @@ class HermeneuticReranker:
         else:
             return "factual"
 
-    def judge_relevance(self, query: str, chunk: str, chunk_meta: Dict) -> float:
+    def judge_relevance(self, query: str, chunk: str, chunk_meta: Dict, intent: str = None) -> float:
         """
         Fragt das LLM: "Beantwortet dieser Chunk die Query DIREKT?"
 
@@ -142,9 +142,15 @@ class HermeneuticReranker:
         speaker = chunk_meta.get('metadata', {}).get('model_name', 'Unbekannt')
         chat_title = chunk_meta.get('chat_title', 'Unbekannt')
 
-        # Query-Typ erkennen
-        query_type = self._detect_query_type(query)
-
+        # Query-Typ erkennen (v50.9 FIX: Router-Intent respektieren!)
+        if intent:
+            query_type = intent.lower()
+            if query_type == "analytical_forensic":
+                query_type = "analytical"
+            if query_type not in ["literary", "analytical", "factual"]:
+                query_type = "factual"
+        else:
+            query_type = self._detect_query_type(query)
         # Chunk kürzen (max 800 Zeichen für Performance)
         chunk_short = chunk[:800] + ("..." if len(chunk) > 800 else "")
 
@@ -236,11 +242,13 @@ Bewerte die Relevanz (0.0-1.0): """
         try:
             # --- SDK MIGRATION: Neuer Aufruf ---
             # System Instruction wird jetzt in der Config übergeben
+            reranker_temp = 0.1 if (intent and intent.lower() in ["analytical_forensic", "analytical"]) else 0.3
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
-                    system_instruction=RERANKER_INSTRUCTION
+                    system_instruction=RERANKER_INSTRUCTION,
+                    temperature=reranker_temp
                 )
             )
 
@@ -264,7 +272,7 @@ Bewerte die Relevanz (0.0-1.0): """
             logger.error(f"❌ Reranker-Fehler: {e}")
             return 0.5
 
-    def rerank(self, query: str, candidates: List[Dict], max_results: int = 60) -> Tuple[List[Dict], Dict]:
+    def rerank(self, query: str, candidates: List[Dict], max_results: int = 60, intent: str = None) -> Tuple[List[Dict], Dict]:
         """
         Filtert Kandidaten durch LLM-Judge (v49.2: Essay-Aware).
 
@@ -280,7 +288,18 @@ Bewerte die Relevanz (0.0-1.0): """
             return [], {"total": 0, "passed": 0, "rejected": 0, "query_type": "unknown"}
 
         # Query-Typ erkennen (für Logging)
-        query_type = self._detect_query_type(query)
+        # v50.9 FIX: Router-Intent hat Vorrang vor dummer Keyword-Suche!
+        if intent:
+            query_type = intent.lower()
+
+            # NEU: Der Reranker behandelt Forensic genau wie Analytical
+            if query_type == "analytical_forensic":
+                query_type = "analytical"
+
+            if query_type not in ["literary", "analytical", "factual"]:
+                query_type = "factual" # Fallback für unbekannte Intents
+        else:
+            query_type = self._detect_query_type(query)
         logger.info(f"🔍 Reranker: Prüfe {len(candidates)} Kandidaten (Query-Typ: {query_type.upper()})...")
 
         filtered = []
@@ -301,7 +320,7 @@ Bewerte die Relevanz (0.0-1.0): """
             # --- 🔴 ENDE ---
 
             # LLM-Judge (mit Query-Type-Awareness!)
-            score = self.judge_relevance(query, chunk_text, candidate)
+            score = self.judge_relevance(query, chunk_text, candidate, intent=intent)
 
             # Speichere hermeneutischen Score
             candidate['hermeneutic_score'] = score
