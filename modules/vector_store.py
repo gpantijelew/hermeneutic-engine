@@ -1,107 +1,161 @@
-# modules/vector_store.py - v50.7: AUDIT-FIX (Thread-Safety + Cleanup)
-""" Firestore Vector Store - Zentrales Interface für Vektor-Suche und RRF.
+# modules/vector_store.py - v50.9: ChromaDB + sentence-transformers (Drop-in)
+"""
+Local Vector Store — Drop-in-Ersatz für FirestoreVectorStore.
 
-PHILOSOPHIE: Verwaltet Embeddings, Chunking und hybride Suche (Semantic + BM25). Kernkomponente der Hermeneutic Reconstruction Engine.
+MIGRATION v50.9:
+- Gemini Embeddings  → intfloat/multilingual-e5-large (lokal, CUDA)
+- Firestore Vector   → ChromaDB (lokal, persistent)
+- Firestore Batches  → ChromaDB upsert()
+- Identische öffentliche Schnittstelle: kein anderes Modul muss geändert werden
 
-NEU v50.7 (AUDIT-FIXES):
+VOLLSTÄNDIG ERHALTEN:
+- BM25Cache (Thread-Safe Singleton)
+- chunk_text() mit Speaker-Context-Injection
+- hybrid_search_rrf() mit RRF-Fusion
+- VIP-Schutz und Fairness-Quota
+- Alle Metadaten-Extraktoren
 
-Thread-Safe BM25-Cache (kritisch für Multi-User Deployment!)
-Tote Imports entfernt (EMBEDDING_DIMENSIONS)
-Redundante Definitionen entfernt (lokales EMBEDDING_MODEL)
-Tote Variable entfernt (_BM25_LAST_UPDATE)
-Fehlende Warnungen bei Import-Fehlern
-Verbesserte Docstrings & Type Hints
-Konsistentes Logging
 ÄNDERUNGSHISTORIE:
+- v50.9: Migration von Firestore/Gemini → ChromaDB/sentence-transformers
+- v50.7: AUDIT-FIX (Thread-Safety + Cleanup)
+- v50.3: RRF mit VIP-Schutz
+- v50.2: Investigativ-Modus mit Fairness-Quota
+- v50.1: RRF, Multilinguale Query-Expansion
+- v49:   Initiale Version
+"""
 
-v50.7: Vollständige Überarbeitung (Audit)
-v50.3: RRF mit VIP-Schutz
-v50.2: Investigativ-Modus mit Fairness-Quota
-v50.1: RRF, Multilinguale Query-Expansion
-v49: Initiale Version """
-import os 
-import logging 
-import time 
-import uuid 
-import re 
-import threading 
-import numpy as np 
-from typing import List, Dict, Optional, Any, Tuple 
-from google import genai
+import os
+import logging
+import time
+import uuid
+import re
+import threading
+import numpy as np
+from typing import List, Dict, Optional, Any, Tuple
 
-# Client für Embedding-API
-embedding_client = genai.Client(api_key=os.environ.get('GEMINI_API_KEY'))
+# ChromaDB
+import chromadb
+from chromadb.config import Settings as ChromaSettings
 
-# Config Import (v50.7: Keine redundanten Definitionen mehr!)
-from modules.config import EMBEDDING_MODEL
+# sentence-transformers (lokal, CUDA)
+import torch
+from sentence_transformers import SentenceTransformer
 
-# Firestore
-from google.cloud import firestore 
-from google.cloud.firestore_v1.vector import Vector 
-from google.cloud.firestore_v1.base_vector_query import DistanceMeasure
+# Config
+from modules.config import (
+    EMBEDDING_MODEL,
+    EMBEDDING_DIMENSIONS,
+    CHROMA_PATH
+)
 
 # BM25 für RRF (optional)
-try: 
-    from rank_bm25 import BM25Okapi 
-    BM25_AVAILABLE = True 
-except ImportError: 
-    BM25_AVAILABLE = False 
-    logging.warning( 
-        "⚠️ rank-bm25 nicht installiert. RRF läuft im Fallback-Modus. " 
-        "Installation: pip install rank-bm25" 
+try:
+    from rank_bm25 import BM25Okapi
+    BM25_AVAILABLE = True
+except ImportError:
+    BM25_AVAILABLE = False
+    logging.warning(
+        "⚠️ rank-bm25 nicht installiert. RRF läuft im Fallback-Modus. "
+        "Installation: pip install rank-bm25"
     )
 
 # Pre-Processing (optional)
-try: 
-    from modules.preprocessing.chunk_classifier import ChunkClassifier  
-except ImportError: 
-    ChunkClassifier = None 
-    logging.warning( 
-        "⚠️ ChunkClassifier nicht verfügbar. " 
-        "Metadata-Anreicherung (Chunk-Typen) wird übersprungen." 
+try:
+    from modules.preprocessing.chunk_classifier import ChunkClassifier
+except ImportError:
+    ChunkClassifier = None
+    logging.warning(
+        "⚠️ ChunkClassifier nicht verfügbar. "
+        "Metadata-Anreicherung (Chunk-Typen) wird übersprungen."
     )
 
 # Metadata Extractors
-from modules.utils.date_extractor import extract_date_from_chat_title 
+from modules.utils.date_extractor import extract_date_from_chat_title
 from modules.utils.version_extractor import extract_version_from_chat_title
 
 # Logging
-logging.basicConfig(level=logging.INFO) 
 logger = logging.getLogger(__name__)
 
 # Konstanten
-COLLECTION_NAME = "embeddings" 
-RRF_K = 60 # Reciprocal Rank Fusion Konstante
+COLLECTION_NAME = "hre_chunks"
+RRF_K = 60  # Reciprocal Rank Fusion Konstante
 
 # ==============================================================================
-# THREAD-SAFE BM25-CACHE (NEU v50.7)
+# EMBEDDING MODEL SINGLETON (einmal laden, immer verwenden)
 # ==============================================================================
-class BM25Cache: 
-    """ 
+_embedding_model: Optional[SentenceTransformer] = None
+_embedding_lock = threading.Lock()
+
+def _get_embedding_model() -> SentenceTransformer:
+    """
+    Thread-safe Singleton für das Embedding-Modell.
+    Lädt intfloat/multilingual-e5-large einmalig auf CUDA (falls verfügbar).
+    """
+    global _embedding_model
+    if _embedding_model is None:
+        with _embedding_lock:
+            if _embedding_model is None:
+                device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                logger.info(
+                    f"🔄 Lade Embedding-Modell: {EMBEDDING_MODEL} "
+                    f"(device={device})..."
+                )
+                _embedding_model = SentenceTransformer(
+                    EMBEDDING_MODEL,
+                    device=device
+                )
+                logger.info(
+                    f"✅ Embedding-Modell geladen. "
+                    f"Dimensionen: {EMBEDDING_DIMENSIONS}"
+                )
+    return _embedding_model
+
+# ==============================================================================
+# CHROMADB CLIENT SINGLETON
+# ==============================================================================
+_chroma_client: Optional[chromadb.PersistentClient] = None
+_chroma_collection = None
+_chroma_lock = threading.Lock()
+
+def _get_chroma_collection():
+    """
+    Thread-safe Singleton für ChromaDB Collection.
+    Persistiert unter CHROMA_PATH (hre_data/chroma/).
+    """
+    global _chroma_client, _chroma_collection
+    if _chroma_collection is None:
+        with _chroma_lock:
+            if _chroma_collection is None:
+                CHROMA_PATH.mkdir(parents=True, exist_ok=True)
+                _chroma_client = chromadb.PersistentClient(
+                    path=str(CHROMA_PATH),
+                    settings=ChromaSettings(anonymized_telemetry=False)
+                )
+                _chroma_collection = _chroma_client.get_or_create_collection(
+                    name=COLLECTION_NAME,
+                    metadata={"hnsw:space": "cosine"}
+                )
+                count = _chroma_collection.count()
+                logger.info(
+                    f"✅ ChromaDB verbunden: {CHROMA_PATH} "
+                    f"({count} Chunks indiziert)"
+                )
+    return _chroma_collection
+
+# ==============================================================================
+# THREAD-SAFE BM25-CACHE (unverändert v50.7)
+# ==============================================================================
+class BM25Cache:
+    """
     Thread-safe Singleton für BM25-Index.
-
-    PROBLEM (v50.6):
-    Globale Variablen (_BM25_INDEX, _BM25_DOC_MAP) waren nicht thread-safe.
-    In Multi-User-Umgebungen konnten Race Conditions auftreten.
-
-    LÖSUNG (v50.7):
-    Singleton-Pattern mit threading.Lock für sichere Concurrent Access.
-
-    VERWENDUNG:
-        cache = BM25Cache()
-        index, doc_map = cache.get_index()
-        if index is None:
-             # Build index...
-             cache.set_index(new_index, new_doc_map)
+    Vollständig unverändert gegenüber v50.7.
     """
     _instance = None
     _lock = threading.Lock()
 
     def __new__(cls):
-        """Singleton-Pattern: Nur eine Instanz pro Prozess."""
         if cls._instance is None:
             with cls._lock:
-                # Double-Checked Locking
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
                     cls._instance.index = None
@@ -110,23 +164,10 @@ class BM25Cache:
         return cls._instance
 
     def get_index(self) -> Tuple[Optional[Any], Optional[Dict]]:
-        """
-        Thread-safe Abruf des BM25-Index.
-
-        Returns:
-             Tuple: (BM25Okapi-Index oder None, Doc-Map oder None)
-        """
         with self._lock:
             return self.index, self.doc_map
 
     def set_index(self, index, doc_map):
-        """
-        Thread-safe Update des BM25-Index.
-
-        Args:
-            index: BM25Okapi-Instanz
-            doc_map: Dict mit Dokument-Metadaten
-        """
         with self._lock:
             self.index = index
             self.doc_map = doc_map
@@ -134,11 +175,6 @@ class BM25Cache:
             logger.info(f"🔄 BM25-Cache aktualisiert. Docs: {len(doc_map)}")
 
     def invalidate(self):
-        """
-        Löscht den Cache (z.B. nach neuem Import).
-
-        WICHTIG: Muss aufgerufen werden nach process_and_store_chat()!
-        """
         with self._lock:
             self.index = None
             self.doc_map = None
@@ -146,116 +182,84 @@ class BM25Cache:
             logger.info("🗑️ BM25-Cache invalidiert.")
 
 # ==============================================================================
-# FIRESTORE VECTOR STORE
+# LOCAL VECTOR STORE
 # ==============================================================================
-class FirestoreVectorStore: 
-    """ Interface für Firestore Vector Search + BM25 Hybrid Retrieval.
+class FirestoreVectorStore:
+    """
+    Drop-in-Ersatz für den alten FirestoreVectorStore.
+    Name bewusst beibehalten für Rückwärtskompatibilität.
 
-    HAUPTFUNKTIONEN:
-    - chunk_text(): Intelligentes Text-Chunking mit Speaker-Detection
-    - process_and_store_chat(): Import & Vektorisierung von Chats
-    - semantic_search(): Pure Vektor-Suche (Cosine Similarity)
-    - hybrid_search_rrf(): Hybrid-Suche (Semantic + BM25 mit RRF-Fusion)
-
-    THREADING:
-    Ab v50.7 ist der BM25-Cache thread-safe. Alle anderen Methoden sind
-    stateless und damit implizit thread-safe.
+    Intern: ChromaDB + sentence-transformers statt Firestore + Gemini.
+    Öffentliche Schnittstelle: identisch.
     """
 
-    def __init__(self, db_client: firestore.Client):
+    def __init__(self, db_client=None):
         """
-        Initialisiert den Vector Store.
-
-        Args:
-            db_client: Firestore Client-Instanz
+        db_client wird aus Kompatibilitätsgründen akzeptiert aber ignoriert.
+        Alle Verbindungen laufen über Singletons.
         """
-        self.db = db_client
-        # --- NEU: Client initialisieren ---
-        api_key = os.environ.get('GEMINI_API_KEY')
-        if not api_key:
-            logger.error("❌ GEMINI_API_KEY fehlt in Umgebungsvariablen!")
-            self.client = None
-        else:
-            self.client = genai.Client(api_key=api_key)
+        # db_client intentionally ignored — SQLite via database.py Singleton
+        if db_client is not None:
+            logger.debug(
+                "ℹ️ db_client Parameter ignoriert (Migration v50.9: "
+                "ChromaDB ersetzt Firestore)."
+            )
 
     # ==========================================================================
-    # EMBEDDING & CHUNKING
+    # EMBEDDING (LOKAL)
     # ==========================================================================
 
     def _get_embedding(self, text: str) -> Optional[List[float]]:
         """
-        Holt Embedding von Gemini API mit Retry-Logic und Safety-Check.
+        Erzeugt Embedding lokal via sentence-transformers.
+        Verwendet 'passage:'-Präfix für zu indizierende Texte (e5-Konvention).
         """
         if not text or not text.strip():
             return None
+        try:
+            model = _get_embedding_model()
+            embedding = model.encode(
+                f"passage: {text}",
+                normalize_embeddings=True,
+                show_progress_bar=False
+            )
+            return embedding.tolist()
+        except Exception as e:
+            logger.warning(f"⚠️ Embedding-Fehler: {e}")
+            return None
 
-        retries = 3
-        for attempt in range(retries):
-            try:
-                print(".", end="", flush=True)
+    def _get_query_embedding(self, text: str) -> Optional[List[float]]:
+        """
+        Erzeugt Query-Embedding mit 'query:'-Präfix (e5-Konvention).
+        Separater Einstiegspunkt für Suchanfragen.
+        """
+        if not text or not text.strip():
+            return None
+        try:
+            model = _get_embedding_model()
+            embedding = model.encode(
+                f"query: {text}",
+                normalize_embeddings=True,
+                show_progress_bar=False
+            )
+            return embedding.tolist()
+        except Exception as e:
+            logger.warning(f"⚠️ Query-Embedding-Fehler: {e}")
+            return None
 
-                # NEU: Nutze neues SDK
-                response = self.client.models.embed_content(
-                    model=EMBEDDING_MODEL,
-                    contents=text
-                )
-
-                # Extrahiere Embedding aus Response
-                raw_embedding = response.embeddings[0].values
-
-                # DEBUG: Was bekommen wir?
-                print(f"🔍 DEBUG: raw_embedding length = {len(raw_embedding)}")
-                # WICHTIG: Die API gibt manchmal mehrere Vektoren konkateniert zurück
-                # Nimm nur die ersten 768 (Standard-Dimensionen für gemini-embedding-001)
-                if len(raw_embedding) > 768:
-                    embedding = raw_embedding[:768]  # Nur erste 768 Elemente
-                    print(f"🔍 DEBUG: Gekürzt auf {len(embedding)} Dimensionen")
-                else:
-                    embedding = raw_embedding
-                    print(f"🔍 DEBUG: War nicht verschachtelt, length bleibt {len(embedding)}")
-
-                # Safety Check
-                if len(embedding) > 2048:
-                    logger.error(f"⛔ Vektor zu groß ({len(embedding)}). Überspringe Chunk.")
-                    return None
-
-                return embedding
-
-            except Exception as e:
-                logger.warning(f"⚠️ Embedding-Fehler (Versuch {attempt+1}/{retries}): {e}")
-                if attempt < retries - 1:
-                    time.sleep((attempt + 1) * 2)
-
-        return None
+    # ==========================================================================
+    # CHUNKING (vollständig unverändert v50.7)
+    # ==========================================================================
 
     def chunk_text(
-        self, 
-        text: str, 
-        max_tokens: int = 1000, 
+        self,
+        text: str,
+        max_tokens: int = 1000,
         overlap: int = 300
     ) -> List[str]:
         """
         Intelligentes Text-Chunking mit Speaker-Context-Injection.
-
-        STRATEGIE:
-        1. Chunke nach Token-Limit (mit Satz-Boundaries)
-        2. Detektiere Sprecher-Wechsel ("Modell: XYZ")
-        3. Injiziere Kontext in Chunks ohne expliziten Sprecher
-
-        Args:
-            text: Vollständiger Chat-Text
-            max_tokens: Max Tokens pro Chunk (~4 chars/token)
-            overlap: Overlap in Tokens für Kontext-Kontinuität
-
-        Returns:
-            Liste von Chunk-Strings mit injiziertem Kontext
-
-        Beispiel:
-            Input: "Modell: Claude\nIch bin ein KI-Assistent.\n\nWeiterer Text..."
-            Output: [
-                "[Kontext: Sprecher ist Claude] Ich bin ein KI-Assistent.",
-                "[Kontext: Sprecher ist Claude] Weiterer Text..."
-            ]
+        Vollständig unverändert gegenüber v50.7.
         """
         if not text:
             return []
@@ -263,9 +267,8 @@ class FirestoreVectorStore:
         chunk_size_chars = max_tokens * 4
         overlap_chars = overlap * 4
 
-        # Speaker Detection (Regex für "Modell: NAME" oder "**Modell**: NAME")
         speaker_pattern = re.compile(
-            r"(?:\*\*|#)?\s*Modell:?\s*(.*?)(?:\*\*|$|\n)", 
+            r"(?:\*\*|#)?\s*Modell:?\s*(.*?)(?:\*\*|$|\n)",
             re.IGNORECASE
         )
         speaker_matches = list(speaker_pattern.finditer(text))
@@ -276,7 +279,6 @@ class FirestoreVectorStore:
         while start < len(text):
             end = start + chunk_size_chars
 
-            # Satz-Boundary suchen (verhindert Cut-Off mitten im Satz)
             if end < len(text):
                 last_period = text.rfind('.', start, end)
                 if last_period != -1 and last_period > start + (chunk_size_chars // 2):
@@ -284,22 +286,18 @@ class FirestoreVectorStore:
 
             raw_chunk = text[start:end]
 
-            # Kontext-Injektion: Finde letzten Sprecher VOR diesem Chunk
             current_speaker = None
             for match in speaker_matches:
                 if match.start() < end:
                     current_speaker = match.group(1).strip()
                 else:
-                    break  # Matches sind chronologisch sortiert
+                    break
 
-            # Füge Kontext hinzu, falls Chunk selbst keinen Sprecher erwähnt
             final_chunk = raw_chunk
             if current_speaker and f"Modell: {current_speaker}" not in raw_chunk[:50]:
                 final_chunk = f"[Kontext: Sprecher ist {current_speaker}] {raw_chunk}"
 
             chunks.append(final_chunk)
-
-            # Overlap für nächsten Chunk
             start = end - overlap_chars
 
         return chunks
@@ -309,155 +307,150 @@ class FirestoreVectorStore:
     # ==========================================================================
 
     def process_and_store_chat(
-        self, 
-        chat_id: str, 
-        messages: List[Dict], 
+        self,
+        chat_id: str,
+        messages: List[Dict],
         custom_metadata: Dict = None
     ) -> Tuple[int, int]:
         """
-        Importiert Chat-Nachrichten und speichert Embeddings in Firestore.
-
-        WORKFLOW:
-        1. Invalidiere BM25-Cache (alte Daten werden ungültig)
-        2. Lösche alte Embeddings für diesen Chat (falls Reimport)
-        3. Chunke jede Nachricht
-        4. Erzeuge Embeddings
-        5. Extrahiere Metadaten (Datum, Version, etc.)
-        6. Klassifiziere Chunks (optional, falls ChunkClassifier verfügbar)
-        7. Speichere in Firestore mit Batch-Writes (max 400 Ops/Batch)
-
-        Args:
-            chat_id: Eindeutige Chat-ID
-            messages: Liste von Message-Dicts mit 'content', 'role', etc.
-            custom_metadata: Zusätzliche Metadaten (z.B. 'chat_title')
-
-        Returns:
-            Tuple: (Anzahl gespeicherter Chunks, Anzahl übersprungener Chunks)
-
-        PERFORMANCE:
-        - ~2-5 Chunks/Sekunde (API-limitiert)
-        - Batch-Writes reduzieren DB-Calls um ~80%
+        Importiert Chat-Nachrichten und speichert Embeddings in ChromaDB.
+        Identische Signatur und Semantik zur Firestore-Version.
         """
         logger.info(f"🔄 Starte Vektorisierung für Chat {chat_id}...")
 
-        # 1. Cache invalidieren (WICHTIG!)
+        # 1. Cache invalidieren
         cache = BM25Cache()
         cache.invalidate()
 
-        # 2. Alte Vektoren löschen
+        # 2. Alte Vektoren löschen (Reimport-Sicherheit)
         self.delete_chat_embeddings(chat_id)
 
-        # 3. Batch-Setup
-        batch = self.db.batch()
-        op_count = 0
+        collection = _get_chroma_collection()
+
         total_chunks = 0
+        skipped_chunks = 0
 
         if custom_metadata is None:
             custom_metadata = {}
 
-        # 4. ChunkClassifier initialisieren (optional)
+        # ChunkClassifier (optional)
         classifier = ChunkClassifier() if ChunkClassifier else None
 
-        # 5. Nachrichten verarbeiten
+        # Batch-Akkumulatoren für ChromaDB
+        batch_ids = []
+        batch_embeddings = []
+        batch_documents = []
+        batch_metadatas = []
+        BATCH_SIZE = 100  # ChromaDB verträgt große Batches problemlos
+
         for msg in messages:
             content = msg.get('content', '')
             role = msg.get('role') or msg.get('author') or 'unknown'
             msg_id = msg.get('id', str(uuid.uuid4()))
 
-            # Skip leere Nachrichten
             if not content or len(content.strip()) < 50:
                 continue
 
-            # Chunking
             chunks = self.chunk_text(content)
 
-            for i, chunk_text in enumerate(chunks):
-                # Embedding erzeugen
-                vec = self._get_embedding(chunk_text)
+            for i, chunk_text_str in enumerate(chunks):
+                vec = self._get_embedding(chunk_text_str)
                 if not vec:
-                    logger.warning(f"⚠️ Chunk {i} von Nachricht {msg_id}: Embedding fehlgeschlagen.")
+                    logger.warning(
+                        f"⚠️ Chunk {i} von Nachricht {msg_id}: "
+                        f"Embedding fehlgeschlagen."
+                    )
+                    skipped_chunks += 1
                     continue
 
-                # Dokument-ID
                 doc_id = f"{chat_id}_{msg_id}_{i}"
-                doc_ref = self.db.collection(COLLECTION_NAME).document(doc_id)
 
                 # Metadaten aufbauen
                 meta = {
-                    "role": role, 
+                    "chat_id": chat_id,
+                    "message_id": msg_id,
+                    "chunk_index": i,
+                    "role": role,
                     "source_length": len(content)
                 }
                 meta.update(custom_metadata)
 
-                # Metadata Extraction (Datum, Version)
+                # Metadata Extraction
                 chat_title = meta.get('chat_title', '')
-                speaker_hint = meta.get('speaker') or meta.get('model') or role
+                speaker_hint = (
+                    meta.get('speaker') or
+                    meta.get('model') or
+                    role
+                )
 
                 if chat_title:
-                    if 'date' not in meta or not meta['date']:
-                        meta['date'] = extract_date_from_chat_title(chat_title)
-
-                    if 'version' not in meta or not meta['version']:
+                    if not meta.get('date'):
+                        meta['date'] = extract_date_from_chat_title(
+                            chat_title
+                        ) or ''
+                    if not meta.get('version'):
                         meta['version'] = extract_version_from_chat_title(
-                            chat_title, 
-                            speaker_hint
-                        )
+                            chat_title, speaker_hint
+                        ) or ''
 
                 # Chunk-Klassifikation (optional)
                 if classifier:
-                    meta = classifier.process_chunk(chunk_text, meta)
+                    meta = classifier.process_chunk(chunk_text_str, meta)
 
-                # Firestore-Dokument
-                data = {
-                    "chat_id": chat_id,
-                    "message_id": msg_id,
-                    "chunk_index": i,
-                    "content": chunk_text,
-                    "embedding": Vector(vec),
-                    "metadata": meta,
-                    "created_at": firestore.SERVER_TIMESTAMP
+                # ChromaDB akzeptiert nur str/int/float/bool in metadata
+                # None-Werte bereinigen
+                clean_meta = {
+                    k: (v if v is not None else '')
+                    for k, v in meta.items()
+                    if isinstance(v, (str, int, float, bool))
                 }
 
-                # Zu Batch hinzufügen
-                batch.set(doc_ref, data)
-                op_count += 1
+                batch_ids.append(doc_id)
+                batch_embeddings.append(vec)
+                batch_documents.append(chunk_text_str)
+                batch_metadatas.append(clean_meta)
                 total_chunks += 1
 
-                # Batch committen bei 400 Ops (Firestore Limit: 500)
-                if op_count >= 400:
-                    batch.commit()
-                    batch = self.db.batch()
-                    op_count = 0
-                    time.sleep(0.5)  # Rate-Limiting
+                # Batch-Commit
+                if len(batch_ids) >= BATCH_SIZE:
+                    collection.upsert(
+                        ids=batch_ids,
+                        embeddings=batch_embeddings,
+                        documents=batch_documents,
+                        metadatas=batch_metadatas
+                    )
+                    batch_ids, batch_embeddings = [], []
+                    batch_documents, batch_metadatas = [], []
+                    logger.info(f"  💾 Batch committed. Total: {total_chunks}")
 
-        # Finaler Batch-Commit
-        if op_count > 0:
-            batch.commit()
+        # Finaler Batch
+        if batch_ids:
+            collection.upsert(
+                ids=batch_ids,
+                embeddings=batch_embeddings,
+                documents=batch_documents,
+                metadatas=batch_metadatas
+            )
 
-        logger.info(f"✅ Chat {chat_id}: {total_chunks} Chunks gespeichert.")
-        return total_chunks, 0
+        logger.info(
+            f"✅ Chat {chat_id}: {total_chunks} Chunks gespeichert, "
+            f"{skipped_chunks} übersprungen."
+        )
+        return total_chunks, skipped_chunks
 
     def delete_chat_embeddings(self, chat_id: str):
         """
-        Löscht alle Embeddings für einen Chat (Hard Delete).
-
-        Args:
-            chat_id: Chat-ID zum Löschen
-
-        WICHTIG: Invalidiert automatisch den BM25-Cache!
+        Löscht alle Embeddings für einen Chat aus ChromaDB.
+        Identische Semantik zur Firestore-Version.
         """
-        docs = self.db.collection(COLLECTION_NAME).where(
-            "chat_id", "==", chat_id
-        ).stream()
-
-        for doc in docs:
-            doc.reference.delete()
-
-        # Cache invalidieren
-        cache = BM25Cache()
-        cache.invalidate()
-
-        logger.info(f"🗑️ Embeddings für Chat {chat_id} gelöscht.")
+        try:
+            collection = _get_chroma_collection()
+            collection.delete(where={"chat_id": chat_id})
+            cache = BM25Cache()
+            cache.invalidate()
+            logger.info(f"🗑️ Embeddings für Chat {chat_id} gelöscht.")
+        except Exception as e:
+            logger.warning(f"⚠️ Fehler beim Löschen der Embeddings: {e}")
 
     # ==========================================================================
     # BM25 INDEX MANAGEMENT
@@ -466,29 +459,15 @@ class FirestoreVectorStore:
     def _ensure_bm25_index(self):
         """
         Baut BM25-Index auf, falls noch nicht vorhanden (Lazy Loading).
-
-        STRATEGIE:
-        1. Prüfe ob Index im Cache existiert
-        2. Falls nein: Lade alle Dokumente aus Firestore
-        3. Tokenisiere Content (simple .split())
-        4. Baue BM25Okapi-Index
-        5. Speichere in Thread-Safe Cache
-
-        PERFORMANCE:
-        - Erster Aufruf: ~5-30 Sekunden (je nach Korpus-Größe)
-        - Folge-Aufrufe: <1ms (Cache-Hit)
-
-        THREAD-SAFETY:
-        Vollständig thread-safe durch BM25Cache-Lock.
+        Datenquelle: ChromaDB statt Firestore.
+        Logik vollständig identisch zur v50.7.
         """
         cache = BM25Cache()
         index, doc_map = cache.get_index()
 
-        # Cache-Hit: Index existiert bereits
         if index is not None:
             return
 
-        # Fallback: BM25 nicht verfügbar
         if not BM25_AVAILABLE:
             logger.debug("📚 BM25 nicht verfügbar (Library fehlt).")
             return
@@ -496,30 +475,43 @@ class FirestoreVectorStore:
         logger.info("🏗️ Baue BM25-Index auf...")
         start = time.time()
 
-        # Alle Dokumente aus Firestore laden (nur Content + Metadata)
-        docs = self.db.collection(COLLECTION_NAME).select(
-            ['content', 'metadata', 'chat_id']
-        ).stream()
+        collection = _get_chroma_collection()
+        total = collection.count()
 
+        if total == 0:
+            logger.warning("⚠️ Keine Dokumente für BM25-Index gefunden.")
+            return
+
+        # Alle Dokumente aus ChromaDB laden (in Batches für große Korpora)
         corpus = []
         doc_map = {}
         count = 0
+        FETCH_BATCH = 5000
 
-        for doc in docs:
-            d = doc.to_dict()
-            d['vector_doc_id'] = doc.id
+        offset = 0
+        while offset < total:
+            result = collection.get(
+                limit=FETCH_BATCH,
+                offset=offset,
+                include=["documents", "metadatas"]
+            )
+            for i, doc_id in enumerate(result['ids']):
+                content = result['documents'][i] if result['documents'] else ''
+                meta = result['metadatas'][i] if result['metadatas'] else {}
+                d = {
+                    'vector_doc_id': doc_id,
+                    'content': content,
+                    'metadata': meta,
+                    'chat_id': meta.get('chat_id', '')
+                }
+                corpus.append(content.lower().split())
+                doc_map[count] = d
+                count += 1
+            offset += FETCH_BATCH
 
-            # Tokenisiere Content (Simple Whitespace Split)
-            # TODO v51: Nutze besseren Tokenizer (z.B. NLTK, spaCy)
-            corpus.append(d.get('content', '').lower().split())
-            doc_map[count] = d
-            count += 1
-
-        # BM25-Index bauen
         if corpus:
             bm25_index = BM25Okapi(corpus)
             cache.set_index(bm25_index, doc_map)
-
             elapsed = time.time() - start
             logger.info(
                 f"✅ BM25-Index gebaut: {count} Dokumente in {elapsed:.2f}s"
@@ -532,36 +524,27 @@ class FirestoreVectorStore:
     # ==========================================================================
 
     def _cosine_similarity(self, vec_a, vec_b) -> float:
-        """
-        Berechnet Cosine Similarity zwischen zwei Numpy Arrays.
-
-        Args:
-            vec_a: Erster Vektor
-            vec_b: Zweiter Vektor
-
-        Returns:
-            Similarity-Score (0.0 - 1.0)
-        """
+        """Cosine Similarity. Vollständig unverändert."""
         return np.dot(vec_a, vec_b) / (
             np.linalg.norm(vec_a) * np.linalg.norm(vec_b)
         )
 
     def _get_chat_title(self, chat_id: str) -> str:
         """
-        Holt Chat-Titel aus Firestore (mit Fallback).
-
-        Args:
-            chat_id: Chat-ID
-
-        Returns:
-            Titel oder "Doc {ID}" bei Fehler
+        Holt Chat-Titel aus SQLite (via database.py Singleton).
+        Vorher: Firestore-Lookup.
         """
         try:
-            chat_doc = self.db.collection('chats').document(chat_id).get()
-            if chat_doc.exists:
-                return chat_doc.to_dict().get('title', f'Doc {chat_id[-8:]}')
-            else:
-                return f'Doc {chat_id[-8:]}'
+            from modules.database import get_db_connection
+            db = get_db_connection()
+            if db:
+                row = db.execute(
+                    "SELECT title FROM chats WHERE id = ?",
+                    (chat_id,)
+                ).fetchone()
+                if row:
+                    return row['title'] or f'Doc {chat_id[-8:]}'
+            return f'Doc {chat_id[-8:]}'
         except Exception as e:
             logger.warning(
                 f"⚠️ Konnte Titel für {chat_id[-8:]} nicht laden: {e}"
@@ -573,45 +556,26 @@ class FirestoreVectorStore:
     # ==========================================================================
 
     def semantic_search(
-        self, 
-        query: str, 
-        limit: int = 10, 
-        filter_role: str = None, 
+        self,
+        query: str,
+        limit: int = 10,
+        filter_role: str = None,
         allowed_chat_ids: List[str] = None
     ) -> Tuple[List[Dict], List[float]]:
         """
-        Pure Vektor-Suche via Firestore Vector Search.
-
-        STRATEGIE:
-        - Bei ≤5 ausgewählten Docs: INVESTIGATIV-MODUS (Fairness-Quota)
-        - Sonst: GLOBALE SUCHE (Best-Match über alle Docs)
-
-        INVESTIGATIV-MODUS (v50.2):
-        Verhindert, dass ein Dokument alle Top-Slots belegt.
-        Garantiert faire Repräsentation aller ausgewählten Docs.
-
-        Args:
-            query: Suchquery (natürlichsprachig)
-            limit: Max Ergebnisse (wird in Investigativ-Modus überschrieben)
-            filter_role: Nur Chunks von diesem Role (optional)
-            allowed_chat_ids: Nur Chunks aus diesen Chats (optional)
-
-        Returns:
-            Tuple: (Liste von Result-Dicts, Query-Vektor)
-
-        Result-Dict enthält:
-            - content: Chunk-Text
-            - score: Cosine Similarity (0-1)
-            - metadata: Chat-Titel, Datum, Version, etc.
-            - chat_id: Quell-Chat
+        Vektor-Suche via ChromaDB.
+        Identische öffentliche Schnittstelle zur Firestore-Version.
+        Investigativ-Modus (Fairness-Quota) vollständig erhalten.
         """
-        query_vector = self._get_embedding(query)
+        query_vector = self._get_query_embedding(query)
         if not query_vector:
             logger.error("❌ Konnte Query-Embedding nicht erzeugen.")
             return [], None
 
+        collection = _get_chroma_collection()
+
         # ======================================================================
-        # INVESTIGATIV-MODUS (Fairness-Quota für ausgewählte Docs)
+        # INVESTIGATIV-MODUS (Fairness-Quota — unveränderte Logik)
         # ======================================================================
         if allowed_chat_ids and len(allowed_chat_ids) <= 5:
             logger.info(
@@ -620,44 +584,44 @@ class FirestoreVectorStore:
 
             docs_by_chat = {cid: [] for cid in allowed_chat_ids}
 
-            # Alle Chunks aus den ausgewählten Chats laden
-            docs = self.db.collection(COLLECTION_NAME).where(
-                "chat_id", "in", allowed_chat_ids
-            ).stream()
+            # Alle Chunks der ausgewählten Chats aus ChromaDB laden
+            where_filter = {"chat_id": {"$in": allowed_chat_ids}}
+
+            results = collection.get(
+                where=where_filter,
+                include=["documents", "metadatas", "embeddings"]
+            )
 
             q_vec_np = np.array(query_vector)
 
-            for doc in docs:
-                data = doc.to_dict()
+            for i, doc_id in enumerate(results['ids']):
+                meta = results['metadatas'][i] if results['metadatas'] else {}
 
                 # Role-Filter
-                if filter_role and filter_role.lower() not in data.get(
-                    'metadata', {}
-                ).get('role', '').lower():
+                if filter_role and filter_role.lower() not in \
+                        meta.get('role', '').lower():
                     continue
 
-                # Embedding extrahieren
-                vec_obj = data.get('embedding')
-                if not vec_obj:
+                vec = results['embeddings'][i] if results['embeddings'] else None
+                if vec is None:
                     continue
 
-                try:
-                    vec = np.array(list(vec_obj))
-                except:
-                    vec = np.array(vec_obj)
+                vec_np = np.array(vec)
+                score = self._cosine_similarity(q_vec_np, vec_np)
 
-                # Score berechnen
-                score = self._cosine_similarity(q_vec_np, vec)
+                data = {
+                    'vector_doc_id': doc_id,
+                    'content': results['documents'][i] if results['documents'] else '',
+                    'metadata': meta,
+                    'chat_id': meta.get('chat_id', ''),
+                    'score': float(score)
+                }
 
-                data['vector_doc_id'] = doc.id
-                data['score'] = float(score)
-
-                # Zu passendem Chat hinzufügen
-                cid = data.get('chat_id')
+                cid = meta.get('chat_id', '')
                 if cid in docs_by_chat:
                     docs_by_chat[cid].append(data)
 
-            # FAIRNESS-QUOTA: Gleiche Anzahl Chunks pro Doc
+            # Fairness-Quota
             quota_per_doc = max(20, (limit * 2) // len(allowed_chat_ids))
             logger.info(
                 f"⚖️ Fairness-Quota: {quota_per_doc} Chunks pro Dokument"
@@ -673,14 +637,10 @@ class FirestoreVectorStore:
                     )
                     continue
 
-                # Sortiere Chunks nach Score
                 chunks.sort(key=lambda x: x['score'], reverse=True)
-
-                # Nimm Top N
                 selected_count = min(len(chunks), quota_per_doc)
                 fair_candidates.extend(chunks[:selected_count])
 
-                # Logging
                 chat_title = self._get_chat_title(cid)
                 avg_score = sum(
                     c['score'] for c in chunks[:selected_count]
@@ -690,130 +650,95 @@ class FirestoreVectorStore:
                     f"{selected_count} selected (Ø Score: {avg_score:.2f})"
                 )
 
-            # Sortiere final nach Score
             fair_candidates.sort(key=lambda x: x['score'], reverse=True)
-
             logger.info(
-                f"✅ Fairness-Quota angewendet: {len(fair_candidates)} Chunks "
+                f"✅ Fairness-Quota: {len(fair_candidates)} Chunks "
                 f"aus {len(allowed_chat_ids)} Dokumenten"
             )
-
             return fair_candidates[:limit * 2], query_vector
 
         # ======================================================================
         # GLOBALE SUCHE (Standard-Modus)
         # ======================================================================
-        else:
-            collection_ref = self.db.collection(COLLECTION_NAME)
-
-            # Firestore Vector Query
-            fetch_limit = 1000  # Hohe Grenze für gute Ergebnisse
-            vector_query = collection_ref.find_nearest(
-                vector_field="embedding",
-                query_vector=Vector(query_vector),
-                distance_measure=DistanceMeasure.COSINE,
-                limit=fetch_limit
+        where_filter = None
+        if allowed_chat_ids:
+            where_filter = {"chat_id": {"$in": allowed_chat_ids}}
+        if filter_role:
+            role_filter = {"role": {"$contains": filter_role.lower()}}
+            where_filter = (
+                {"$and": [where_filter, role_filter]}
+                if where_filter else role_filter
             )
 
-            results = vector_query.get()
+        query_kwargs = dict(
+            query_embeddings=[query_vector],
+            n_results=min(limit * 2, collection.count() or 1),
+            include=["documents", "metadatas", "distances"]
+        )
+        if where_filter:
+            query_kwargs["where"] = where_filter
 
-            # Ergebnisse filtern & bereinigen
-            cleaned_results = []
-            for doc in results:
-                data = doc.to_dict()
+        results = collection.query(**query_kwargs)
 
-                # Chat-Filter
-                if allowed_chat_ids and data.get('chat_id') not in allowed_chat_ids:
-                    continue
+        cleaned_results = []
+        for i, doc_id in enumerate(results['ids'][0]):
+            meta = results['metadatas'][0][i] if results['metadatas'] else {}
+            distance = results['distances'][0][i] if results['distances'] else 1.0
 
-                # Role-Filter
-                if filter_role and filter_role.lower() not in data.get(
-                    'metadata', {}
-                ).get('role', '').lower():
-                    continue
+            # Metadata anreichern (Fallback für alte Einträge)
+            chat_title = meta.get('chat_title', '')
+            if chat_title:
+                changed = False
+                if not meta.get('date'):
+                    meta['date'] = extract_date_from_chat_title(chat_title)
+                    changed = True
+                if not meta.get('version'):
+                    spk = (
+                        meta.get('model_name') or
+                        meta.get('speaker') or
+                        meta.get('role')
+                    )
+                    meta['version'] = extract_version_from_chat_title(
+                        chat_title, spk
+                    )
+                    changed = True
 
-                # Metadata anreichern (Fallback für alte Einträge ohne Datum/Version)
-                meta = data.get('metadata', {})
-                if 'chat_title' in meta:
-                    changed = False
+            data = {
+                'vector_doc_id': doc_id,
+                'content': results['documents'][0][i] if results['documents'] else '',
+                'metadata': meta,
+                'chat_id': meta.get('chat_id', ''),
+                # ChromaDB Cosine Distance → Score (1 - distance)
+                'score': float(1.0 - distance)
+            }
+            cleaned_results.append(data)
 
-                    if not meta.get('date'):
-                        meta['date'] = extract_date_from_chat_title(
-                            meta['chat_title']
-                        )
-                        changed = True
-
-                    if not meta.get('version'):
-                        spk = meta.get('model_name') or meta.get('speaker') or meta.get('role')
-                        meta['version'] = extract_version_from_chat_title(
-                            meta['chat_title'], 
-                            spk
-                        )
-                        changed = True
-
-                    if changed:
-                        data['metadata'] = meta
-
-                data['vector_doc_id'] = doc.id
-                cleaned_results.append(data)
-
-                # Early Exit wenn genug Ergebnisse
-                if len(cleaned_results) >= limit * 2:
-                    break
-
-            return cleaned_results, query_vector
+        return cleaned_results, query_vector
 
     # ==========================================================================
-    # HYBRID SEARCH (RRF)
+    # HYBRID SEARCH (RRF) — vollständig unverändert v50.7
     # ==========================================================================
 
     def hybrid_search_rrf(
-        self, 
-        query: str, 
-        limit: int = 10, 
-        filter_role: str = None, 
+        self,
+        query: str,
+        limit: int = 10,
+        filter_role: str = None,
         allowed_chat_ids: List[str] = None
     ) -> Tuple[List[Dict], Any]:
         """
         Hybrid-Suche: Semantic + BM25 mit RRF-Fusion.
-
-        WORKFLOW:
-        1. Semantic Search (Vektor-Ähnlichkeit)
-        2. BM25 Search (Keyword-Matching)
-        3. RRF-Fusion (kombiniert Rankings)
-        4. VIP-Schutz (garantiert Mind. 3 Chunks pro ausgewähltem Doc)
-
-        RRF-FORMEL:
-            score = Σ (1 / (k + rank_i))
-            wobei k=60 (Standard-Wert aus Literatur)
-
-        VIP-SCHUTZ (v50.3):
-        Bei ≤10 ausgewählten Docs wird garantiert, dass JEDES Dokument
-        mit mindestens 3 Chunks in den Ergebnissen vertreten ist,
-        bevor der Rest nach Score aufgefüllt wird.
-
-        RATIONALE:
-        Verhindert, dass bei Vergleichsanalysen ein Dokument "totgeschwiegen"
-        wird, nur weil seine Chunks minimal schlechtere Scores haben.
-
-        Args:
-            query: Suchquery
-            limit: Max Ergebnisse (ohne VIP-Schutz)
-            filter_role: Role-Filter
-            allowed_chat_ids: Chat-Filter
-
-        Returns:
-            Tuple: (Liste von Result-Dicts mit '_rrf_active' Flag, Query-Vektor)
+        VIP-Schutz + Fairness-Quota vollständig erhalten.
+        Vollständig unverändert gegenüber v50.7.
         """
         # 1. Vektor-Suche
         vector_candidates, query_vector = self.semantic_search(
-            query, 
-            limit=limit * 3,  # Mehr Kandidaten für bessere RRF-Fusion
-            filter_role=filter_role, 
+            query,
+            limit=limit * 3,
+            filter_role=filter_role,
             allowed_chat_ids=allowed_chat_ids
         )
 
-        # Fallback: BM25 nicht verfügbar
         if not BM25_AVAILABLE:
             logger.info("📚 BM25-Suche: 0 Treffer (Library nicht verfügbar).")
             return vector_candidates[:limit], query_vector
@@ -828,21 +753,20 @@ class FirestoreVectorStore:
         if index:
             tokenized_query = query.lower().split()
             top_n_indices = index.get_top_n(
-                tokenized_query, 
-                list(doc_map.keys()), 
-                n=2000  # Großer Pool für gute RRF-Fusion
+                tokenized_query,
+                list(doc_map.keys()),
+                n=2000
             )
 
             for idx in top_n_indices:
                 doc_data = doc_map[idx]
 
-                # Filter anwenden
-                if allowed_chat_ids and doc_data.get('chat_id') not in allowed_chat_ids:
+                if allowed_chat_ids and \
+                        doc_data.get('chat_id') not in allowed_chat_ids:
                     continue
 
-                if filter_role and filter_role.lower() not in doc_data.get(
-                    'metadata', {}
-                ).get('role', '').lower():
+                if filter_role and filter_role.lower() not in \
+                        doc_data.get('metadata', {}).get('role', '').lower():
                     continue
 
                 bm25_candidates.append(doc_data)
@@ -856,35 +780,31 @@ class FirestoreVectorStore:
         rrf_scores = {}
 
         def add_scores(candidates, weight=1.0):
-            """Fügt RRF-Scores hinzu."""
             for rank, doc in enumerate(candidates):
                 doc_id = doc.get('vector_doc_id')
                 if not doc_id:
                     continue
-
                 if doc_id not in rrf_scores:
                     rrf_scores[doc_id] = {"doc": doc, "score": 0.0}
-
-                # RRF-Formel: 1 / (k + rank + 1)
-                rrf_scores[doc_id]["score"] += weight * (1 / (RRF_K + rank + 1))
+                rrf_scores[doc_id]["score"] += weight * (
+                    1 / (RRF_K + rank + 1)
+                )
 
         add_scores(vector_candidates)
         add_scores(bm25_candidates)
 
-        # Sortiere nach RRF-Score
         sorted_results = sorted(
-            rrf_scores.values(), 
-            key=lambda x: x['score'], 
+            rrf_scores.values(),
+            key=lambda x: x['score'],
             reverse=True
         )
 
         # ======================================================================
-        # VIP-SCHUTZ (NEU v50.3)
+        # VIP-SCHUTZ (unverändert v50.3)
         # ======================================================================
         final_results = []
 
         if allowed_chat_ids and len(allowed_chat_ids) <= 10:
-            # Gruppiere nach Chat-ID
             results_by_chat = {cid: [] for cid in allowed_chat_ids}
 
             for item in sorted_results:
@@ -893,106 +813,61 @@ class FirestoreVectorStore:
                 if cid in results_by_chat:
                     results_by_chat[cid].append(doc)
 
-            # 1. VIP-Runde: Mind. 3 Chunks pro Dokument
-            vip_set = set()  # Tracking, welche Docs schon drin sind
-
+            vip_set = set()
             for cid, docs in results_by_chat.items():
-                top_3 = docs[:3]  # Erste 3 sind automatisch VIP
-
-                for d in top_3:
+                for d in docs[:3]:
                     uid = d.get('vector_doc_id')
                     if uid and uid not in vip_set:
                         final_results.append(d)
                         vip_set.add(uid)
 
             logger.info(
-                f"🛡️ VIP-Schutz: {len(final_results)} Chunks garantiert aufgenommen."
+                f"🛡️ VIP-Schutz: {len(final_results)} Chunks garantiert."
             )
 
-            # 2. Auffüll-Runde: Rest nach Score
             for item in sorted_results:
                 doc = item['doc']
                 uid = doc.get('vector_doc_id')
-
                 if len(final_results) >= limit:
                     break
-
                 if uid and uid not in vip_set:
                     final_results.append(doc)
                     vip_set.add(uid)
-
         else:
-            # Standard: Keine VIP-Behandlung
-            final_results = [item['doc'] for item in sorted_results[:limit]]
+            final_results = [
+                item['doc'] for item in sorted_results[:limit]
+            ]
 
-        # Flag setzen (für Logging/Debugging)
         for res in final_results:
             res['_rrf_active'] = True
 
         logger.info(f"⚖️ RRF Fusion: {len(final_results)} finale Treffer.")
-
         return final_results, query_vector
 
     # ==========================================================================
-    # CACHE MANAGEMENT (PUBLIC API)
+    # CACHE MANAGEMENT (PUBLIC API — unverändert)
     # ==========================================================================
 
     def invalidate_bm25_cache(self):
-        """
-        Invalidiert den BM25-Cache manuell (Public API für Admin-Tools).
-
-        USE CASES:
-        - Nach Bulk-Metadata-Updates (ohne Reindizierung)
-        - Nach manuellem Löschen von Embeddings via Firestore-Console
-        - Für Admin-Tools, die Metadata ändern (z.B. vector_admin.py)
-
-        WICHTIG: 
-        Diese Methode löscht NUR den Cache, NICHT die Vektoren in Firestore!
-        Nach Metadata-Änderungen MUSS trotzdem neu indiziert werden,
-        damit die neuen Labels auch in den Embeddings erscheinen.
-
-        RATIONALE:
-        Ohne Cache-Invalidierung würde BM25-Suche alte Labels zurückgeben,
-        was zu Inkonsistenzen zwischen Firestore-Metadata und Cache führt.
-
-        Beispiel:
-            >>> # User ändert Label via Admin-UI (nur Metadata!)
-            >>> update_chat_metadata(chat_id, model_name="Claude")
-            >>> 
-            >>> # Cache invalidieren (sonst zeigt BM25 alte Labels)
-            >>> vector_store = FirestoreVectorStore(db)
-            >>> vector_store.invalidate_bm25_cache()
-            >>> 
-            >>> # Später: Neu indizieren für korrekte Labels in Embeddings
-            >>> messages = get_raw_chat_messages(chat_id)
-            >>> vector_store.process_and_store_chat(chat_id, messages, meta)
-
-        Returns:
-            None
-        """
+        """Invalidiert den BM25-Cache manuell. Unverändert."""
         cache = BM25Cache()
         cache.invalidate()
         logger.info("🗑️ BM25-Cache manuell invalidiert (Public API).")
 
     # ==========================================================================
-    # LEGACY WRAPPER
+    # LEGACY WRAPPER (unverändert)
     # ==========================================================================
 
     def hybrid_search(
-        self, 
-        query: str, 
-        keywords: List[str] = None, 
-        limit: int = 10, 
-        filter_role: str = None, 
-        allowed_chat_ids: List[str] = None, 
+        self,
+        query: str,
+        keywords: List[str] = None,
+        limit: int = 10,
+        filter_role: str = None,
+        allowed_chat_ids: List[str] = None,
         keyword_weight: float = 0.3
     ) -> Tuple[List[Dict], Any]:
-        """
-        Legacy-Wrapper für alte API-Kompatibilität.
-
-        DEPRECATED: Nutze stattdessen hybrid_search_rrf().
-
-        Die Parameter 'keywords' und 'keyword_weight' werden ignoriert,
-        da RRF diese obsolet macht.
-        """
-        return self.hybrid_search_rrf(query, limit, filter_role, allowed_chat_ids)
+        """Legacy-Wrapper. Unverändert."""
+        return self.hybrid_search_rrf(
+            query, limit, filter_role, allowed_chat_ids
+        )
