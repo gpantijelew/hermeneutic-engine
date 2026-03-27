@@ -22,18 +22,20 @@ chunks = []
 for doc in db.collection("embeddings").stream():
     data = doc.to_dict()
     chunks.append({
-        "id": doc.id,
-        "text": data.get("text", ""),
-        "metadata": {
-            "speaker": data.get("speaker"),
-            "date": data.get("date"),
-            "version": data.get("version"),
-            "chunk_type": data.get("chunk_type"),
-            "source": data.get("source"),
-            # alle weiteren Felder, die du in Metadaten-Extraktoren verwendest
-        }
-    })
-
+         "id": doc.id,
+         "text": data.get("content", ""),  # Firestore-Feld heißt "content"
+         "metadata": {
+             "speaker": data.get("metadata", {}).get("speaker"),
+             "date": data.get("metadata", {}).get("date"),
+             "version": data.get("metadata", {}).get("version"),
+             "chunk_type": data.get("metadata", {}).get("chunk_type"),
+             "source": data.get("metadata", {}).get("source"),
+             "chat_id": data.get("chat_id"),
+             "message_id": data.get("message_id"),
+             "chunk_index": data.get("chunk_index"),
+             "role": data.get("metadata", {}).get("role"),
+         }
+     })
 with open("export_chunks.json", "w", encoding="utf-8") as f:
     json.dump(chunks, f, ensure_ascii=False, indent=2, default=firestore_serializer)
 

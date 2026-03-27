@@ -50,3 +50,10 @@ Thumbs.db
 # Logs
 *.log
 logs/*.log
+
+# Lokale HRE-Daten — niemals ins Repo!
+hre_data/
+export_chunks.json
+export_chats.json
+export_settings.json
+*.db
