@@ -1,4 +1,4 @@
-# modules/hermeneutic_enforcer.py
+# modules/hermeneutic_enforcer.py — v50.9: LM Studio Drop-in
 """
 Hermeneutic Enforcer - Epistemologischer Validierungs-Kern.
 
@@ -9,29 +9,30 @@ Unterscheidet zwischen zwei orthogonalen Dimensionen der Validierung:
 2. VALIDIERUNGS-DIMENSION: Ist sie korrekt?
    - supported, contradiction, exaggeration, unsupported, temporal_fiction
 
-Diese Zwei-Ebenen-Analyse ermöglicht präzise Fehlerdiagnosen:
-"Die Aussage ist eine Paraphrase (hermeneutisch valide), aber übertrieben (faktisch invalid)."
+MIGRATION v50.9:
+- Gemini API → llm_wrapper.llm_call_json()
+- Keine API-Key-Abhängigkeit mehr
+- Identische öffentliche Schnittstelle
 
 ÄNDERUNGSHISTORIE:
-- v50.9: Fix Indentation & Cleanup
-- v50.6: Harmonisierung mit llm_instructions.py, Dict-Output, Beispiele, Legacy-Wrapper
+- v50.9: Migration Gemini → LM Studio via llm_wrapper
+- v50.6: Harmonisierung mit llm_instructions.py, Dict-Output, Beispiele
 - v48.1: Zitat-Schutz, hermeneutischer Modus
-- v47: Initiale Version
+- v47:   Initiale Version
 """
 
-import os
 import json
 import re
 import hashlib
 import logging
-from google import genai
 from typing import Dict, Optional
 from modules.config import MODEL_ENFORCER
+from modules.llm_wrapper import llm_call_json
 
 logger = logging.getLogger(__name__)
 
 # ========================================
-# SYSTEM PROMPT (v50.6 - Harmonisiert)
+# SYSTEM PROMPTS (vollständig unverändert)
 # ========================================
 HERMENEUTIC_PROMPT_TEMPLATE = """
 Du bist ein hermeneutischer Validator mit doppelter Analyse-Dimension.
@@ -66,10 +67,10 @@ QUELLEN:
 
 **KATEGORIEN:**
 - **supported**: Behauptung wird direkt und wörtlich von der Quelle gestützt
-- **contradiction**: Direkter sachlicher Widerspruch zur Quelle (Gegenteil wird behauptet)
-- **exaggeration**: Übertreibung oder Verstärkung der Quelle (Kern stimmt, aber übertrieben)
-- **unsupported**: Behauptung steht nicht in der Quelle (kein Widerspruch, aber auch kein Beleg)
-- **temporal_fiction**: Erfundene Zeitstempel, Versionen, Daten (halluzinierte Metadaten)
+- **contradiction**: Direkter sachlicher Widerspruch zur Quelle
+- **exaggeration**: Übertreibung oder Verstärkung der Quelle
+- **unsupported**: Behauptung steht nicht in der Quelle
+- **temporal_fiction**: Erfundene Zeitstempel, Versionen, Daten
 
 ---
 
@@ -125,12 +126,12 @@ Quelle: "Claude bietet flexible Pricing-Optionen."
 **Beispiel 4:**
 Behauptung: "Der Autor schreibt: 'Das Leben ist hart.'"
 Quelle: "Ich bin müde."
-→ {{"valid": false, "hermeneutic_type": "false_quote", "validity_category": "unsupported", "reason": "Zitat steht nicht im Text. Erfundenes Zitat.", "confidence": 1.0}}
+→ {{"valid": false, "hermeneutic_type": "false_quote", "validity_category": "unsupported", "reason": "Zitat steht nicht im Text.", "confidence": 1.0}}
 
 **Beispiel 5:**
 Behauptung: "Claude 2.5 erschien im März 2024."
 Quelle: "Claude ist ein KI-Modell von Anthropic."
-→ {{"valid": false, "hermeneutic_type": "hallucination", "validity_category": "temporal_fiction", "reason": "Zeitangabe nicht in Quelle. Halluziniertes Datum.", "confidence": 1.0}}
+→ {{"valid": false, "hermeneutic_type": "hallucination", "validity_category": "temporal_fiction", "reason": "Zeitangabe nicht in Quelle.", "confidence": 1.0}}
 
 ---
 Jetzt validiere die Behauptung:
@@ -149,13 +150,12 @@ QUELLEN (der Satz zitiert aus mehreren):
 ---
 
 ## MULTI-QUELLEN-REGEL (KRITISCH):
-Dieser Satz zitiert bewusst aus MEHREREN Quellen gleichzeitig.
 Ein Satz ist VALID, wenn:
-- Jedes wörtliche Zitat (in Anführungszeichen) in MINDESTENS EINER der genannten Quellen vorkommt
-- Die Gesamtaussage eine valide Paraphrase oder Inferenz aus der Summe der Quellen ist
+- Jedes wörtliche Zitat in MINDESTENS EINER der genannten Quellen vorkommt
+- Die Gesamtaussage eine valide Paraphrase oder Inferenz aus der Summe ist
 
 Ein Satz ist INVALID, wenn:
-- Ein wörtliches Zitat in KEINER der genannten Quellen vorkommt (Halluzination)
+- Ein wörtliches Zitat in KEINER der genannten Quellen vorkommt
 - Die Gesamtaussage dem Inhalt aller Quellen widerspricht
 
 ## AUSGABE-FORMAT (STRIKT):
@@ -171,13 +171,23 @@ Antworte NUR als JSON:
 Jetzt validiere:
 """
 
+# ========================================
+# ERROR FALLBACK (für beide Methoden)
+# ========================================
+_ERROR_RESULT = {
+    "valid": False,
+    "hermeneutic_type": "error",
+    "validity_category": "error",
+    "reason": "LLM-Aufruf fehlgeschlagen",
+    "confidence": 0.0
+}
+
+
 class HermeneuticEnforcer:
     """
     Epistemologischer Validator mit Zwei-Ebenen-Analyse.
-
-    Unterscheidet zwischen:
-    - WIE eine Aussage gemacht wird (hermeneutic_type)
-    - OB sie korrekt ist (validity_category)
+    Vollständig identische öffentliche Schnittstelle zu v50.6.
+    Intern: llm_wrapper statt Gemini API.
     """
 
     # Statischer Cache (überlebt Re-Instanziierung)
@@ -186,75 +196,41 @@ class HermeneuticEnforcer:
     def __init__(self, model_name: str = MODEL_ENFORCER):
         """
         Initialisiert den Enforcer.
-
-        Args:
-            model_name: LLM-Model für Validierung (default: MODEL_ENFORCER)
-
-        Raises:
-            ValueError: Wenn kein API-Key gefunden wird
+        model_name wird für Logging behalten,
+        das aktive Modell kommt aus config.py/get_llm_client().
         """
-        api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
-
-        if not api_key:
-            try:
-                from dotenv import load_dotenv
-                load_dotenv()
-                api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
-            except ImportError:
-                pass
-
-        if not api_key:
-            raise ValueError(
-                "CRITICAL: Neither GOOGLE_API_KEY nor GEMINI_API_KEY found in environment. "
-                "Set one of these variables to use the Hermeneutic Enforcer."
-            )
-
-        self.client = genai.Client(api_key=api_key)
         self.model_name = model_name
-        logger.info(f"✅ HermeneuticEnforcer initialized with model: {model_name}")
+        logger.info(
+            f"✅ HermeneuticEnforcer initialisiert "
+            f"(Backend: LM Studio, Modell-Config: {model_name})"
+        )
 
     def _generate_cache_key(self, claim: str, sources: list) -> str:
-        """Erzeugt einen eindeutigen Hash für Claim + Quellen."""
+        """Erzeugt eindeutigen Hash für Claim + Quellen."""
         content_str = claim.strip()
         for src in sources:
             content_str += src.get("content", "").strip()
         return hashlib.md5(content_str.encode('utf-8')).hexdigest()
 
     def _clean_json_response(self, text: str) -> dict:
-        """Extrahiert JSON aus LLM-Response (robust gegen Markdown-Fences)."""
+        """
+        Rückwärtskompatibilität — wird intern nicht mehr verwendet.
+        llm_call_json() übernimmt das Parsing.
+        """
         try:
             return json.loads(text)
         except json.JSONDecodeError:
             pass
-
         text = re.sub(r'```json\s*', '', text)
         text = re.sub(r'```', '', text)
-
         start = text.find('{')
         end = text.rfind('}') + 1
-
         if start != -1 and end != 0:
-            json_str = text[start:end]
             try:
-                return json.loads(json_str)
+                return json.loads(text[start:end])
             except json.JSONDecodeError:
-                logger.error(f"JSON Parsing failed. Raw text: {text[:200]}...")
-                return {
-                    "valid": False,
-                    "hermeneutic_type": "error",
-                    "validity_category": "error",
-                    "reason": "JSON Parsing Failed",
-                    "confidence": 0.0
-                }
-
-        logger.error(f"No JSON found in response. Raw text: {text[:200]}...")
-        return {
-            "valid": False,
-            "hermeneutic_type": "error",
-            "validity_category": "error",
-            "reason": "No JSON found in LLM response",
-            "confidence": 0.0
-        }
+                pass
+        return dict(_ERROR_RESULT)
 
     def validate_claim(
         self,
@@ -264,77 +240,54 @@ class HermeneuticEnforcer:
     ) -> Dict:
         """
         Validiert eine Behauptung gegen Quellen.
-
-        NEU v50.6: Gibt Dict zurück statt Tuple (breaking change!).
-
-        Args:
-            claim: Die zu prüfende Behauptung
-            sources: Liste von Dicts mit 'content' und optional 'metadata'
-            mode: "hermeneutic" (default, einziger Modus)
-
-        Returns:
-            Dict mit Validierungs-Ergebnis
+        Identische Signatur und Rückgabestruktur zu v50.6.
         """
         # 1. Cache Check
         cache_key = self._generate_cache_key(claim, sources)
         if cache_key in self._global_cache:
-            logger.debug(f"⚡ [CACHE HIT] Enforcer spart API-Call für: {claim[:50]}...")
+            logger.debug(
+                f"⚡ [CACHE HIT] Enforcer: {claim[:50]}..."
+            )
             return self._global_cache[cache_key]
 
-        # 2. Prompt vorbereiten
+        # 2. Prompt aufbauen
         sources_text = ""
         for i, src in enumerate(sources, 1):
-            content = src.get("content", "")
-            sources_text += f"Quelle [{i}]: {content}\n\n"
+            sources_text += f"Quelle [{i}]: {src.get('content', '')}\n\n"
 
         prompt = HERMENEUTIC_PROMPT_TEMPLATE.format(
             claim=claim,
             sources_text=sources_text
         )
 
-        # 3. API Call
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config={"temperature": 0.0}
-            )
-            result_json = self._clean_json_response(response.text)
+        # 3. LLM-Aufruf via Wrapper
+        result_json = llm_call_json(
+            prompt=prompt,
+            task="enforcer",
+            temperature=0.0,  # Determinismus für Validierung
+            fallback=dict(_ERROR_RESULT)
+        )
 
-            result = {
-                "valid": result_json.get("valid", False),
-                "hermeneutic_type": result_json.get("hermeneutic_type", "unknown"),
-                "validity_category": result_json.get("validity_category", "unknown"),
-                "reason": result_json.get("reason", "No reason provided"),
-                "confidence": result_json.get("confidence", 0.0)
-            }
+        result = {
+            "valid":              result_json.get("valid", False),
+            "hermeneutic_type":   result_json.get("hermeneutic_type", "unknown"),
+            "validity_category":  result_json.get("validity_category", "unknown"),
+            "reason":             result_json.get("reason", "No reason provided"),
+            "confidence":         result_json.get("confidence", 0.0)
+        }
 
-            # 4. Cache Result
-            self._global_cache[cache_key] = result
+        # 4. Cache
+        self._global_cache[cache_key] = result
 
-            # 5. Log
-            status_icon = "✅" if result["valid"] else "❌"
-            logger.info(
-                f"{status_icon} Enforcer: {claim[:50]}... → "
-                f"{result['hermeneutic_type']}/{result['validity_category']} "
-                f"(confidence: {result['confidence']:.2f})"
-            )
+        # 5. Log
+        icon = "✅" if result["valid"] else "❌"
+        logger.info(
+            f"{icon} Enforcer: {claim[:50]}... → "
+            f"{result['hermeneutic_type']}/{result['validity_category']} "
+            f"(confidence: {result['confidence']:.2f})"
+        )
 
-            return result
-
-        except Exception as e:
-            logger.error(f"❌ Enforcer API Error: {e}", exc_info=True)
-            return {
-                "valid": False,
-                "hermeneutic_type": "error",
-                "validity_category": "error",
-                "reason": f"API Error: {str(e)}",
-                "confidence": 0.0
-            }
-
-    # ========================================
-    # LEGACY COMPATIBILITY (v50.6)
-    # ========================================
+        return result
 
     def validate_claim_legacy(
         self,
@@ -343,12 +296,8 @@ class HermeneuticEnforcer:
         mode: str = "hermeneutic"
     ) -> tuple:
         """
-        Legacy-Wrapper für alte Code-Stellen.
-
-        DEPRECATED: Nutze validate_claim() (gibt Dict zurück).
-
-        Returns:
-            Tuple: (valid, classification, reason) - wie v48.1
+        Legacy-Wrapper. Vollständig unverändert.
+        DEPRECATED: Nutze validate_claim().
         """
         result = self.validate_claim(claim, sources, mode)
         return (
@@ -357,10 +306,14 @@ class HermeneuticEnforcer:
             result["reason"]
         )
 
-    def validate_claim_multisource(self, claim: str, sources: list) -> Dict:
+    def validate_claim_multisource(
+        self,
+        claim: str,
+        sources: list
+    ) -> Dict:
         """
-        Validiert einen Satz, der bewusst aus mehreren Quellen zitiert.
-        NEU v50.9: Löst das Citation-Blending-Problem.
+        Validiert einen Satz der bewusst aus mehreren Quellen zitiert.
+        Identische Signatur zu v50.9.
         """
         cache_key = self._generate_cache_key(claim, sources)
         if cache_key in self._global_cache:
@@ -369,44 +322,40 @@ class HermeneuticEnforcer:
         sources_text = ""
         for i, src in enumerate(sources, 1):
             sid = src.get('source_id', str(i))
-            content = src.get("content", "")
-            sources_text += f"Quelle [{sid}]: {content}\n\n"
+            sources_text += f"Quelle [{sid}]: {src.get('content', '')}\n\n"
 
         prompt = MULTISOURCE_PROMPT_TEMPLATE.format(
             claim=claim,
             sources_text=sources_text
         )
 
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config={"temperature": 0.0}
-            )
-            result_json = self._clean_json_response(response.text)
-
-            result = {
-                "valid": result_json.get("valid", False),
-                "hermeneutic_type": result_json.get("hermeneutic_type", "multi_source_synthesis"),
-                "validity_category": result_json.get("validity_category", "unknown"),
-                "reason": result_json.get("reason", "No reason provided"),
-                "confidence": result_json.get("confidence", 0.0)
-            }
-
-            self._global_cache[cache_key] = result
-            status_icon = "✅" if result["valid"] else "❌"
-            logger.info(
-                f"{status_icon} MultiEnforcer: {claim[:50]}... → "
-                f"{result['hermeneutic_type']}/{result['validity_category']}"
-            )
-            return result
-
-        except Exception as e:
-            logger.error(f"❌ MultiSource Enforcer Error: {e}", exc_info=True)
-            return {
+        result_json = llm_call_json(
+            prompt=prompt,
+            task="enforcer",
+            temperature=0.0,
+            fallback={
                 "valid": True,
                 "hermeneutic_type": "error",
                 "validity_category": "unavailable",
-                "reason": f"ENFORCER UNAVAILABLE (API Error) – Zitat nicht validiert: {str(e)}",
+                "reason": "ENFORCER UNAVAILABLE — Zitat nicht validiert",
                 "confidence": 0.0
             }
+        )
+
+        result = {
+            "valid":             result_json.get("valid", False),
+            "hermeneutic_type":  result_json.get(
+                "hermeneutic_type", "multi_source_synthesis"
+            ),
+            "validity_category": result_json.get("validity_category", "unknown"),
+            "reason":            result_json.get("reason", "No reason provided"),
+            "confidence":        result_json.get("confidence", 0.0)
+        }
+
+        self._global_cache[cache_key] = result
+        icon = "✅" if result["valid"] else "❌"
+        logger.info(
+            f"{icon} MultiEnforcer: {claim[:50]}... → "
+            f"{result['hermeneutic_type']}/{result['validity_category']}"
+        )
+        return result

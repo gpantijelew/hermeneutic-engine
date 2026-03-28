@@ -176,6 +176,18 @@ def get_llm_client():
     else:
         raise ValueError(f"Unbekanntes LLM_BACKEND: {LLM_BACKEND}")
 
+def get_system_message() -> str:
+    """
+    Gibt die Standard-Systeminstruction zurück.
+    /no_think deaktiviert Qwen3-Reasoning-Modus (Token-Effizienz).
+    Bei anderen Modellen harmlos ignoriert.
+    """
+    return os.getenv(
+        "LLM_SYSTEM_PREFIX",
+        "/no_think\nDu bist ein präziser Forschungsassistent der "
+        "Hermeneutic Reconstruction Engine."
+    )
+
 def validate_config() -> bool:
     """Prüft ob LM Studio erreichbar ist."""
     import urllib.request

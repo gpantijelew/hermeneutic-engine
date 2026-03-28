@@ -37,6 +37,7 @@ from modules.config import (
     get_llm_client,
     MODEL_TITLE_GEN
 )
+from modules.config import get_system_message
 
 logger = logging.getLogger(__name__)
 
@@ -387,7 +388,7 @@ def generate_and_update_title(
     history: List[Dict]
 ) -> Optional[str]:
     """
-    Generiert einen Chat-Titel via LM Studio (Gemma 27B).
+    Generiert einen Chat-Titel via LM Studio (Qwen 3.5 27B).
     Identische Signatur zur Gemini-Version.
     """
     if not history:
@@ -414,7 +415,10 @@ def generate_and_update_title(
         client, model = get_llm_client()
         response = client.chat.completions.create(
             model=model,
-            messages=[{"role": "user", "content": prompt}],
+            messages=[
+                   {"role": "system", "content": get_system_message()},
+                   {"role": "user", "content": prompt}
+             ]
             max_tokens=30,
             temperature=0.3
         )
