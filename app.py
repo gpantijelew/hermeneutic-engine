@@ -116,6 +116,9 @@ import logging
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+# HTTP-Request-Spam unterdrücken (HuggingFace, httpx)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
 
 # Debug-Mode aktivieren?
 # Wir prüfen erst die Umgebungsvariable (Cloud), dann die Secrets (Lokal)
@@ -746,9 +749,9 @@ Wie soll die Engine vorgehen?
         st.info("Speicher-Status")
         if st.button("Zählen"):
             try:
-                coll = db.collection('embeddings')
-                snapshot = coll.count().get()
-                count = snapshot[0][0].value
+                from modules.vector_store import _get_chroma_collection
+                col = _get_chroma_collection()
+                count = col.count()
                 st.metric("Gespeicherte Wissens-Chunks", count)
             except Exception as e:
                 st.error(f"Fehler: {e}")
@@ -1043,13 +1046,15 @@ elif page == "💬 Chat":
                 # 1. DB Bereinigung (Versuch)
                 try:
                     if st.session_state.chat_id:
-                        from modules.database import get_firestore_client # Sicherstellen, dass Import da ist
+                        from modules.database import get_firestore_client
                         db = get_firestore_client()
-                        messages_ref = db.collection('chats').document(st.session_state.chat_id).collection('messages')
-                        # Lösche das zeitlich letzte Dokument
-                        query = messages_ref.order_by('timestamp', direction="DESCENDING").limit(1)
-                        for doc in query.stream():
-                            doc.reference.delete()
+                        db.execute("""
+                            DELETE FROM messages WHERE id IN (
+                                SELECT id FROM messages WHERE chat_id = ?
+                                ORDER BY timestamp DESC LIMIT 1
+                            )
+                        """, (st.session_state.chat_id,))
+                        db.commit()
                 except Exception as e:
                     print(f"DB Error: {e}")
 
@@ -1088,11 +1093,13 @@ elif page == "💬 Chat":
                     try:
                         db = get_firestore_client()
                         if db and st.session_state.chat_id:
-                            messages_ref = db.collection('chats').document(st.session_state.chat_id).collection('messages')
-                            query = messages_ref.order_by('timestamp', direction="DESCENDING").limit(2)
-                            
-                            for doc in query.stream(): 
-                                doc.reference.delete()
+                            db.execute("""
+                                DELETE FROM messages WHERE id IN (
+                                    SELECT id FROM messages WHERE chat_id = ?
+                                    ORDER BY timestamp DESC LIMIT 2
+                                )
+                            """, (st.session_state.chat_id,))
+                            db.commit()
                             
                             st.session_state.history = st.session_state.history[:-2]
                             st.success("Letzte Runde gelöscht.")
@@ -1108,11 +1115,13 @@ elif page == "💬 Chat":
                     try:
                         db = get_firestore_client()
                         if db and st.session_state.chat_id:
-                            messages_ref = db.collection('chats').document(st.session_state.chat_id).collection('messages')
-                            query = messages_ref.order_by('timestamp', direction="DESCENDING").limit(2)
-                            
-                            for doc in query.stream(): 
-                                doc.reference.delete()
+                            db.execute("""
+                                DELETE FROM messages WHERE id IN (
+                                    SELECT id FROM messages WHERE chat_id = ?
+                                    ORDER BY timestamp DESC LIMIT 2
+                                )
+                            """, (st.session_state.chat_id,))
+                            db.commit()
                             
                             st.session_state.history = st.session_state.history[:-2]
                             st.success("Letzte Runde gelöscht.")
@@ -1135,9 +1144,12 @@ elif page == "💬 Chat":
                         if st.session_state.chat_id:
                             try:
                                 db = get_firestore_client()
-                                chat_doc = db.collection('chats').document(st.session_state.chat_id).get()
-                                if chat_doc.exists:
-                                    chat_title = chat_doc.to_dict().get('title', 'Chat-Protokoll')
+                                row = db.execute(
+                                    "SELECT title FROM chats WHERE id = ?",
+                                    (st.session_state.chat_id,)
+                                ).fetchone()
+                                if row:
+                                    chat_title = row[0]                            
                             except Exception as e:
                                 print(f"Export-Fehler (Titel): {e}")
 

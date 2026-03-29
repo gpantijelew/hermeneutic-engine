@@ -434,12 +434,12 @@ Behalte Namen unverändert! """
         # ---------------------------------------------------
 
         # --- v50.5: ESSENCE PARITY (Intelligente Essenz-Extraktion!) ---
+        doc_metadata = []  # Muss vor allen bedingten Blöcken stehen
         if chat_id and isinstance(chat_id, list) and len(chat_id) <= 10:
             logger.info(f"⚖️ ESSENCE PARITY aktiviert: {len(chat_id)} Dokumente")
 
             # Gruppiere Chunks nach Chat-ID
             docs_map = defaultdict(list)
-            doc_metadata = [] # die Zeile fehlte
             for res in top_results:
                 cid = res.get('chat_id')
                 docs_map[cid].append(res)
@@ -485,6 +485,7 @@ Behalte Namen unverändert! """
             )
 
             # Phase 1: Sammle alle Chunks mit Scores + Rescue Mission
+            doc_metadata = []
             all_chunks_with_meta = []
 
             RESCUE_THRESHOLD = 4  # Wenn eine Quelle weniger als 4 Chunks nach Reranking hat
@@ -640,7 +641,7 @@ Behalte Namen unverändert! """
 
         # NEU v50.6: CHRONOLOGISCHE SORTIERUNG
         # Sortiere Chunks nach Datum (wichtig für zeitliche Analysen!)
-        top_results_sorted = sorted(top_results, key=self.extract_date_from_metadata)
+        top_results_sorted = sorted(top_results, key=self.extract_date_from_metadata)[:12]
 
         logger.info(f"📅 Chunks chronologisch sortiert: {len(top_results_sorted)} Stücke")
 
