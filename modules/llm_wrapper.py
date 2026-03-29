@@ -101,6 +101,8 @@ def llm_call(
         if history:
             for turn in history:
                 role = turn.get("role", "user")
+                if role == "model":     # Gemini-Relikt - OpenAI normalisieren
+                     role = "assistant"
                 content = turn.get("content", "") or \
                           _extract_text_from_parts(turn)
                 if content:
@@ -217,6 +219,8 @@ def llm_call_streaming(
         if history:
             for turn in history:
                 role = turn.get("role", "user")
+                if role == "model":            # Gemini-Relikt - OpenAI normalisieren
+                     role = "assistant"
                 content = turn.get("content", "") or \
                           _extract_text_from_parts(turn)
                 if content:
@@ -239,6 +243,7 @@ def llm_call_streaming(
 
     except Exception as e:
         logger.error(f"❌ Streaming-Fehler [{task}]: {e}")
+        print(f"STREAMING EXCEPTION: {type(e).__name__}: {e}")  # ← temporär
         yield ""
 
 

@@ -1,19 +1,20 @@
+# =========================
 # Environment & Secrets
+# =========================
 .env
 *.env
 .streamlit/secrets.toml
-.secrets/  # ← NEU: Service Account Keys
+.secrets/
 
-# Service Account Keys (Google Cloud)
+# Service Account Keys / Credentials (gezielt)
 *-????????.json
 *-????????????.json
-*.json
-!requirements.json
-comparative-studies-ai-models-*.json  # ← Explizit
-*.key
-*.pem
+credentials*.json
+service-account*.json
 
-# Python
+# =========================
+# Python / Build / Venv
+# =========================
 __pycache__/
 *.pyc
 *.pyo
@@ -27,33 +28,54 @@ build/
 dist/
 *.egg-info/
 
-# Test/Debug Artifacts
+# =========================
+# Test / Debug Artifacts (inkl. tests/)
+# =========================
+tests/
 debug_*.py
 check_*.py
 *_old.py
-*.html
-!FIBEL*.html  # Falls du die Fibel als HTML versionierst
-grok_chat*.json
-*.txt
-!requirements.txt
-!struktur.txt
-!README.md
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
+debug_*.txt
+check_*.txt
+*_old.txt
 
 # Logs
 *.log
 logs/*.log
 
-# Lokale HRE-Daten — niemals ins Repo!
+# =========================
+# IDE & OS
+# =========================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# =========================
+# Lokale HRE-Daten (niemals ins Repo)
+# =========================
 hre_data/
 export_chunks.json
 export_chats.json
 export_settings.json
 *.db
+export_*.json
+
+# GCP-Relikt / historisch (Projekt comparative-studies-ai-models, suspendiert 11.03.2026)
+comparative-studies-ai-models-*.json
+
+# Totes Holz / alte Infrastruktur
+scripts/
+
+# =========================
+# TXT / HTML / MD: gezielt ignorieren
+# =========================
+struktur.txt
+debug_*.txt
+check_*.txt
+*_old.txt
+*.html
+
+# Alle Markdown außer Fibel-Dokumente
+*.md
+!FIBEL*.md

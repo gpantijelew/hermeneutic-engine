@@ -17,71 +17,53 @@ import pandas as pd
 import json
 from io import BytesIO
 from modules.database import get_firestore_client
+from modules.vector_store import FirestoreVectorStore
 
 
-@st.cache_data(ttl=3600)  # Cache für 1 Stunde
+@st.cache_data(ttl=3600)
 def get_unique_speakers():
     """
-    Lädt alle eindeutigen Sprecher aus der Datenbank.
-    
-    WICHTIG: Gecacht, um nicht bei jedem UI-Reload zu scannen.
-    Cache läuft nach 1h ab oder wird manuell invalidiert (🔄 Button).
-    
-    Returns:
-        Sortierte Liste von Speaker-Namen
+    Lädt alle eindeutigen Sprecher aus ChromaDB.
+    v50.9-local: col_ref.stream() ersetzt durch vs.get_all_chunks().
     """
     db = get_firestore_client()
     if not db:
         return []
-    
-    col_ref = db.collection('embeddings')
-    speakers = set()
-    
-    # Scan durch alle Dokumente (bei 8k Chunks: ~5 Sekunden)
-    for doc in col_ref.stream():
-        meta = doc.to_dict().get('metadata', {})
-        speaker = meta.get('model_name', 'Unknown')
-        speakers.add(speaker)
-    
+    vs = FirestoreVectorStore(db)
+    chunks = vs.get_all_chunks()
+    speakers = {c.get('metadata', {}).get('model_name', 'Unknown') for c in chunks}
     return sorted(speakers)
 
 
-@st.cache_data(ttl=3600)  # Cache für 1 Stunde
+@st.cache_data(ttl=3600)
 def get_unique_content_types():
     """
-    Lädt alle eindeutigen Content-Types aus der Datenbank.
-    
-    Returns:
-        Sortierte Liste von Content-Types
+    Lädt alle eindeutigen Content-Types aus ChromaDB.
+    v50.9-local: col_ref.stream() ersetzt durch vs.get_all_chunks().
     """
     db = get_firestore_client()
     if not db:
         return []
-    
-    col_ref = db.collection('embeddings')
-    types = set()
-    
-    for doc in col_ref.stream():
-        meta = doc.to_dict().get('metadata', {})
-        content_type = meta.get('content_type', 'Analyse')
-        types.add(content_type)
-    
+    vs = FirestoreVectorStore(db)
+    chunks = vs.get_all_chunks()
+    types = {c.get('metadata', {}).get('content_type', 'Analyse') for c in chunks}
     return sorted(types)
 
 
 def render_bulk_export_ui():
     """
     UI für den Massen-Export von Vektor-Chunks (Datenbank-Dump).
+    v50.9-local: Firestore Collection ersetzt durch FirestoreVectorStore.
     """
     st.title("💾 Datenbank-Export")
     st.markdown("Hier kannst du deine gesamte Wissensbasis (oder Teile davon) für Backups oder externe Analysen exportieren.")
-    
+
     db = get_firestore_client()
     if not db:
         st.error("Keine Datenbankverbindung.")
         return
-    
-    col_ref = db.collection('embeddings')
+
+    vs = FirestoreVectorStore(db)
     
     # --- 1. FILTER ---
     with st.expander("🔍 Export-Filter konfigurieren", expanded=True):
@@ -128,8 +110,8 @@ def render_bulk_export_ui():
     
     # --- 3. ACTION ---
     if st.button("🚀 Daten exportieren", type="primary"):
-        with st.spinner("Lade Daten aus Firestore... (Das kann kurz dauern)"):
-            data = fetch_data(col_ref, filter_speaker, filter_type, limit)
+        with st.spinner("Lade Daten aus ChromaDB..."):
+            data = fetch_data(vs, filter_speaker, filter_type, limit)
             
             if not data:
                 st.warning("Keine Daten mit diesen Filtern gefunden.")
@@ -185,61 +167,39 @@ def render_bulk_export_ui():
                 )
 
 
-def fetch_data(col_ref, speakers, types, limit):
+def fetch_data(vs, speakers, types, limit):
     """
-    Lädt Daten für den Export (Deep Scan mit Filterung).
-    
-    PERFORMANCE:
-    - Bei 8k Chunks: ~5-10 Sekunden
-    - Bei 50k Chunks: ~30-60 Sekunden
-    - TODO v51: Progress-Bar für bessere UX
-    
+    Lädt Chunks für den Export aus ChromaDB.
+    v50.9-local: col_ref.stream() ersetzt durch vs.get_all_chunks().
+
     Args:
-        col_ref: Firestore Collection Reference
+        vs:       FirestoreVectorStore-Instanz
         speakers: Liste von Speaker-Namen (leer = alle)
-        types: Liste von Content-Types (leer = alle)
-        limit: Max. Anzahl (0 = alle)
-    
+        types:    Liste von Content-Types (leer = alle)
+        limit:    Max. Anzahl (0 = alle)
+
     Returns:
         Liste von Dicts (flach, für DataFrame-Konversion)
     """
-    # TODO v51: Wenn keine Filter und limit > 0, nutze Firestore .limit()
-    # if not speakers and not types and limit > 0:
-    #     docs = col_ref.limit(limit).stream()
-    # else:
-    #     docs = col_ref.stream()
-    
-    docs = col_ref.stream()
+    all_chunks = vs.get_all_chunks(limit=limit)
     results = []
-    count = 0
-    
-    for doc in docs:
-        d = doc.to_dict()
+
+    for d in all_chunks:
         meta = d.get('metadata', {})
-        
-        # Filterlogik (Listen-basiert für Multiselect)
+
         if speakers and meta.get('model_name') not in speakers:
             continue
-        
         if types and meta.get('content_type') not in types:
             continue
-        
-        # Daten flachklopfen für DataFrame
-        row = {
-            'ID': doc.id,
-            'Chat ID': d.get('chat_id'),
-            'Sprecher': meta.get('model_name', 'Unknown'),
-            'Typ': meta.get('content_type', 'Analyse'),
-            'Themen': meta.get('subjects', ''),
-            'Inhalt': d.get('content', ''),
-            'Erstellt am': d.get('created_at')
-        }
-        
-        results.append(row)
-        count += 1
-        
-        # Limit prüfen (0 = Alle)
-        if limit > 0 and count >= limit:
-            break
-    
+
+        results.append({
+            'ID':          d.get('vector_doc_id', ''),
+            'Chat ID':     d.get('chat_id', ''),
+            'Sprecher':    meta.get('model_name', 'Unknown'),
+            'Typ':         meta.get('content_type', 'Analyse'),
+            'Themen':      meta.get('subjects', ''),
+            'Inhalt':      d.get('content', ''),
+            'Erstellt am': meta.get('date', '')
+        })
+
     return results

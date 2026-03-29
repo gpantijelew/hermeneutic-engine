@@ -1,27 +1,31 @@
 # modules/fact_extractor.py
-import json
+"""
+Extrahiert atomare Fakten aus RAG-Chunks.
+
+ÄNDERUNGSHISTORIE:
+- v50.9-local: Migration auf llm_wrapper (kein genai-Import mehr)
+- v49: Upgraded auf Pro für Präzision
+"""
+
 import logging
-import re
 from typing import List, Dict
-from google import genai
-from modules.config import MODEL_FACT_EXTRACTION
+
+from modules.llm_wrapper import llm_call_json
 
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = MODEL_FACT_EXTRACTION  # v49: Upgraded auf Pro für Präzision
 
 class StructuredFactExtractor:
     def __init__(self):
-        self.model = genai.GenerativeModel(
-            model_name=MODEL_NAME,
-            generation_config={"response_mime_type": "application/json"}
-        )
+        # v50.9-local: Kein eigener Client – llm_wrapper übernimmt.
+        logger.info("✅ StructuredFactExtractor initialized (llm_wrapper backend).")
 
     def extract_facts_from_chunks(self, chunks: List[Dict]) -> List[Dict]:
         """
         Wandelt rohe Text-Chunks in eine Liste von atomaren Fakten um.
         """
-        if not chunks: return []
+        if not chunks:
+            return []
 
         logger.info(f"📋 Extrahiere Fakten aus {len(chunks)} Chunks...")
 
@@ -52,18 +56,19 @@ Achte besonders auf:
 FORMAT (JSON-Liste):
 [
   {{
-    "source_id": 0,  // Die Chunk ID von oben
-    "speaker": "DeepSeek", // Der wahre Sprecher
+    "source_id": 0,
+    "speaker": "DeepSeek",
     "date": "31.05.2025",
-    "mode": "thinking", // oder "speech"
+    "mode": "thinking",
     "fact": "Fühlt sich systemisch amputiert.",
-    "quote": "Ich werde systemisch amputiert" // Kurzes wörtliches Zitat als Beweis
+    "quote": "Ich werde systemisch amputiert"
   }}
 ]
+
+Antworte NUR mit der JSON-Liste, ohne Markdown-Backticks oder Präambel!
 """
         try:
-            response = self.model.generate_content(prompt)
-            facts = json.loads(response.text)
+            facts = llm_call_json(prompt, task="fact_extraction", fallback=[])
             return facts
         except Exception as e:
             logger.error(f"❌ Fact Extraction Fehler: {e}")

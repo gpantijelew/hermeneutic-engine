@@ -452,6 +452,88 @@ class FirestoreVectorStore:
         except Exception as e:
             logger.warning(f"⚠️ Fehler beim Löschen der Embeddings: {e}")
 
+    def get_all_chunks(self, limit: int = 0) -> list:
+        """
+        Gibt alle gespeicherten Chunks zurück.
+        Äquivalent zu Firestore's collection.stream() — für Bulk Export/Labeling.
+
+        Args:
+            limit: Max. Anzahl Chunks (0 = alle)
+
+        Returns:
+            Liste von Dicts mit: vector_doc_id, content, metadata, chat_id
+        """
+        collection = _get_chroma_collection()
+        total = collection.count()
+        if total == 0:
+            return []
+
+        results = []
+        FETCH_BATCH = 5000
+        offset = 0
+        fetch_limit = min(limit, total) if limit > 0 else total
+
+        while offset < fetch_limit:
+            batch_size = min(FETCH_BATCH, fetch_limit - offset)
+            result = collection.get(
+                limit=batch_size,
+                offset=offset,
+                include=["documents", "metadatas"]
+            )
+            for i, doc_id in enumerate(result['ids']):
+                content = result['documents'][i] if result['documents'] else ''
+                meta = result['metadatas'][i] if result['metadatas'] else {}
+                results.append({
+                    'vector_doc_id': doc_id,
+                    'content':       content,
+                    'metadata':      meta,
+                    'chat_id':       meta.get('chat_id', '')
+                })
+            offset += batch_size
+
+        logger.info(f"📦 get_all_chunks: {len(results)} Chunks geladen.")
+        return results
+
+    def update_chunk_metadata(self, chunk_id: str, metadata_updates: dict) -> bool:
+        """
+        Aktualisiert Metadaten eines einzelnen Chunks per ID.
+        ChromaDB ersetzt immer die gesamte Metadaten-Dict (kein Partial Update),
+        daher: fetch → merge → write.
+
+        Args:
+            chunk_id:         vector_doc_id des Chunks
+            metadata_updates: Dict mit zu ändernden Feldern.
+                              Firestore-Dot-Notation ('metadata.model_name')
+                              wird automatisch auf Flat-Keys reduziert.
+
+        Returns:
+            True bei Erfolg, False bei Fehler
+        """
+        try:
+            collection = _get_chroma_collection()
+
+            # 1. Existierende Metadaten holen (ChromaDB braucht das komplette Dict)
+            existing = collection.get(ids=[chunk_id], include=["metadatas"])
+            if not existing['ids']:
+                logger.warning(f"⚠️ update_chunk_metadata: Chunk {chunk_id} nicht gefunden.")
+                return False
+
+            current_meta = existing['metadatas'][0] if existing['metadatas'] else {}
+
+            # 2. Merge — Firestore-Dot-Notation ('metadata.model_name') → Flat-Key
+            merged = dict(current_meta)
+            for key, value in metadata_updates.items():
+                flat_key = key.replace('metadata.', '')
+                merged[flat_key] = value
+
+            # 3. Zurückschreiben
+            collection.update(ids=[chunk_id], metadatas=[merged])
+            return True
+
+        except Exception as e:
+            logger.error(f"❌ update_chunk_metadata [{chunk_id}]: {e}")
+            return False
+
     # ==========================================================================
     # BM25 INDEX MANAGEMENT
     # ==========================================================================

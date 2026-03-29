@@ -126,13 +126,13 @@ def get_db_connection() -> Optional[sqlite3.Connection]:
             return None
     return _db_connection
 
-# Rückwärtskompatibiler Alias — falls anderer Code get_firestore_client() importiert
+# Rückwärtskompatible Aliases — beide Aufrufort werden bedient
 def get_firestore_client():
-    """
-    Alias für get_db_connection().
-    Rückwärtskompatibilität: Module die get_firestore_client() importieren
-    erhalten weiterhin eine funktionierende Verbindung.
-    """
+    """Alias für get_db_connection() — Rückwärtskompatibilität."""
+    return get_db_connection()
+
+def get_db():
+    """Alias für get_db_connection() — neuer Kurzname für migrierte Module."""
     return get_db_connection()
 
 # ==============================================================================
@@ -416,9 +416,9 @@ def generate_and_update_title(
         response = client.chat.completions.create(
             model=model,
             messages=[
-                   {"role": "system", "content": get_system_message()},
-                   {"role": "user", "content": prompt}
-             ]
+                {"role": "system", "content": get_system_message()},
+                {"role": "user", "content": prompt}
+            ],
             max_tokens=30,
             temperature=0.3
         )

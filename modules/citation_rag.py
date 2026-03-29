@@ -11,18 +11,8 @@ from typing import List, Dict, Any, Tuple, Optional
 from types import SimpleNamespace 
 from datetime import datetime
 
-# --- NEUES SDK ---
-try: 
-    from google import genai 
-    from google.genai import types 
-except ImportError: 
-    raise ImportError("Bitte installiere das neue SDK: pip install google-genai")
-
-from modules.config import ( 
-    MODEL_SYNTHESIS, 
-    MODEL_QUERY_EXPANSION, 
-    MODEL_ENFORCER 
-)
+from modules.config import MODEL_SYNTHESIS
+from modules.llm_wrapper import llm_call
 
 from modules.vector_store import FirestoreVectorStore 
 from modules.evidence_synthesis import EvidenceFirstSynthesizer 
@@ -35,9 +25,10 @@ logger = logging.getLogger(__name__)
 
 class CitationRAG: 
     def __init__(self, vector_store: FirestoreVectorStore = None, model_name: str = MODEL_SYNTHESIS): 
-        if vector_store is None: 
-            from google.cloud import firestore 
-            db = firestore.Client() 
+        if vector_store is None:
+            # v50.9-local: SQLite Drop-in via database-Modul
+            from modules.database import get_firestore_client
+            db = get_firestore_client()
             vector_store = FirestoreVectorStore(db)
 
         self.vector_store = vector_store
@@ -46,7 +37,7 @@ class CitationRAG:
         self.synthesizer = EvidenceFirstSynthesizer(model_name)
 
         # UI-Zugriff für Imbalance-Daten
-        self.last_imbalance_info = None 
+        self.last_imbalance_info = None
 
         self.current_context = {
             "intent": "FACTUAL",
@@ -56,22 +47,12 @@ class CitationRAG:
         # --- FIX: Cache initialisieren ---
         self._original_results_cache = []
 
-        api_key = os.environ.get("GEMINI_API_KEY")
-        if api_key:
-            self.client = genai.Client(api_key=api_key)
-        else:
-            self.client = None
-
     def expand_query_multilingual(self, query: str) -> str:
-        """v50.1: Query Translation für multilingualen Retrieval."""
+        """v50.1: Query Translation für multilingualen Retrieval.
+        v50.9-local: genai.Client ersetzt durch llm_call.
+        """
         try:
-            if not self.client:
-                logger.warning("⚠️ Client nicht verfügbar, überspringe Query-Expansion")
-                return query
-
-            prompt = f"""
-
-Du bist ein Such-Optimierer für multilingualen Retrieval. USER QUERY (Original): "{query}" AUFGABE: Übersetze diese Query in folgende Sprachen:
+            prompt = f"""Du bist ein Such-Optimierer für multilingualen Retrieval. USER QUERY (Original): "{query}" AUFGABE: Übersetze diese Query in folgende Sprachen:
 
 Englisch
 Russisch (Kyrillisch)
@@ -82,13 +63,13 @@ Trenne mit Leerzeichen, nicht mit Zeilenumbrüchen!
 
 Behalte Namen unverändert! """
 
-            # FIX: Neues SDK nutzt 'contents'
-            response = self.client.models.generate_content(
-                model=MODEL_QUERY_EXPANSION,
-                contents=prompt
-            )
+            multilingual_query = llm_call(prompt, task="query_expansion")
 
-            multilingual_query = response.text.strip()
+            if not multilingual_query:
+                logger.warning("⚠️ Query-Expansion leer. Fallback auf Original.")
+                return query
+
+            multilingual_query = multilingual_query.strip()
             multilingual_query = re.sub(r'\n+', ' ', multilingual_query)
             logger.info(f"🌐 Query Translation: {query[:50]}... → {len(multilingual_query.split())} words")
             return multilingual_query
@@ -297,16 +278,21 @@ Behalte Namen unverändert! """
         return text
 
     def _get_chat_title(self, chat_id: str) -> str:
-        """v50.2: Hole echten Chat-Titel (Fallback-sicher)."""
+        """v50.2: Hole echten Chat-Titel (Fallback-sicher).
+        v50.9-local: SQLite-Direktabfrage statt Firestore-Collection-API.
+        """
         try:
-            from google.cloud import firestore
-            db = firestore.Client()
-            chat_doc = db.collection('chats').document(chat_id).get()
-            if chat_doc.exists:
-                return chat_doc.to_dict().get('title', f'Doc {chat_id[-8:]}')
-            else:
+            from modules.database import get_db_connection
+            db = get_db_connection()
+            if db is None:
                 return f'Doc {chat_id[-8:]}'
-        except Exception as e:
+            row = db.execute(
+                "SELECT title FROM chats WHERE id = ?", (chat_id,)
+            ).fetchone()
+            if row:
+                return row['title'] or f'Doc {chat_id[-8:]}'
+            return f'Doc {chat_id[-8:]}'
+        except Exception:
             return f'Doc {chat_id[-8:]}'
 
     def extract_date_from_metadata(self, res: Dict) -> datetime:
@@ -892,24 +878,26 @@ ANTWORT: """
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                if not self.client:
-                    return "❌ API-Client nicht verfügbar.", top_results_sorted, intent
+                # v50.9-local: llm_call statt genai.Client
+                # Temperatursteuerung bleibt erhalten (0.4 forensisch, 0.7 sonst)
+                synthesis_temp = 0.4 if semantic_intent == "ANALYTICAL_FORENSIC" else 0.7
 
-                # FIX: Config korrekt übergeben (types.GenerateContentConfig)
-                response = self.client.models.generate_content(
-                    model=MODEL_SYNTHESIS,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=dynamic_sys_instruct,
-                        temperature=0.4 if semantic_intent == "ANALYTICAL_FORENSIC" else 0.7
-                    )
+                result = llm_call(
+                    prompt,
+                    task="synthesis",
+                    system_instruction=dynamic_sys_instruct,
+                    temperature=synthesis_temp,
+                    max_tokens=4096,
                 )
 
-                if not response.text:
-                    logger.error(f"❌ Modell verweigert Antwort. Feedback: {response.prompt_feedback}")
-                    return "⚠️ Das Modell konnte keine Antwort generieren (Sicherheitsfilter).", top_results_sorted, intent
+                if not result:
+                    logger.error(f"❌ LLM hat leere Antwort zurückgegeben (Versuch {attempt+1}).")
+                    if attempt < max_retries - 1:
+                        time.sleep((attempt + 1) * 2)
+                        continue
+                    return "⚠️ Das Modell konnte keine Antwort generieren.", top_results_sorted, intent
 
-                final_text = self.clean_citation_format(response.text)
+                final_text = self.clean_citation_format(result)
                 logger.info("✅ Antwort empfangen!")
                 return final_text, top_results_sorted, intent
 
@@ -918,9 +906,9 @@ ANTWORT: """
                 if attempt < max_retries - 1:
                     time.sleep((attempt + 1) * 2)
                     continue
-                return f"❌ API-Limit oder Fehler: {e}", top_results_sorted, intent
+                return f"❌ Fehler: {e}", top_results_sorted, intent
 
-        return "❌ API nicht verfügbar.", top_results_sorted, intent
+        return "❌ LLM nicht verfügbar.", top_results_sorted, intent
 
     def split_thought_and_speech(self, text: str) -> Tuple[str, str]:
         """Trennt Thinking-Blocks."""

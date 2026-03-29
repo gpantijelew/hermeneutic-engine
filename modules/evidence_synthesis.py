@@ -1,10 +1,8 @@
 # modules/evidence_synthesis.py
 import json
 import logging
-import os
-from google import genai
-from google.genai import types
 from modules.config import MODEL_FACT_EXTRACTION
+from modules.llm_wrapper import llm_call, llm_call_json
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -92,9 +90,7 @@ class EvidenceFirstSynthesizer:
         """
 
         try:
-            model = genai.GenerativeModel(self.model_name, generation_config={"response_mime_type": "application/json"})
-            res = model.generate_content(prompt)
-            evidence = json.loads(res.text)
+            evidence = llm_call_json(prompt, task="fact_extraction", fallback={"primary_quotes": [], "secondary_mentions": []})
             # =========================================================
             # DIAGNOSTIK TEST 2: EXTRACTION
             # =========================================================
@@ -154,9 +150,7 @@ class EvidenceFirstSynthesizer:
         """
 
         try:
-            model = genai.GenerativeModel(self.model_name, generation_config={"response_mime_type": "application/json"})
-            res = model.generate_content(prompt)
-            validated = json.loads(res.text)
+            validated = llm_call_json(prompt, task="fact_extraction", fallback={"validated_primary": evidence.get('primary_quotes', []), "contradictions": []})
 
             # =========================================================
             # DIAGNOSTIK TEST 3: VALIDATION
@@ -203,9 +197,7 @@ class EvidenceFirstSynthesizer:
         """
 
         try:
-            model = genai.GenerativeModel(self.model_name)
-            res = model.generate_content(prompt)
-            text = res.text
+            text = llm_call(prompt, task="synthesis")
 
             # =========================================================
             # DIAGNOSTIK TEST 4: SYNTHESIS

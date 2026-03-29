@@ -11,7 +11,7 @@ enableCORS = false
 enableXsrfProtection = false
 
 # WebSocket-Timeout (erhöht für stabilere Verbindung)
-websocketPingTimeout = 120
+# websocketPingTimeout = 120
 
 # Run-on-Save deaktiviert (verhindert Auto-Reload bei Dateiänderungen)
 runOnSave = false

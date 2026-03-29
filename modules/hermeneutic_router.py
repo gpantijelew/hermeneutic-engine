@@ -28,19 +28,17 @@ Beispiel:
   → Classifier: EXEGESIS (Konzept-Erklärung, keine Diskursivität)
 
 ÄNDERUNGSHISTORIE:
+- v50.9-local: Migration auf llm_wrapper (kein genai-Import mehr)
 - v50.7: Migration auf neues google.genai SDK
 - v50.6: Klarere Taxonomie-Dokumentation, orthogonale Beziehung zu QueryType
 - v50: Initiale Version (Adaptive RAG)
 """
 
 import logging
-import json
-import os
-from google import genai
 from enum import Enum
 from typing import Dict, Any
 
-from modules.config import MODEL_ROUTER
+from modules.llm_wrapper import llm_call_json
 
 logger = logging.getLogger(__name__)
 
@@ -80,28 +78,10 @@ class HermeneuticRouter:
     
     def __init__(self):
         """
-        Initialisiert den Router mit neuem google.genai SDK.
-        
-        Raises:
-            Loggt Fehler bei fehlender API-Key (aber wirft keine Exception,
-            da Router-Failure nicht fatal sein soll → Fallback auf Defaults)
+        Initialisiert den Router.
+        v50.9-local: Kein eigener Client mehr – llm_wrapper übernimmt.
         """
-        # Selbstständige Authentifizierung mit neuem SDK
-        api_key = os.environ.get("GEMINI_API_KEY")
-        
-        if not api_key:
-            logger.error(
-                "❌ HermeneuticRouter: Kein GEMINI_API_KEY in Environment! "
-                "Router wird auf Default-Parameter zurückfallen."
-            )
-            self.client = None
-        else:
-            try:
-                self.client = genai.Client(api_key=api_key)
-                logger.info("✅ HermeneuticRouter initialized successfully.")
-            except Exception as e:
-                logger.error(f"❌ HermeneuticRouter: Konnte Client nicht erstellen: {e}")
-                self.client = None
+        logger.info("✅ HermeneuticRouter initialized (llm_wrapper backend).")
     
     def route_query(self, query: str) -> Dict[str, Any]:
         """
@@ -118,20 +98,8 @@ class HermeneuticRouter:
             - reasoning (str): Begründung der Entscheidung
         
         Bei Fehler: Fallback auf sichere Defaults
-        
-        Beispiel:
-            >>> router = HermeneuticRouter()
-            >>> result = router.route_query("Was ist Heideggers Dasein-Begriff?")
-            >>> result
-            {
-                'intent': 'FACTUAL',
-                'limit': 15,
-                'threshold': 0.75,
-                'reasoning': 'Definition gesucht, braucht Präzision'
-            }
         """
-        prompt = f"""
-Du bist der Router für eine hermeneutische Suchmaschine.
+        prompt = f"""Du bist der Router für eine hermeneutische Suchmaschine.
 
 USER QUERY: "{query}"
 
@@ -171,31 +139,16 @@ WICHTIG:
 - Wähle EINE Kategorie (die dominante)
 """
         
+        fallback = {
+            "intent": "FACTUAL",
+            "retrieval_limit": 20,
+            "rerank_threshold": 0.65,
+            "reasoning": "Router Error - Fallback zu sicheren Defaults"
+        }
+
         try:
-            # Prüfe ob Client verfügbar
-            if not self.client:
-                raise Exception("Client nicht initialisiert")
-            
-            # Neues SDK: generate_content
-            response = self.client.models.generate_content(
-                model=MODEL_ROUTER,
-                contents=prompt
-            )
-            
-            # Extrahiere Text und bereinige
-            result_text = response.text.strip()
-            
-            # Entferne mögliche Markdown-Backticks
-            if result_text.startswith("```json"):
-                result_text = result_text[7:]
-            if result_text.startswith("```"):
-                result_text = result_text[3:]
-            if result_text.endswith("```"):
-                result_text = result_text[:-3]
-            
-            result_text = result_text.strip()
-            result = json.loads(result_text)
-            
+            result = llm_call_json(prompt, task="router", fallback=fallback)
+
             # FIX v50.1: Handle Listen gracefully
             if isinstance(result, list):
                 if len(result) > 0:
@@ -232,8 +185,6 @@ WICHTIG:
         
         except Exception as e:
             logger.error(f"❌ Router failed: {e}. Falling back to FACTUAL defaults.")
-            
-            # Fallback: Konservative, sichere Parameter
             return {
                 "intent": "FACTUAL",
                 "limit": 20,

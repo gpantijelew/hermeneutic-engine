@@ -53,12 +53,13 @@ CHROMA_PATH = DATA_DIR / "chroma"
 LLM_BACKEND = os.getenv("LLM_BACKEND", "lmstudio")
 
 # LM Studio Konfiguration
-LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:8888/v1")
+LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://127.0.0.1:8888/v1")
+print(f"DEBUG LM_STUDIO_BASE_URL = {LM_STUDIO_BASE_URL}")  # ← temporär
 LM_STUDIO_API_KEY  = "lm-studio"  # Dummy — LM Studio prüft das nicht
 
 # Modell-Identifier (exakt wie LM Studio ihn meldet)
 # Nach Download von Gemma 3 27B Q3_K_M hier anpassen:
-LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "gemma-3-12b-it")
+LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "qwen3.5-27b-instruct")
 
 # ==============================================================================
 # SYSTEM-HYGIENE & LOGGING

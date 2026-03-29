@@ -1,12 +1,11 @@
 # modules/bulk_labeling.py
 import streamlit as st
-from google import genai
+from modules.llm_wrapper import llm_call_json
 from modules.config import MODEL_BULK_LABELING
 import json
-import os
 import re
-from google.cloud import firestore
 from modules.database import get_firestore_client
+from modules.vector_store import FirestoreVectorStore
 
 def render_bulk_labeling_ui():
     st.title("🏷️ Enhanced Bulk Labeling (Full Control)")
@@ -16,7 +15,7 @@ def render_bulk_labeling_ui():
         st.error("Keine Datenbankverbindung.")
         return
 
-    col_ref = db.collection('embeddings')
+    vs = FirestoreVectorStore(db)
 
     # --- 1. SETTINGS & FILTER ---
     with st.expander("⚙️ Einstellungen & Filter", expanded=True):
@@ -32,7 +31,7 @@ def render_bulk_labeling_ui():
         filter_text = f3.text_input("Text enthält:")
 
         if st.button("🔎 Chunks laden"):
-            st.session_state.bulk_chunks = load_chunks_deep(col_ref, filter_speaker, filter_type, filter_text)
+            st.session_state.bulk_chunks = load_chunks_deep(vs, filter_speaker, filter_type, filter_text)
             # Reset KI-Vorschläge bei neuem Laden
             if 'ai_suggestions' in st.session_state: del st.session_state.ai_suggestions
 
@@ -150,11 +149,11 @@ def render_bulk_labeling_ui():
             st.markdown("### 💾 Speichern")
             st.info(f"{len(updates_to_apply)} Änderungen bereit.")
             if st.button("Änderungen jetzt in Datenbank schreiben", type="primary"):
-                apply_batch_updates(db, updates_to_apply)
+                apply_batch_updates(vs, updates_to_apply)
                 st.success("Gespeichert! Liste wird neu geladen...")
                 # Cleanup
                 if 'ai_suggestions' in st.session_state: del st.session_state.ai_suggestions
-                st.session_state.bulk_chunks = load_chunks_deep(col_ref, filter_speaker, filter_type, filter_text)
+                st.session_state.bulk_chunks = load_chunks_deep(vs, filter_speaker, filter_type, filter_text)
                 st.rerun()
 
     elif 'bulk_chunks' in st.session_state:
@@ -163,69 +162,47 @@ def render_bulk_labeling_ui():
 # --- LOGIK ---
 
 def generate_ai_suggestions(chunks):
-    """Nutzt Gemini Flash Lite, um Metadaten zu raten."""
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        st.error("Kein API Key gefunden.")
-        return {}
-
-    # --- NEUES SDK: Client initialisieren ---
-    client = genai.Client(api_key=api_key)
-
-    # Batching (max 20 für Demo/Speed)
-    batch_chunks = chunks[:20] 
-
-    prompt_intro = """
-    Analysiere diese Text-Fragmente aus einem Chat-Verlauf.
-
-    AUFGABE:
-    Bestimme für jedes Fragment:
-    1. SPEAKER: Wer spricht? (Kimi, DeepSeek, User, ChatGPT). Wenn unklar -> 'Dialog'.
-    2. TYPE: Was ist das? (Analyse, Selbstreflexion, Frage, Dialog).
-
-    FORMAT:
-    Antworte als JSON-LISTE von Objekten:
-    [
-        {"id": "ID_DES_CHUNKS", "speaker": "...", "type": "..."},
-        ...
-    ]
-
-    Fragmente:
+    """Nutzt lokalen LLM via llm_wrapper, um Metadaten zu raten.
+    v50.9-local: genai.Client ersetzt durch llm_call_json.
     """
+    # Batching (max 20 für Demo/Speed)
+    batch_chunks = chunks[:20]
 
-    prompt_data = ""
+    prompt = """Analysiere diese Text-Fragmente aus einem Chat-Verlauf.
+
+AUFGABE:
+Bestimme für jedes Fragment:
+1. SPEAKER: Wer spricht? (Kimi, DeepSeek, User, ChatGPT). Wenn unklar -> 'Dialog'.
+2. TYPE: Was ist das? (Analyse, Selbstreflexion, Frage, Dialog).
+
+FORMAT:
+Antworte als JSON-LISTE von Objekten:
+[
+    {"id": "ID_DES_CHUNKS", "speaker": "...", "type": "..."},
+    ...
+]
+
+Fragmente:
+"""
     for c in batch_chunks:
-        prompt_data += f"ID: {c['id']}\nTEXT: {c.get('content', '')[:300]}\n---\n"
-
-    full_prompt = prompt_intro + prompt_data
+        prompt += f"ID: {c['id']}\nTEXT: {c.get('content', '')[:300]}\n---\n"
 
     try:
-        # --- NEUES SDK: Aufruf ---
-        resp = client.models.generate_content(
-            model=MODEL_BULK_LABELING,
-            contents=full_prompt,
-            config={"response_mime_type": "application/json"}
-        )
+        parsed_data = llm_call_json(prompt, task="bulk_labeling", fallback=[])
 
-        raw_text = resp.text.strip()
-        # JSON Cleaning (falls Markdown Fences dabei sind)
-        if raw_text.startswith("```"):
-            raw_text = re.sub(r'^```json\s*|\s*```$', '', raw_text, flags=re.MULTILINE)
-
-        parsed_data = json.loads(raw_text)
         suggestions = {}
-
         if isinstance(parsed_data, list):
             for item in parsed_data:
                 cid = item.get('id')
-                if cid: suggestions[cid] = item
+                if cid:
+                    suggestions[cid] = item
         elif isinstance(parsed_data, dict):
-             # Fallback für Dict-Response
-             if 'results' in parsed_data and isinstance(parsed_data['results'], list):
-                 for item in parsed_data['results']:
+            if 'results' in parsed_data and isinstance(parsed_data['results'], list):
+                for item in parsed_data['results']:
                     cid = item.get('id')
-                    if cid: suggestions[cid] = item
-             else:
+                    if cid:
+                        suggestions[cid] = item
+            else:
                 suggestions = parsed_data
 
         return suggestions
@@ -234,37 +211,56 @@ def generate_ai_suggestions(chunks):
         st.error(f"KI-Fehler: {e}")
         return {}
 
-def load_chunks_deep(col_ref, speaker, ctype, text_filter):
-    docs = col_ref.stream()
+def load_chunks_deep(vs, speaker, ctype, text_filter):
+    """
+    Lädt Chunks aus ChromaDB mit client-seitiger Filterung.
+    v50.9-local: col_ref.stream() ersetzt durch vs.get_all_chunks().
+    """
+    all_chunks = vs.get_all_chunks(limit=500)  # Sicherheitslimit für UI
     results = []
-    for doc in docs:
-        d = doc.to_dict()
-        d['id'] = doc.id
+
+    for d in all_chunks:
         meta = d.get('metadata', {})
 
         if speaker != "Alle":
             curr = meta.get('model_name', 'Unknown')
-            if speaker in ["Unknown", "Unbekannt"] and curr not in ["Unknown", "Unbekannt", None]: continue
-            if speaker not in ["Unknown", "Unbekannt"] and curr != speaker: continue
+            if speaker in ["Unknown", "Unbekannt"] and curr not in ["Unknown", "Unbekannt", None]:
+                continue
+            if speaker not in ["Unknown", "Unbekannt"] and curr != speaker:
+                continue
 
-        if ctype != "Alle" and meta.get('content_type') != ctype: continue
+        if ctype != "Alle" and meta.get('content_type') != ctype:
+            continue
 
-        if text_filter and text_filter.lower() not in d.get('content', '').lower(): continue
+        if text_filter and text_filter.lower() not in d.get('content', '').lower():
+            continue
 
+        # Für UI-Kompatibilität: 'id' aus 'vector_doc_id' ableiten
+        d['id'] = d.get('vector_doc_id', '')
         results.append(d)
-        if len(results) >= 50: break
+
+        if len(results) >= 50:
+            break
+
     return results
 
-def apply_batch_updates(db, updates_dict):
-    batch = db.batch()
-    col = db.collection('embeddings')
-    count = 0
-    for doc_id, fields in updates_dict.items():
-        ref = col.document(doc_id)
-        batch.update(ref, fields)
-        count += 1
-        if count >= 400:
-            batch.commit()
-            batch = db.batch()
-            count = 0
-    if count > 0: batch.commit()
+def apply_batch_updates(vs, updates_dict):
+    """
+    Schreibt Metadaten-Updates in ChromaDB.
+    v50.9-local: Firestore batch ersetzt durch vs.update_chunk_metadata().
+    """
+    success_count = 0
+    fail_count = 0
+
+    for chunk_id, fields in updates_dict.items():
+        if vs.update_chunk_metadata(chunk_id, fields):
+            success_count += 1
+        else:
+            fail_count += 1
+
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"✅ Batch-Update: {success_count} erfolgreich, {fail_count} fehlgeschlagen.")
+
+    if fail_count > 0:
+        st.warning(f"⚠️ {fail_count} Chunks konnten nicht aktualisiert werden.")

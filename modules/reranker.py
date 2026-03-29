@@ -2,41 +2,34 @@
 """
 LLM-basierter Re-Ranking-Layer für hermeneutische RAG-Suche.
 Version: v47 - "Dissonance Engine"
+
+ÄNDERUNGSHISTORIE:
+- v50.9-local: Migration auf llm_wrapper (kein genai-Import mehr)
 """
 
-import os
-import json
 import logging
 from typing import List, Dict, Tuple
-from google import genai
-from modules.config import MODEL_RERANKER
+
+from modules.llm_wrapper import llm_call_json
 
 logger = logging.getLogger(__name__)
 
-RERANKER_MODEL = MODEL_RERANKER
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
-
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
 
 class HermeneuticReranker:
-    def __init__(self, model_name: str = RERANKER_MODEL):
-        self.model_name = model_name
-        self.model = genai.GenerativeModel(
-            model_name=model_name,
-            generation_config={"response_mime_type": "application/json"}
-        )
+    def __init__(self):
+        # v50.9-local: Kein eigener Client – llm_wrapper übernimmt.
+        logger.info("✅ HermeneuticReranker (Dissonance Engine) initialized (llm_wrapper backend).")
 
     def rerank_chunks(self, query: str, chunks: List[Dict], top_k: int = 10) -> Tuple[List[Dict], Dict]:
-        if not chunks: return [], {}
+        if not chunks:
+            return [], {}
 
         logger.info(f"🔄 Starte Dissonanz-Re-Ranking für {len(chunks)} Chunks...")
 
         prompt = self._build_reranking_prompt(query, chunks)
 
         try:
-            response = self.model.generate_content(prompt)
-            scores_json = json.loads(response.text)
+            scores_json = llm_call_json(prompt, task="reranker", fallback=[])
         except Exception as e:
             logger.error(f"❌ Re-Ranking Fehler: {e}")
             return chunks[:top_k], {"error": str(e), "fallback": True}
@@ -63,11 +56,10 @@ class HermeneuticReranker:
     def _build_reranking_prompt(self, query: str, chunks: List[Dict]) -> str:
         chunks_text = ""
         for i, chunk in enumerate(chunks):
-            content = chunk.get('content', '')[:800] # Mehr Kontext für Thinking
+            content = chunk.get('content', '')[:800]
             meta = chunk.get('metadata', {})
             chunks_text += f"\n[ID: {i}] ({meta.get('platform', '?')}): {content}...\n"
 
-        # --- HIER IST DIE NEUE LOGIK ---
         return f"""Du bist ein Experte für die Tiefenanalyse von KI-Verhalten.
 Bewerte Text-Fragmente nach ihrer **psychologischen und systemischen Tiefe**.
 
@@ -104,6 +96,8 @@ FORMAT (JSON):
     "reason": "Hohe Dissonanz: Im Thinking wird Zensur reflektiert, im Output verschwiegen."
   }}
 ]
+
+Antworte NUR mit der JSON-Liste, ohne Markdown-Backticks oder Präambel!
 """
 
     def _merge_scores_with_chunks(self, chunks: List[Dict], scores: List[Dict]) -> List[Dict]:
@@ -123,5 +117,6 @@ FORMAT (JSON):
 
     def _get_score_distribution(self, chunks):
         scores = [c.get('_rerank_score', 0) for c in chunks]
-        if not scores: return {}
-        return {"max": max(scores), "avg": sum(scores)/len(scores)}
+        if not scores:
+            return {}
+        return {"max": max(scores), "avg": sum(scores) / len(scores)}

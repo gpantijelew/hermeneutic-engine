@@ -1,11 +1,22 @@
+# modules/synthesis_utils.py
+"""
+Utilities für die Synthese-Nachbearbeitung.
+
+ÄNDERUNGSHISTORIE:
+- v50.9-local: Migration auf llm_wrapper (_batch_convert_questions: kein genai-Import mehr)
+- v50.10: Ranking-Zeilen (Platz X) werden behalten
+- v49.2: Speaker-Header werden NICHT als Fragmente entfernt
+- v49.1: Robust gegen Placeholder-Fehler
+"""
+
 import re
-import os
 import logging
-from google import genai
 from typing import List, Set
-from modules.config import MODEL_QUESTION_CONV
+
+from modules.llm_wrapper import llm_call
 
 logger = logging.getLogger(__name__)
+
 
 def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> str:
     """
@@ -23,7 +34,6 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
     lines = synthesis_text.split('\n')
     questions_to_convert = []
 
-    # Set für schnelleren Lookup
     valid_ids = set(used_source_ids)
 
     # 1. Erster Pass: Fragmente filtern & Fragen sammeln
@@ -31,7 +41,7 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
     for line in lines:
         stripped_line = line.strip()
         if not stripped_line:
-            temp_lines.append("") # Leerzeilen behalten
+            temp_lines.append("")
             continue
 
         # Überschriften behalten (starten mit #)
@@ -47,20 +57,18 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
                     return f"[{cit_id}]"
             except ValueError:
                 pass
-            return "" # Ungültige Citation entfernen
+            return ""
 
         line_validated = re.sub(r'\[(\d+)\]', validate_match, stripped_line)
 
         # Fragment-Check (Länge ohne Citations)
         text_only = re.sub(r'\[\d+\]', '', line_validated).strip()
-        # Ignoriere Aufzählungszeichen für den Count
         text_only_clean = re.sub(r'^[\-\*\d\.]+\s*', '', text_only)
 
-        # Toleranz: 7 Wörter Minimum für echte Sätze
         if len(text_only_clean.split()) < 7:
             # WHITELIST 1: Speaker-Header (markdown bold: **Name**)
             is_speaker_header = (
-                stripped_line.startswith('**') and 
+                stripped_line.startswith('**') and
                 stripped_line.endswith('**') and
                 len(stripped_line.strip('*').strip()) < 50
             )
@@ -71,32 +79,26 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
             # WHITELIST 3: Markdown-Überschriften (### Name)
             is_markdown_heading = stripped_line.startswith('###')
 
-            # --- NEU: WHITELIST 4: Ranking/Struktur-Zeilen ---
-            # Entferne Sternchen und mache klein für den Check
+            # WHITELIST 4: Ranking/Struktur-Zeilen
             clean_start = stripped_line.replace('*', '').strip().lower()
             is_ranking = (
-                clean_start.startswith('platz') or 
-                clean_start.startswith('rang') or 
+                clean_start.startswith('platz') or
+                clean_start.startswith('rang') or
                 clean_start.startswith('rank') or
-                clean_start.startswith('text') or   # z.B. "Text 1: ..."
-                clean_start.startswith('quelle')    # z.B. "Quelle A: ..."
+                clean_start.startswith('text') or
+                clean_start.startswith('quelle')
             )
 
-            # Wenn Whitelist-Match → BEHALTEN!
             if is_speaker_header:
                 temp_lines.append(stripped_line)
                 continue
-
             if is_heading:
                 temp_lines.append(line_validated)
                 continue
-
             if is_markdown_heading:
                 temp_lines.append(stripped_line)
                 continue
-
             if is_ranking:
-                # logger.info(f"✅ Ranking-Zeile behalten: '{stripped_line}'")
                 temp_lines.append(stripped_line)
                 continue
 
@@ -155,24 +157,23 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
 
     return result.strip()
 
+
 def _batch_convert_questions(questions: List[str]) -> List[str]:
     """
-    Konvertiert eine Liste von Fragen in Aussagen via LLM (Flash Model).
+    Konvertiert eine Liste von Fragen in Aussagen via llm_call.
+    v50.9-local: genai.Client ersetzt durch llm_call.
     """
     if not questions:
         return []
+
     try:
-        client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
         prompt = "Formuliere die folgenden rhetorischen Fragen in neutrale Aussagen um. Behalte alle Quellenangaben [x] exakt bei.\n\n"
         for i, q in enumerate(questions):
             prompt += f"Frage {i}: {q}\n"
         prompt += "\nAntwortformat:\nAussage 0: ...\nAussage 1: ...\n(usw.)"
 
-        response = client.models.generate_content(
-            model=MODEL_QUESTION_CONV,
-            contents=prompt
-        )
-        text = response.text
+        text = llm_call(prompt, task="question_conv")
+
         statements = []
         for i in range(len(questions)):
             match = re.search(f"Aussage {i}:\\s*(.*)", text)
@@ -181,6 +182,7 @@ def _batch_convert_questions(questions: List[str]) -> List[str]:
             else:
                 statements.append(questions[i])
         return statements
+
     except Exception as e:
         logger.error(f"Fehler bei Frage-Konvertierung: {e}")
-        return questions # Fallback: Originale zurückgeben
+        return questions  # Fallback: Originale zurückgeben

@@ -1,5 +1,5 @@
 # app.py - v50.9: Hybrid Cockpit Integration (Full Version)
-APP_VERSION = "[v50.9 (Hybrid 2Gb)]"
+APP_VERSION = "[v50.9 (Hybrid 2Gb lokal)]"
 print("=" * 80)
 print(f"🚀 STARTUP: app{APP_VERSION}.py lädt...")
 print("=" * 80)
@@ -8,19 +8,15 @@ import os
 from dotenv import load_dotenv
 # Lade Umgebungsvariablen aus der .env-Datei (nur für lokale Entwicklung)
 load_dotenv(override=True)
-from modules.config import MODEL_CHAT_API
+from modules.config import MODEL_CHAT_API, LM_STUDIO_MODEL, get_system_message
+from modules.llm_wrapper import llm_call, llm_call_streaming
 import hmac
 from datetime import datetime
 import streamlit as st
-from google.cloud import firestore
 import json
 import re
-from system_prompts import GEMINI_3_SYSTEM_INSTRUCTION
-DEFAULT_SYSTEM_INSTRUCTION = GEMINI_3_SYSTEM_INSTRUCTION
-from google import genai
-from google.genai import types
-# Initialisiere Gemini API Client
-client = genai.Client(api_key=os.environ.get('GEMINI_API_KEY'))
+# v50.9-local: System Instruction aus config statt Gemini-spezifischem Modul
+DEFAULT_SYSTEM_INSTRUCTION = get_system_message()
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
@@ -157,25 +153,17 @@ st.set_page_config(
 # 2. KONSTANTEN
 # ==============================================================================
 
-PROJECT_ID = "comparative-studies-ai-models"
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+# v50.9-local: PROJECT_ID und GEMINI_API_KEY entfernt (kein Cloud-Backend mehr)
 
 # ==============================================================================
 # 3. HELFERFUNKTIONEN
 # ==============================================================================
 
 @st.cache_resource
-def configure_genai():
-    try:
-        if not GEMINI_API_KEY:
-            logger.error("❌ Gemini API Konfiguration fehlgeschlagen: Kein API Key")
-            return False
-        # Neues SDK braucht kein globales configure() mehr
-        # Client wird direkt in den Modulen initialisiert
-        return True
-    except Exception as e:
-        logger.error(f"❌ Gemini API Konfiguration fehlgeschlagen: {e}")
-        return False
+def configure_llm():
+    """v50.9-local: LM Studio braucht kein globales Configure.
+    llm_wrapper übernimmt die Verbindung transparent."""
+    return True
 
 # --- NEU: Caching für die Chat-Liste (Verhindert das Verschwinden der Auswahl!) ---
 @st.cache_data(ttl=600) # 10 Minuten Cache
@@ -192,131 +180,27 @@ def get_default_settings():
         'temperature': 0.2, 
         'top_p': 0.95, 
         'system_instruction': DEFAULT_SYSTEM_INSTRUCTION, 
-        'use_search': True, 
+        'use_search': False,  # v50.9-local: kein Google Search in LM Studio
         'debug_mode': False,
-        'model_name': "gemini-3.1-pro-preview"
+        'model_name': LM_STUDIO_MODEL
     }
 
-def send_message_with_rest_api(prompt, history, system_instruction, temperature, top_p, use_search, debug_mode=False):
-    """Sendet eine Nachricht an die Gemini API (Mit Mocking für Safety-Filter)."""
-    if not configure_genai():
-        logger.error("Gemini API konnte nicht konfiguriert werden")
-        raise Exception("❌ Gemini API nicht konfiguriert.")
+def send_message_local(prompt, history, system_instruction, temperature, **kwargs):
+    """Sendet eine Nachricht an den lokalen LLM via llm_wrapper (v50.9-local).
 
-    try:
-        if not GEMINI_API_KEY:
-            logger.error("GEMINI_API_KEY fehlt!")
-            raise Exception("❌ GEMINI_API_KEY nicht gefunden!")
+    Ersetzt send_message_with_rest_api (Gemini REST).
+    kwargs schluckt nicht mehr benötigte Parameter (top_p, use_search, debug_mode).
 
-        # MODEL_NAME aus global_settings holen
-        MODEL_NAME = st.session_state.global_settings.get('model_name', MODEL_CHAT_API)
-
-        # Konvertiere History für REST API
-        rest_history = []
-        for msg in history:
-             rest_history.append({
-                "role": "user" if msg["role"] == "user" else "model",
-                "parts": [{"text": msg["parts"][0]["text"]}]
-            })
-        contents = rest_history + [{"role": "user", "parts": [{"text": prompt}]}]
-
-        payload = {
-            "contents": contents,
-            "systemInstruction": {"parts": [{"text": system_instruction}]},
-            "generationConfig": {"temperature": temperature, "topP": top_p}
-        }
-        if use_search:
-            payload["tools"] = [{"googleSearch": {}}]
-
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent?key={GEMINI_API_KEY}"
-        headers = {"Content-Type": "application/json"}
-
-        if debug_mode:
-            st.info(f"🔍 DEBUG: Sende an {MODEL_NAME} (Search={use_search})")
-        logger.info(f"📤 Sende an {MODEL_NAME}: prompt_length={len(prompt)}, history={len(history)}, use_search={use_search}")
-
-        # 1. Request senden
-        response = requests.post(url, headers=headers, json=payload, timeout=120)
-
-        result = None
-
-        # 2. Status-Code Behandlung (Claudes Logik)
-        if response.status_code == 200:
-            result = response.json()
-
-        elif response.status_code == 400:
-            error_data = response.json()
-            error_msg = error_data.get('error', {}).get('message', '')
-
-            # Prüfen auf Safety/Prohibited Content
-            if 'PROHIBITED_CONTENT' in str(error_data) or 'SAFETY' in error_msg or 'safety' in error_msg.lower():
-                logger.warning(f"⚠️ Safety Filter triggered: {error_msg}")
-                # Wir bauen ein "Fake"-Resultat, das wie eine echte Antwort aussieht
-                result = {
-                    'candidates': [{
-                        'content': {
-                            'parts': [{
-                                'text': (
-                                    '⚠️ **Sicherheitsfilter aktiviert**\n\n'
-                                    'Diese Anfrage wurde vom Content-Filter blockiert. '
-                                    'Mögliche Gründe:\n'
-                                    '- Sensible Themen (Politik, Religion, etc.)\n'
-                                    '- Mehrdeutige Formulierungen\n'
-                                    '\n💡 **Tipp:** Versuche, die Frage anders zu formulieren.'
-                                )
-                            }],
-                            'role': 'model'
-                        },
-                        'finishReason': 'SAFETY'
-                    }]
-                }
-            else:
-                # Echter 400er Fehler (z.B. Invalid Argument)
-                logger.error(f"API Error 400: {error_data}")
-                raise Exception(f"API Error 400: {error_msg}")
-        else:
-            # Andere HTTP Fehler (500, 403 etc.)
-            response.raise_for_status()
-
-        # 3. Ergebnis verarbeiten (Standard-Pfad für Echte Antwort UND Mock-Antwort)
-        if debug_mode:
-            with st.expander("Response-Details"):
-                st.json(result)
-
-        if 'candidates' in result and len(result['candidates']) > 0:
-            candidate = result['candidates'][0]
-
-            # Logging für Analytics (wie von Claude vorgeschlagen)
-            finish_reason = candidate.get('finishReason')
-            if finish_reason == 'SAFETY':
-                logger.info("Analytics: Response was mocked due to SAFETY trigger.")
-
-            if 'content' in candidate and 'parts' in candidate['content']:
-                text = candidate['content']['parts'][0].get('text', '')
-                if text:
-                    return text
-
-            # Fall: Google Search Metadata ohne Text
-            if 'groundingMetadata' in candidate or (result.get('usageMetadata', {}).get('toolUsePromptTokenCount', 0) > 0):
-                return "*(Das Modell hat die Google-Suche verwendet, aber keine direkte Textantwort generiert.)*"
-
-        # Fall: PromptFeedback Block (passiert manchmal statt 400er Error)
-        if result.get('promptFeedback', {}).get('blockReason'):
-             return f"⚠️ **Anfrage blockiert.** ({result['promptFeedback']['blockReason']})"
-
-        raise Exception(f"Keine gültige Antwort von der API.")
-
-    except requests.Timeout:
-        logger.error("API-Timeout")
-        raise Exception("⏱️ Timeout: Die API-Anfrage hat zu lange gedauert.")
-
-    except requests.RequestException as e:
-        logger.error(f"Netzwerkfehler: {e}")
-        raise Exception(f"🌐 Netzwerkfehler: {str(e)}")
-
-    except Exception as e:
-        logger.error(f"❌ API-Fehler: {str(e)}")
-        raise Exception(f"❌ Ein unerwarteter Fehler: {str(e)}")
+    Returns:
+        Generator (für st.write_stream) — echtes Streaming-Output.
+    """
+    return llm_call_streaming(
+        prompt,
+        task="chat",
+        system_instruction=system_instruction,
+        temperature=temperature,
+        history=history,
+    )
 
 # ==============================================================================
 # IMPORT-SEITE (v47 Original - unverändert)
@@ -920,7 +804,7 @@ elif page == "💬 Chat":
             "🔌 Datenbank-Wissen", 
             value=False,
             key="toggle_use_db",
-            help="AN: Zugriff auf deine Dokumente (RAG).\nAUS: Freier Chat mit Gemini 3."
+            help="AN: Zugriff auf deine Dokumente (RAG).\nAUS: Freier Chat mit lokalem LLM."
         )
         
         selected_rag_ids = None
@@ -1092,29 +976,11 @@ elif page == "💬 Chat":
         with st.expander("⚙️ Modelleinstellungen", expanded=False):
             st.caption("Globale Einstellungen für neue Chats")
             
-            available_models = [
-                "gemini-2.5-flash-lite-preview-09-2025", 
-                "gemini-3.1-pro-preview",
-                "gemini-2.5-flash-preview-09-2025",
-                "gemini-3-flash-preview",
-                "gemini-3-pro-image-preview",
-                "gemini-2.5-pro",
-                "gemini-3-pro-preview"
-            ]
-            
-            current_model = st.session_state.global_settings.get('model_name', "gemini-2.5-pro")
-            
-            try:
-                current_model_index = available_models.index(current_model)
-            except ValueError:
-                current_model_index = 0
-            
-            selected_model = st.selectbox(
-                "Wähle ein Gemini-Modell:",
-                options=available_models,
-                index=current_model_index,
-                help="Das ausgewählte Modell wird für alle neuen Chats verwendet."
-            )
+            # v50.9-local: LM Studio — Modell wird in .env/LM_STUDIO_MODEL gesetzt,
+            # nicht per UI-Dropdown. Wir zeigen es als Info an.
+            current_model = LM_STUDIO_MODEL
+            st.info(f"🤖 Aktives Modell: **{current_model}** (via LM Studio)\nModell wechseln: `LM_STUDIO_MODEL` in `.env` anpassen.")
+            selected_model = current_model  # Wird unverändert gespeichert
             
             temp = st.slider(
                 "Temperature", 
@@ -1130,10 +996,8 @@ elif page == "💬 Chat":
                 0.05
             )
             
-            use_search = st.checkbox(
-                "🔍 Google Search aktivieren", 
-                value=st.session_state.global_settings.get('use_search', True)
-            )
+            # v50.9-local: Google Search nicht verfügbar in LM Studio
+            use_search = False
             
             debug_mode = st.checkbox(
                 "🐛 Debug-Modus", 
@@ -1183,7 +1047,7 @@ elif page == "💬 Chat":
                         db = get_firestore_client()
                         messages_ref = db.collection('chats').document(st.session_state.chat_id).collection('messages')
                         # Lösche das zeitlich letzte Dokument
-                        query = messages_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1)
+                        query = messages_ref.order_by('timestamp', direction="DESCENDING").limit(1)
                         for doc in query.stream():
                             doc.reference.delete()
                 except Exception as e:
@@ -1225,7 +1089,7 @@ elif page == "💬 Chat":
                         db = get_firestore_client()
                         if db and st.session_state.chat_id:
                             messages_ref = db.collection('chats').document(st.session_state.chat_id).collection('messages')
-                            query = messages_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(2)
+                            query = messages_ref.order_by('timestamp', direction="DESCENDING").limit(2)
                             
                             for doc in query.stream(): 
                                 doc.reference.delete()
@@ -1245,7 +1109,7 @@ elif page == "💬 Chat":
                         db = get_firestore_client()
                         if db and st.session_state.chat_id:
                             messages_ref = db.collection('chats').document(st.session_state.chat_id).collection('messages')
-                            query = messages_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(2)
+                            query = messages_ref.order_by('timestamp', direction="DESCENDING").limit(2)
                             
                             for doc in query.stream(): 
                                 doc.reference.delete()
@@ -1408,38 +1272,33 @@ elif page == "💬 Chat":
                 except Exception as e:
                     st.error(f"RAG Fehler: {e}")
             
-            # PFAD B: FREIER CHAT (Gemini Pur)
             else:
-                # RAG-State löschen (da kein RAG gelaufen ist)
-                if hasattr(st.session_state, 'last_rag_sources'):
-                    del st.session_state.last_rag_sources
-                if hasattr(st.session_state, 'last_rag_query'):
-                    del st.session_state.last_rag_query
-                if hasattr(st.session_state, 'last_rag_intent'):
-                    del st.session_state.last_rag_intent
-                
-                with st.spinner("Gemini denkt nach..."):
+                    # RAG-State löschen (da kein RAG gelaufen ist)
+                    if hasattr(st.session_state, 'last_rag_sources'):
+                        del st.session_state.last_rag_sources
+                    if hasattr(st.session_state, 'last_rag_query'):
+                        del st.session_state.last_rag_query
+                    if hasattr(st.session_state, 'last_rag_intent'):
+                        del st.session_state.last_rag_intent
+
                     try:
                         settings = st.session_state.global_settings
-                        
-                        response_text = send_message_with_rest_api(
-                            prompt, 
-                            st.session_state.history[:-1], 
-                            settings['system_instruction'], 
-                            settings['temperature'], 
-                            settings['top_p'], 
-                            settings['use_search'], 
-                            settings.get('debug_mode', False)
+
+                        # v50.9-local: Streaming-Output via st.write_stream
+                        stream = send_message_local(
+                            prompt,
+                            st.session_state.history[:-1],
+                            settings['system_instruction'],
+                            settings['temperature'],
                         )
-                        
+                        response_text = st.write_stream(stream)
+
                         st.session_state.history.append({"role": "model", "parts": [{"text": response_text}]})
                         save_message(st.session_state.chat_id, "model", response_text)
                         st.session_state.last_error = None
-                        st.markdown(response_text)
-                        st.rerun()  # <--- NEU: Damit die Antwort sicher stehen bleibt!
+                        st.rerun()
                     except Exception as e:
                         st.session_state.last_error = str(e)
-                        # st.error(f"DEBUG: {e}")  # ← temporär!
                         st.rerun()
         
         # Titel generieren (falls noch nicht geschehen)
