@@ -684,7 +684,7 @@ class FirestoreVectorStore:
                         meta.get('role', '').lower():
                     continue
 
-                vec = results['embeddings'][i] if results['embeddings'] else None
+                vec = results['embeddings'][i] if results['embeddings'] is not None else None
                 if vec is None:
                     continue
 
