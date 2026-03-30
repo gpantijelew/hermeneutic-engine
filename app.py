@@ -603,7 +603,7 @@ def render_analysis_page():
                             with st.spinner("2. Analysiere Chunk-Verteilung..."):
 
                                 # NEU – ein Aufruf, kein LLM-Call, kein weggeworfenes Ergebnis:
-                                imbalance_info = rag_engine.check_imbalance_only(search_query, results)
+                                imbalance_info = rag_engine.check_imbalance_only(search_query, results, chat_id=selected_chat_ids)
 
                             # ===================================================================
                             # VARIANTE C: GESTUFTE INTERVENTION

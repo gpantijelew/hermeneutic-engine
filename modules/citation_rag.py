@@ -213,7 +213,26 @@ Behalte Namen unverändert! """
         if len(top_results) < 5:
             reranker_relaxed = HermeneuticReranker(threshold=0.35)
             top_results, _ = reranker_relaxed.rerank(query, top_candidates, max_results=70, intent=intent)
-
+        # NEU v51: Mindestrepräsentations-Garantie
+        if chat_id:
+            _requested = set(chat_id) if isinstance(chat_id, list) else {chat_id}
+            _represented = set(r.get('chat_id') for r in top_results)
+            _missing = _requested - _represented
+            if _missing:
+                _pool_by_id = defaultdict(list)
+                for c in top_candidates:
+                    if c.get('chat_id') in _missing:
+                        _pool_by_id[c.get('chat_id')].append(c)
+                for _cid in _missing:
+                    _best = sorted(_pool_by_id[_cid],
+                                   key=lambda x: x.get('_final_score', 0),
+                                   reverse=True)
+                    if _best:
+                        top_results.append(_best[0])
+                        logger.info(f"🔧 Mindestrepräsentation: +1 Chunk für "
+                                    f"{_cid[-8:]} (score={_best[0].get('_final_score', 0):.3f})")
+                    else:
+                        logger.warning(f"⚠️ Kein Chunk im Pool für {_cid[-8:]}")
         # Dokumenten-Verteilung VOR Essenz-Extraktion
         surviving_docs = defaultdict(int)
         for res in top_results:
