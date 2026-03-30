@@ -248,7 +248,9 @@ Behalte Namen unverändert! """
             ratio=ratio,
             doc_distribution=dict(surviving_docs),
             max_chunks=max_c,
-            min_chunks=min_c
+            min_chunks=min_c,
+            top_results=top_results,
+            pre_rerank_pool=top_candidates
         )
 
         # Speichere für späteren Zugriff
@@ -335,7 +337,7 @@ Behalte Namen unverändert! """
 
         return datetime.min
 
-    def generate_answer(self, query: str, results: List[Dict], strict_parity: bool = False, dry_run: bool = False) -> Tuple[str, List[Dict], str]:
+    def generate_answer(self, query: str, results: List[Dict], strict_parity: bool = False, dry_run: bool = False, pre_reranked=None) -> Tuple[str, List[Dict], str]:
         """ v50.9: ESSENCE PARITY - Intelligente Essenz-Extraktion.
 
         Max 12 Chunks pro Dokument (Code-Limit) + Erzwungene Zitat-Quota (Prompt).
@@ -385,17 +387,20 @@ Behalte Namen unverändert! """
             results.sort(key=lambda x: x.get('_final_score', 0), reverse=True)
 
         # --- Reranking ---
-        top_candidates = results[:100]
-
-        logger.info(f"⚖️ Reranking mit Threshold: {rerank_threshold} (Intent: {intent})")
-
-        reranker = HermeneuticReranker(threshold=rerank_threshold)
-        top_results, rerank_stats = reranker.rerank(query, top_candidates, max_results=70, intent=intent)
-
-        if len(top_results) < 5:
-            logger.warning(f"⚠️ Zu wenig Treffer nach Reranking ({len(top_results)}). Senke Threshold auf 0.35...")
-            reranker_relaxed = HermeneuticReranker(threshold=0.35)
-            top_results, _ = reranker_relaxed.rerank(query, top_candidates, max_results=70, intent=intent)
+        if pre_reranked is not None:
+            top_results = pre_reranked.top_results
+            top_candidates = pre_reranked.pre_rerank_pool
+            rerank_stats = {}
+            logger.info(f"⚡ Reranking übersprungen — nutze pre-geranktes Ergebnis ({len(top_results)} Chunks)")
+        else:
+            top_candidates = results[:100]
+            logger.info(f"⚖️ Reranking mit Threshold: {rerank_threshold} (Intent: {intent})")
+            reranker = HermeneuticReranker(threshold=rerank_threshold)
+            top_results, rerank_stats = reranker.rerank(query, top_candidates, max_results=70, intent=intent)
+            if len(top_results) < 5:
+                 logger.warning(f"⚠️ Zu wenig Treffer nach Reranking ({len(top_results)}). Senke Threshold auf 0.35...")
+                 reranker_relaxed = HermeneuticReranker(threshold=0.35)
+                 top_results, _ = reranker_relaxed.rerank(query, top_candidates, max_results=70, intent=intent)
 
         # --- Diagnostik VOR Essenz-Extraktion ---
         surviving_docs = defaultdict(int)

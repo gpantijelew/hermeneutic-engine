@@ -724,7 +724,8 @@ Wie soll die Engine vorgehen?
                                     raw_answer, used_sources, mode_name = rag_engine.generate_answer(
                                         search_query, 
                                         results,
-                                        strict_parity=strict_parity_choice  # v50.3: User-Choice!
+                                        strict_parity=strict_parity_choice,  # v50.3: User-Choice!
+                                        pre_reranked=imbalance_info
                                     )
 
                                     valid_indices = list(range(1, len(used_sources) + 1))
