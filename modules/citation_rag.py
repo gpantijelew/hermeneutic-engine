@@ -356,6 +356,79 @@ Behalte Namen unverändert! """
 
         return datetime.min
 
+    def _trim_to_token_budget(self, chunks: list, max_tokens: int = 14000) -> list:
+        """Token-bewusster Ersatz für [:12].
+        Greedy-Forward-Pass: Chunks werden chronologisch akkumuliert
+        bis das Token-Budget erschöpft ist.
+        Garantiert: mindestens 1 Chunk pro Dokument (falls vorhanden).
+        """
+        # Schritt 1: Mindestens 1 Chunk pro Dokument sichern
+        seen_docs = {}
+        rest = []
+        for chunk in chunks:
+            cid = chunk.get('chat_id')
+            if cid not in seen_docs:
+                seen_docs[cid] = chunk  # erster Chunk pro Dokument
+            else:
+                rest.append(chunk)
+
+        # Schritt 2: Epistemische Basis + Breiten-Maximierung
+        import math
+        # Logarithmische Gewichte berechnen
+        chunk_counts = {}
+        for c in chunks:
+            cid = c.get('chat_id')
+            chunk_counts[cid] = chunk_counts.get(cid, 0) + 1
+        log_weights = {
+            cid: math.log(chunk_counts.get(cid, 1) + 1)
+            for cid in seen_docs
+        }
+        total_weight = sum(log_weights.values())
+        selected = []
+        used_tokens = 0
+        deferred = []  # Dokumente, die Phase 1 nicht geschafft haben
+
+        # Phase 1: Epistemische Basis — kein Kürzen, nur vollständige Chunks
+        for cid, chunk in seen_docs.items():
+            doc_budget = int(max_tokens * log_weights[cid] / total_weight)
+            tokens = len(chunk.get('content', '')) // 4
+            if tokens <= doc_budget and used_tokens + tokens <= max_tokens:
+                selected.append(chunk)
+                used_tokens += tokens
+                logger.debug(f"✅ Phase1 {cid[-8:]}: {tokens} Tokens "
+                             f"(budget={doc_budget})")
+            else:
+                deferred.append((cid, chunk, doc_budget))
+                logger.debug(f"⏳ Zurückgestellt {cid[-8:]}: "
+                             f"{tokens} > budget={doc_budget}")
+
+        # Phase 2: Breiten-Maximierung — zurückgestellte Dokumente
+        # mit verbleibendem Budget nachnominieren
+        remaining = max_tokens - used_tokens
+        for cid, chunk, doc_budget in deferred:
+            tokens = len(chunk.get('content', '')) // 4
+            if used_tokens + tokens <= max_tokens:
+                # Doch noch reingepasst — Budget-Schätzung war konservativ
+                selected.append(chunk)
+                used_tokens += tokens
+                logger.info(f"🔄 Phase2 nachgeholt {cid[-8:]}: {tokens} Tokens")
+            else:
+                logger.warning(f"⚠️ Kein Platz für {cid[-8:]}: "
+                               f"braucht {tokens}, verfügbar {max_tokens - used_tokens}")
+
+        # Schritt 3: Rest greedy auffüllen
+        for chunk in rest:
+            tokens = len(chunk.get('content', '')) // 4
+            if used_tokens + tokens <= max_tokens:
+                selected.append(chunk)
+                used_tokens += tokens
+
+        # Schritt 4: Chronologische Reihenfolge wiederherstellen
+        selected.sort(key=self.extract_date_from_metadata)
+        logger.info(f"📐 Token-Budget: {used_tokens} geschätzte Token "
+                    f"| {len(selected)} Chunks aus {len(seen_docs)} Dokumenten")
+        return selected
+
     def generate_answer(self, query: str, results: List[Dict], strict_parity: bool = False, dry_run: bool = False, pre_reranked=None) -> Tuple[str, List[Dict], str]:
         """ v50.9: ESSENCE PARITY - Intelligente Essenz-Extraktion.
 
@@ -665,7 +738,9 @@ Behalte Namen unverändert! """
 
         # NEU v50.6: CHRONOLOGISCHE SORTIERUNG
         # Sortiere Chunks nach Datum (wichtig für zeitliche Analysen!)
-        top_results_sorted = sorted(top_results, key=self.extract_date_from_metadata)[:12]
+        top_results_sorted = self._trim_to_token_budget(
+               sorted(top_results, key=self.extract_date_from_metadata)
+        )
 
         logger.info(f"📅 Chunks chronologisch sortiert: {len(top_results_sorted)} Stücke")
 
@@ -899,6 +974,14 @@ ANTWORT: """
                 "die nicht wörtlich in den vorliegenden Chunks stehen."
                 "Wenn ein Chunk kein Datum trägt, datiere ihn nicht aus deinem Weltwissen."
             )
+
+                # ══════════════════════════════════════════════════════
+        # TEMP: System-Prompt-Größe messen (HIER einfügen!)
+        _sys_tokens = len(dynamic_sys_instruct) // 4
+        _base_tokens = len(BASE_SYNTHESIS_RULES) // 4 if 'BASE_SYNTHESIS_RULES' in dir() else 0
+        _chunk_tokens = sum(len(c.get('content','')) // 4 for c in top_results)
+        logger.info(f"🔢 Token-Audit POST-TRIM: chunks_real= {sum(len(c.get('content','')) // 4 for c in top_results_sorted)} | n_chunks={len(top_results_sorted)}")
+        # ══════════════════════════════════════════════════════
 
         max_retries = 3
         for attempt in range(max_retries):
