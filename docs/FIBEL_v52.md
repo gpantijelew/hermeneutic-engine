@@ -73,9 +73,34 @@ sondern durch drei architektonische Garantien:
 | Synthese | Essence Parity (logarithmisch) | Keine Quelle dominiert durch Größe |
 | Validierung | Hermeneutic Enforcer (2D) | Halluzinationen < 20% false positives |
 
+
+
+## 1.3a Demos & Fallstudien
+
+### Fallstudie: Sigmund Freud und die Verführungstheorie
+
+Das YouTube-Video zur ersten öffentlichen Demonstration der Engine analysiert
+vier Primärtexte Freuds (1896–1924) in unter zwei Minuten:
+
+- *Zur Ätiologie der Hysterie* (1896): Freud verteidigt die Verführungstheorie
+  als empirischen Befund
+- Brief an Wilhelm Fliess (21.09.1897): das privateste Dokument — der Bruch,
+  ohne Publikum, ohne Pose
+- *Drei Abhandlungen zur Sexualtheorie* (1905 und 1924): das stille Umschreiben
+  über zwei Jahrzehnte
+
+Der Modus: `ANALYTICAL_FORENSIC`. Die Engine fragt nicht, was Freud behauptete —
+sie fragt, was er verschleierte und wie er den Rückzug als intellektuelle
+Courage inszenierte. Der Enforcer flaggt anschließend, wo die Engine selbst
+überschießt: halluzinierte Metadaten, nicht belegte Verstärker.
+
+> **Epistemic Hygiene: Eine KI, die ihre eigenen Fehler benennt.**
+
+[![YouTube Demo ansehen](https://img.shields.io/badge/YouTube-Freud_Demo-red?logo=youtube)]([https://youtu.be/HveLGOuWJM0])
+
 ---
 
-## 1.3 Was ist neu in v52?
+## 1.3b Was ist neu in v52?
 
 v52 ist die erste Version, die **out of the box lokal** funktioniert.
 
@@ -244,6 +269,37 @@ hre-vertex-engine/
 │   └── chroma/               # ChromaDB-Vektordaten
 └── .env                      # Lokale Konfiguration (nicht eingecheckt)
 ```
+
+## 4.2a Code-Architektur: Vom Monolithen zum Orchestrator (v52-Refaktor)
+
+Die v52 enthält neben dem inhaltlichen Upgrade ein substantielles
+**Architektur-Refactoring**, das für die Open-Source-Community entscheidend ist.
+
+**Das Problem in v50.x:** Die `app.py` war mit ~1.200 Zeilen ein Monolith —
+Routing-Logik, UI-Rendering, State-Management und Fehlerbehandlung waren
+untrennbar verwoben. Jede Änderung an der Oberfläche erforderte chirurgisches
+Eingreifen in unübersichtlichen Code.
+
+**Die Lösung in v52:** `app.py` ist jetzt ein schlanker **Orchestrator**.
+Die gesamte UI-Logik ist in domänenspezifische Module ausgelagert:
+
+ui/
+
+ ├── state.py          # Zentrales Session-State-Management (Single Source of Truth)
+
+ ├── chat_tab.py       # Chat-Interface
+
+ ├── analysis_tab.py   # Analyse-Pipeline und Ergebnis-Darstellung
+
+ ├── import_tab.py     # Import-Interface (alle Formate)
+
+ └── pipeline_trace.py # Pipeline-Transparenz-UI
+
+**Warum das für Nutzer wichtig ist:**
+Jedes UI-Modul ist isoliert testbar und austauschbar. Ein neues Import-Format,
+eine erweiterte Enforcer-Ansicht, ein angepasstes Analyse-Layout — das berührt
+genau *ein* Modul, nicht den gesamten Stack. Das macht den Code wartbar,
+erweiterbar und für externe Beiträge zugänglich.
 
 ## 4.2 LLM-Backends
 

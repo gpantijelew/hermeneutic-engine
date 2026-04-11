@@ -1,4 +1,4 @@
-# Hermeneutic Engine
+# Hermeneutic Reconstruction Engine
 
 [![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
@@ -162,12 +162,61 @@ Hermeneutic Enforcer ─────── two-dimensional claim validation (opt
 Answer with citations + pipeline transparency UI
 ```
 
+### Codebase Architecture (v52 Refactor)
+
+The v52 release includes a significant structural refactor. `app.py` is no
+longer a monolithic 1,200-line file — it is now a lean orchestrator that
+delegates to domain-specific modules:
+
+ui/
+
+ ├── state.py          # Central session-state management (single source of truth)
+
+ ├── chat_tab.py       # Conversational interface
+
+ ├── analysis_tab.py   # Pipeline UI + result rendering
+
+ ├── import_tab.py     # Format-agnostic import interface
+
+ └── pipeline_trace.py # Full pipeline transparency view
+
+**Why this matters for contributors:** Every UI component is independently
+testable and replaceable. Adding a new import format, a new analysis view,
+or a custom Enforcer display requires touching exactly one module — not
+untangling a monolith.
+
 **Technology stack:**
+
 - **Embeddings:** `intfloat/multilingual-e5-large` (local, via sentence-transformers)
+
 - **Vector store:** ChromaDB (persistent, local)
+
 - **Database:** SQLite with FTS5 full-text search
+
 - **LLM:** Any OpenAI-compatible model via LM Studio (default: Qwen 3.5 9B)
+
 - **UI:** Streamlit
+
+  ------
+
+  
+
+## 🔬 Case Studies & Demos
+
+### Live Demo: Sigmund Freud & the Seduction Theory
+A practical demonstration of the engine's forensic capabilities applied to
+four primary texts by Freud (1896–1924): the seduction theory lecture, the
+private Fliess letter, and two editions of the *Three Essays*.
+
+The engine reconstructs — in under 2 minutes — a rhetorical trajectory that
+conventional RAG systems flatten into a single, Freud-approved summary.
+
+[![YouTube](https://img.shields.io/badge/YouTube-Freud_Case_Study-red?logo=youtube)](https://youtu.be/HveLGOuWJM0)
+
+> The `ANALYTICAL_FORENSIC` intent forces the synthesis to name what Freud
+> *concealed*, not just what he claimed. The Enforcer then flags where the
+> engine itself oversteps — hallucinated metadata, unsupported intensifiers.
+> Epistemic hygiene, built into the architecture.
 
 ---
 
@@ -201,9 +250,6 @@ Key packages: `streamlit`, `chromadb`, `sentence-transformers`, `rank-bm25`, `py
 > Pantijelew, G. (2026). *Hermeneutic Reconstruction in Multi-Document RAG:
 > Enforcing Source Parity through Architectural Constraints.* Zenodo.
 > [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18774828.svg)](https://doi.org/10.5281/zenodo.18774828)
-
-**Case Study Video:**
-[![YouTube](https://img.shields.io/badge/YouTube-HRE_Case_Study-red?logo=youtube)](https://youtu.be/HveLGOuWJM0)
 
 ---
 
