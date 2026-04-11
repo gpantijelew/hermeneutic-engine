@@ -1,0 +1,85 @@
+# =========================
+# Environment & Secrets
+# =========================
+.env
+*.env
+.streamlit/secrets.toml
+.secrets/
+
+# Service Account Keys / Credentials (gezielt)
+*-????????.json
+*-????????????.json
+credentials*.json
+service-account*.json
+
+# =========================
+# Python / Build / Venv
+# =========================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.py[cod]
+*.so
+.Python
+env/
+venv/
+build/
+dist/
+*.egg-info/
+
+# =========================
+# Test / Debug Artifacts (inkl. tests/)
+# =========================
+tests/
+debug_*.py
+check_*.py
+*_old.py
+debug_*.txt
+check_*.txt
+*_old.txt
+
+# Logs
+*.log
+logs/*.log
+
+# =========================
+# IDE & OS
+# =========================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# =========================
+# Lokale HRE-Daten (niemals ins Repo)
+# =========================
+hre_data/
+export_chunks.json
+export_chats.json
+export_settings.json
+*.db
+export_*.json
+*.sqlite
+*.sqlite3
+
+# GCP-Relikt / historisch (Projekt comparative-studies-ai-models, suspendiert 11.03.2026)
+comparative-studies-ai-models-*.json
+
+# Totes Holz / alte Infrastruktur
+scripts/
+
+# =========================
+# TXT / HTML / MD: gezielt ignorieren
+# =========================
+struktur.txt
+debug_*.txt
+check_*.txt
+*_old.txt
+*.html
+
+# Alle Markdown außer Fibel-Dokumente und Dokumentation
+*.md
+!FIBEL*.md
+!docs/
+.aider*

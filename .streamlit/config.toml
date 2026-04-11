@@ -1,0 +1,29 @@
+[server]
+# Headless-Modus (false = Browser öffnet sich automatisch)
+headless = false
+
+# --- FIX: Erlaubt Uploads bis 200 MB ---
+maxUploadSize = 200
+# ---------------------------------------
+
+# CORS & Security
+enableCORS = false
+enableXsrfProtection = false
+
+# WebSocket-Timeout (erhöht für stabilere Verbindung)
+# websocketPingTimeout = 120
+
+# Run-on-Save deaktiviert (verhindert Auto-Reload bei Dateiänderungen)
+runOnSave = false
+
+# Server-Adresse (localhost für lokale Entwicklung)
+address = "localhost"
+port = 8501
+
+[browser]
+# Verhindert aggressive Browser-Reloads
+gatherUsageStats = false
+
+[runner]
+# Magic-Modus deaktiviert (verhindert unerwartete Verhaltensweisen)
+magicEnabled = false
