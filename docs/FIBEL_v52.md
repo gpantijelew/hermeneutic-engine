@@ -661,11 +661,7 @@ web: streamlit run app.py --server.port=$PORT --server.address=0.0.0.0
 
 ## Geplant für v53+
 
-- [ ] Async-Retrieval (30–50% schnellere Query-Zeiten)
-- [ ] Automatische Imbalance-Korrektur (ohne User-Warnung)
-- [ ] Performance-Monitoring (Timer pro Pipeline-Schritt)
-- [ ] Lokales Enforcer-Fallback (kein LLM-Call für einfache Checks)
-- [ ] Modularisierung: `app.py` (~1200 Zeilen) aufteilen
+- **Local-Model Feintuning:** Spezifische Prompt-Optimierungen für kleinere Open-Weights (z.B. Llama-3-8B).
 
 ---
 
