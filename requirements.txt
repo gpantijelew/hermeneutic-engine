@@ -1,19 +1,39 @@
+# ==============================================================================
+# HRE v52 — Dependencies
+# ==============================================================================
+# Default setup: fully local, no API key required.
+# Install: pip install -r requirements.txt
+
+# Core UI
 streamlit==1.50.0
-google-cloud-firestore>=2.15.0
-google-api-core>=2.17.1
-google-genai>=1.62.0
-firebase-admin
-requests>=2.32.0
-google-auth
+
+# Local LLM (via LM Studio or any OpenAI-compatible server)
+openai>=1.0.0
 python-dotenv
+
+# Local Embeddings + Vector Store
+sentence-transformers>=2.7.0
+chromadb>=0.5.0
+torch>=2.0.0
+huggingface-hub>=1.5.0
+
+# Search & Retrieval
+rank-bm25
+
+# Data & Export
 numpy
 pandas
 openpyxl>=3.1.0
+
+# Web & Import
+requests>=2.32.0
 beautifulsoup4>=4.12.0
-# --- NEU für v49 ---
-rank-bm25
-# --- NEU für v47 ---
 pymupdf
 ebooklib
-# Force Rebuild: v50.8.1
-huggingface-hub >= 1.5.0
+
+# ==============================================================================
+# Optional: Cloud backends
+# Uncomment the lines below if you want to use Vertex AI or OpenAI cloud APIs.
+# ==============================================================================
+# google-genai>=1.62.0   # Vertex AI backend (set LLM_BACKEND=vertex in .env)
+# google-auth             # Vertex AI authentication
