@@ -83,3 +83,5 @@ check_*.txt
 !FIBEL*.md
 !docs/
 .aider*
+!README.md
+!CHANGELOG.md
