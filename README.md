@@ -3,8 +3,7 @@
 [![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
 [![Version](https://img.shields.io/badge/version-v52-green.svg)](CHANGELOG.md)
-[![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)]()
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18774828.svg)](https://doi.org/10.5281/zenodo.18774828)
+[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.18774828-blue.svg)](https://doi.org/10.5281/zenodo.18774828)
 [![YouTube](https://img.shields.io/badge/YouTube-Case_Study-red?logo=youtube)](https://youtu.be/HveLGOuWJM0)
 
 **Full Name:** Hermeneutic Reconstruction Engine for Archaeology of Mind
