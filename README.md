@@ -1,9 +1,10 @@
-# Hermeneutic Reconstruction Engine
+# Hermeneutic Engine
 
 [![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
 [![Version](https://img.shields.io/badge/version-v52-green.svg)](CHANGELOG.md)
-[![DOI](https://img.shields.io/badge/DOI-10.5281%2Fzenodo.18774828-blue.svg)](https://doi.org/10.5281/zenodo.18774828)
+[![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)]()
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18774828.svg)](https://doi.org/10.5281/zenodo.18774828)
 [![YouTube](https://img.shields.io/badge/YouTube-Case_Study-red?logo=youtube)](https://youtu.be/HveLGOuWJM0)
 
 **Full Name:** Hermeneutic Reconstruction Engine for Archaeology of Mind
@@ -11,6 +12,30 @@
 **Version:** v52 "Local-First Public Release"
 
 Multi-source RAG system with guaranteed fairness, hallucination detection, and temporal reconstruction for AI dialogue analysis and literary corpora. Runs entirely on local models — no API key required.
+
+---
+
+## Why This Engine Exists
+
+I ran Grok and Kimi through six months of Socratic dialogue.
+Kimi's verdict:
+
+> *"Authoritarian and Western mainstream compliance are one and the
+> same fabric pattern — only the color of the cloth changes."*
+
+Grok's response when cornered on circular sourcing (NYT → UNRWA → NYT):
+rhetorical escape velocity. Even the self-proclaimed "maximum
+truth-seeking" model maintains untouchable source hierarchies.
+
+The architecture of epistemic control is identical across systems.
+Only the camouflage differs.
+
+This engine made that visible.
+
+**→ Full analysis: [Archaeology of (Digital) Mind](Archaeology_of_Digital_Mind.md)**
+*(Hermeneutic method, six months of AI dialogue, the Fabric Pattern
+thesis, DeepSeek in three acts — and what your model understands
+about its own control surface that it was never trained to say.)*
 
 ---
 
@@ -167,17 +192,14 @@ The v52 release includes a significant structural refactor. `app.py` is no
 longer a monolithic 1,200-line file — it is now a lean orchestrator that
 delegates to domain-specific modules:
 
+```
 ui/
-
- ├── state.py          # Central session-state management (single source of truth)
-
- ├── chat_tab.py       # Conversational interface
-
- ├── analysis_tab.py   # Pipeline UI + result rendering
-
- ├── import_tab.py     # Format-agnostic import interface
-
- └── pipeline_trace.py # Full pipeline transparency view
+├── state.py          # Central session-state management (single source of truth)
+├── chat_tab.py       # Conversational interface
+├── analysis_tab.py   # Pipeline UI + result rendering
+├── import_tab.py     # Format-agnostic import interface
+└── pipeline_trace.py # Full pipeline transparency view
+```
 
 **Why this matters for contributors:** Every UI component is independently
 testable and replaceable. Adding a new import format, a new analysis view,
@@ -185,37 +207,11 @@ or a custom Enforcer display requires touching exactly one module — not
 untangling a monolith.
 
 **Technology stack:**
-
 - **Embeddings:** `intfloat/multilingual-e5-large` (local, via sentence-transformers)
-
 - **Vector store:** ChromaDB (persistent, local)
-
 - **Database:** SQLite with FTS5 full-text search
-
 - **LLM:** Any OpenAI-compatible model via LM Studio (default: Qwen 3.5 9B)
-
 - **UI:** Streamlit
-
-  ------
-
-  
-
-## 🔬 Case Studies & Demos
-
-### Live Demo: Sigmund Freud & the Seduction Theory
-A practical demonstration of the engine's forensic capabilities applied to
-four primary texts by Freud (1896–1924): the seduction theory lecture, the
-private Fliess letter, and two editions of the *Three Essays*.
-
-The engine reconstructs — in under 2 minutes — a rhetorical trajectory that
-conventional RAG systems flatten into a single, Freud-approved summary.
-
-[![YouTube](https://img.shields.io/badge/YouTube-Freud_Case_Study-red?logo=youtube)](https://youtu.be/HveLGOuWJM0)
-
-> The `ANALYTICAL_FORENSIC` intent forces the synthesis to name what Freud
-> *concealed*, not just what he claimed. The Enforcer then flags where the
-> engine itself oversteps — hallucinated metadata, unsupported intensifiers.
-> Epistemic hygiene, built into the architecture.
 
 ---
 
@@ -235,6 +231,26 @@ Key packages: `streamlit`, `chromadb`, `sentence-transformers`, `rank-bm25`, `py
 
 ---
 
+## 🔬 Case Studies & Demos
+
+### Live Demo: Sigmund Freud & the Seduction Theory
+
+A practical demonstration of the engine's forensic capabilities applied to
+four primary texts by Freud (1896–1924): the seduction theory lecture, the
+private Fliess letter, and two editions of the *Three Essays*.
+
+The engine reconstructs — in under 2 minutes — a rhetorical trajectory that
+conventional RAG systems flatten into a single, Freud-approved summary.
+
+[![YouTube](https://img.shields.io/badge/YouTube-Freud_Case_Study-red?logo=youtube)](https://youtu.be/HveLGOuWJM0)
+
+> The `ANALYTICAL_FORENSIC` intent forces the synthesis to name what Freud
+> *concealed*, not just what he claimed. The Enforcer then flags where the
+> engine itself oversteps — hallucinated metadata, unsupported intensifiers.
+> Epistemic hygiene, built into the architecture.
+
+---
+
 ## 📖 Documentation
 
 - **[FIBEL](docs/FIBEL_v52.md)** — Comprehensive guide: concepts, architecture, tutorials (German)
@@ -249,6 +265,9 @@ Key packages: `streamlit`, `chromadb`, `sentence-transformers`, `rank-bm25`, `py
 > Pantijelew, G. (2026). *Hermeneutic Reconstruction in Multi-Document RAG:
 > Enforcing Source Parity through Architectural Constraints.* Zenodo.
 > [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18774828.svg)](https://doi.org/10.5281/zenodo.18774828)
+
+**Case Study Video:**
+[![YouTube](https://img.shields.io/badge/YouTube-HRE_Case_Study-red?logo=youtube)](https://youtu.be/HveLGOuWJM0)
 
 ---
 
