@@ -28,37 +28,40 @@ def render_settings_panel() -> None:
             available_models = [
                 "gemini-3.1-pro-preview",
                 "gemini-2.5-pro",
-                "gemini-2.5-flash-preview-09-2025"
+                "gemini-2.5-flash-preview-09-2025",
             ]
             selected_model = st.selectbox(
                 "Gemini-Modell wählen:",
                 options=available_models,
                 index=available_models.index(current_model)
-                      if current_model in available_models else 0
+                if current_model in available_models
+                else 0,
             )
         else:
             current_model = LM_STUDIO_MODEL
             st.info(
-                f"🤖 Aktives Modell: **{current_model}** (via LM Studio)\n"
+                f"🤖 Aktives Modell: **{current_model}** (Lokales Modell)\n"
                 f"Modell wechseln: `LM_STUDIO_MODEL` in `.env` anpassen."
             )
             selected_model = current_model
 
         # --- Slider ---
         temp = st.slider(
-            "Temperature", 0.0, 1.0,
-            st.session_state.global_settings.get('temperature', 0.2), 0.1
+            "Temperature",
+            0.0,
+            1.0,
+            st.session_state.global_settings.get("temperature", 0.2),
+            0.1,
         )
         top_p = st.slider(
-            "Top-P", 0.0, 1.0,
-            st.session_state.global_settings.get('top_p', 0.95), 0.05
+            "Top-P", 0.0, 1.0, st.session_state.global_settings.get("top_p", 0.95), 0.05
         )
 
         # --- Google Search (nur Vertex) ---
         if LLM_BACKEND == "vertex":
             use_search = st.checkbox(
                 "🔍 Google Search aktivieren",
-                value=st.session_state.global_settings.get('use_search', True)
+                value=st.session_state.global_settings.get("use_search", True),
             )
         else:
             use_search = False
@@ -66,24 +69,24 @@ def render_settings_panel() -> None:
         # --- Debug ---
         debug_mode = st.checkbox(
             "🐛 Debug-Modus",
-            value=st.session_state.global_settings.get('debug_mode', False)
+            value=st.session_state.global_settings.get("debug_mode", False),
         )
 
         # --- System Instruction ---
         sys_instr = st.text_area(
             "System Instruction",
-            st.session_state.global_settings.get('system_instruction', ''),
-            height=250
+            st.session_state.global_settings.get("system_instruction", ""),
+            height=250,
         )
 
         # --- Speichern ---
-        if st.button("💾 Einstellungen speichern", use_container_width=True):
-            st.session_state.global_settings['model_name']         = selected_model
-            st.session_state.global_settings['temperature']        = temp
-            st.session_state.global_settings['top_p']              = top_p
-            st.session_state.global_settings['system_instruction'] = sys_instr
-            st.session_state.global_settings['use_search']         = use_search
-            st.session_state.global_settings['debug_mode']         = debug_mode
+        if st.button("💾 Einstellungen speichern", width="stretch"):
+            st.session_state.global_settings["model_name"] = selected_model
+            st.session_state.global_settings["temperature"] = temp
+            st.session_state.global_settings["top_p"] = top_p
+            st.session_state.global_settings["system_instruction"] = sys_instr
+            st.session_state.global_settings["use_search"] = use_search
+            st.session_state.global_settings["debug_mode"] = debug_mode
 
             if save_global_settings(
                 selected_model, temp, top_p, sys_instr, use_search, debug_mode

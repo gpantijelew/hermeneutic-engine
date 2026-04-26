@@ -1,21 +1,19 @@
 # modules/bulk_labeling.py
 import streamlit as st
 from modules.llm_wrapper import llm_call_json
-from modules.config import MODEL_BULK_LABELING
-import json
-import re
-from modules.database import get_firestore_client
-from modules.vector_store import FirestoreVectorStore
+from modules.database import get_db_connection
+from modules.vector_store import LocalVectorStore
+
 
 def render_bulk_labeling_ui():
     st.title("🏷️ Enhanced Bulk Labeling (Full Control)")
 
-    db = get_firestore_client()
+    db = get_db_connection()
     if not db:
         st.error("Keine Datenbankverbindung.")
         return
 
-    vs = FirestoreVectorStore(db)
+    vs = LocalVectorStore(db)
 
     # --- 1. SETTINGS & FILTER ---
     with st.expander("⚙️ Einstellungen & Filter", expanded=True):
@@ -23,20 +21,47 @@ def render_bulk_labeling_ui():
         with c1:
             preview_length = st.slider("Vorschau-Länge:", 100, 1000, 300, 50)
         with c2:
-            pass 
+            pass
 
         f1, f2, f3 = st.columns(3)
-        filter_speaker = f1.selectbox("Speaker:", ["Alle", "Unknown", "Unbekannt", "User", "Kimi", "DeepSeek", "ChatGPT", "Claude", "Gemini"])
-        filter_type = f2.selectbox("Typ:", ["Alle", "None", "Analyse", "Selbstreflexion", "Vergleich", "Frage", "Dialog"])
+        filter_speaker = f1.selectbox(
+            "Speaker:",
+            [
+                "Alle",
+                "Unknown",
+                "Unbekannt",
+                "User",
+                "Kimi",
+                "DeepSeek",
+                "ChatGPT",
+                "Claude",
+                "Gemini",
+            ],
+        )
+        filter_type = f2.selectbox(
+            "Typ:",
+            [
+                "Alle",
+                "None",
+                "Analyse",
+                "Selbstreflexion",
+                "Vergleich",
+                "Frage",
+                "Dialog",
+            ],
+        )
         filter_text = f3.text_input("Text enthält:")
 
         if st.button("🔎 Chunks laden"):
-            st.session_state.bulk_chunks = load_chunks_deep(vs, filter_speaker, filter_type, filter_text)
+            st.session_state.bulk_chunks = load_chunks_deep(
+                vs, filter_speaker, filter_type, filter_text
+            )
             # Reset KI-Vorschläge bei neuem Laden
-            if 'ai_suggestions' in st.session_state: del st.session_state.ai_suggestions
+            if "ai_suggestions" in st.session_state:
+                del st.session_state.ai_suggestions
 
     # --- 2. LISTE ---
-    if 'bulk_chunks' in st.session_state and st.session_state.bulk_chunks:
+    if "bulk_chunks" in st.session_state and st.session_state.bulk_chunks:
         chunks = st.session_state.bulk_chunks
         st.success(f"✅ {len(chunks)} Chunks geladen")
 
@@ -46,7 +71,9 @@ def render_bulk_labeling_ui():
                 suggestions = generate_ai_suggestions(chunks)
                 if suggestions:
                     st.session_state.ai_suggestions = suggestions
-                    st.success(f"{len(suggestions)} Vorschläge generiert! Die Dropdowns wurden aktualisiert.")
+                    st.success(
+                        f"{len(suggestions)} Vorschläge generiert! Die Dropdowns wurden aktualisiert."
+                    )
                 else:
                     st.warning("KI konnte keine Vorschläge generieren.")
 
@@ -62,68 +89,93 @@ def render_bulk_labeling_ui():
         c4.markdown("**Inhalt (Aktuell: Grau)**")
 
         # Listen für Dropdowns
-        SPEAKER_OPTIONS = ["Unknown", "User", "Kimi", "DeepSeek", "ChatGPT", "Claude", "Gemini", "Dialog"]
-        TYPE_OPTIONS = ["None", "Analyse", "Selbstreflexion", "Vergleich", "Frage", "Dialog"]
+        SPEAKER_OPTIONS = [
+            "Unknown",
+            "User",
+            "Kimi",
+            "DeepSeek",
+            "ChatGPT",
+            "Claude",
+            "Gemini",
+            "Dialog",
+        ]
+        TYPE_OPTIONS = [
+            "None",
+            "Analyse",
+            "Selbstreflexion",
+            "Vergleich",
+            "Frage",
+            "Dialog",
+        ]
 
-        updates_to_apply = {} # ID -> {field: value}
+        updates_to_apply = {}  # ID -> {field: value}
 
         # Sicherstellen, dass ai_suggestions ein Dict ist
-        ai_suggestions = st.session_state.get('ai_suggestions', {})
-        if not isinstance(ai_suggestions, dict): ai_suggestions = {}
+        ai_suggestions = st.session_state.get("ai_suggestions", {})
+        if not isinstance(ai_suggestions, dict):
+            ai_suggestions = {}
 
         for chunk in chunks:
-            chunk_id = chunk['id']
-            meta = chunk.get('metadata', {})
-            text = chunk.get('content', '')
+            chunk_id = chunk["id"]
+            meta = chunk.get("metadata", {})
+            text = chunk.get("content", "")
 
-            curr_speaker = meta.get('model_name', 'Unknown')
-            curr_type = meta.get('content_type', 'None')
+            curr_speaker = meta.get("model_name", "Unknown")
+            curr_type = meta.get("content_type", "None")
 
             # KI Vorschlag holen
             ai_sugg = ai_suggestions.get(chunk_id, {})
-            sugg_speaker = ai_sugg.get('speaker')
-            sugg_type = ai_sugg.get('type')
+            sugg_speaker = ai_sugg.get("speaker")
+            sugg_type = ai_sugg.get("type")
 
             # Bestimme den Startwert für das Dropdown
             # Priorität: 1. KI-Vorschlag, 2. Aktueller Wert, 3. "Unknown"
 
             # Speaker Index finden
-            default_speaker_val = sugg_speaker if sugg_speaker in SPEAKER_OPTIONS else (curr_speaker if curr_speaker in SPEAKER_OPTIONS else "Unknown")
+            default_speaker_val = (
+                sugg_speaker
+                if sugg_speaker in SPEAKER_OPTIONS
+                else (curr_speaker if curr_speaker in SPEAKER_OPTIONS else "Unknown")
+            )
             try:
                 sp_idx = SPEAKER_OPTIONS.index(default_speaker_val)
-            except:
+            except Exception:
                 sp_idx = 0
 
             # Type Index finden
-            default_type_val = sugg_type if sugg_type in TYPE_OPTIONS else (curr_type if curr_type in TYPE_OPTIONS else "None")
+            default_type_val = (
+                sugg_type
+                if sugg_type in TYPE_OPTIONS
+                else (curr_type if curr_type in TYPE_OPTIONS else "None")
+            )
             try:
                 tp_idx = TYPE_OPTIONS.index(default_type_val)
-            except:
+            except Exception:
                 tp_idx = 0
 
             with st.container():
                 cc1, cc2, cc3, cc4 = st.columns([0.5, 2, 2, 4])
 
                 # 1. Checkbox (Wird automatisch aktiviert, wenn KI was vorschlägt, kann aber abgewählt werden)
-                has_suggestion = (sugg_speaker is not None)
+                has_suggestion = sugg_speaker is not None
                 apply_this = cc1.checkbox("Go", key=f"chk_{chunk_id}", value=False)
 
                 # 2. Speaker Dropdown (Editierbar!)
                 new_speaker = cc2.selectbox(
-                    "Sprecher", 
-                    SPEAKER_OPTIONS, 
-                    index=sp_idx, 
-                    key=f"sp_{chunk_id}", 
-                    label_visibility="collapsed"
+                    "Sprecher",
+                    SPEAKER_OPTIONS,
+                    index=sp_idx,
+                    key=f"sp_{chunk_id}",
+                    label_visibility="collapsed",
                 )
 
                 # 3. Type Dropdown (Editierbar!)
                 new_type = cc3.selectbox(
-                    "Typ", 
-                    TYPE_OPTIONS, 
-                    index=tp_idx, 
-                    key=f"tp_{chunk_id}", 
-                    label_visibility="collapsed"
+                    "Typ",
+                    TYPE_OPTIONS,
+                    index=tp_idx,
+                    key=f"tp_{chunk_id}",
+                    label_visibility="collapsed",
                 )
 
                 # 4. Text & Info
@@ -138,8 +190,8 @@ def render_bulk_labeling_ui():
                 # Logik: Wenn Checkbox an, dann nimm die Werte aus den Dropdowns
                 if apply_this:
                     updates_to_apply[chunk_id] = {
-                        'metadata.model_name': new_speaker,
-                        'metadata.content_type': new_type
+                        "metadata.model_name": new_speaker,
+                        "metadata.content_type": new_type,
                     }
 
                 st.divider()
@@ -152,14 +204,19 @@ def render_bulk_labeling_ui():
                 apply_batch_updates(vs, updates_to_apply)
                 st.success("Gespeichert! Liste wird neu geladen...")
                 # Cleanup
-                if 'ai_suggestions' in st.session_state: del st.session_state.ai_suggestions
-                st.session_state.bulk_chunks = load_chunks_deep(vs, filter_speaker, filter_type, filter_text)
+                if "ai_suggestions" in st.session_state:
+                    del st.session_state.ai_suggestions
+                st.session_state.bulk_chunks = load_chunks_deep(
+                    vs, filter_speaker, filter_type, filter_text
+                )
                 st.rerun()
 
-    elif 'bulk_chunks' in st.session_state:
+    elif "bulk_chunks" in st.session_state:
         st.warning("Keine Chunks gefunden.")
 
+
 # --- LOGIK ---
+
 
 def generate_ai_suggestions(chunks):
     """Nutzt lokalen LLM via llm_wrapper, um Metadaten zu raten.
@@ -193,13 +250,13 @@ Fragmente:
         suggestions = {}
         if isinstance(parsed_data, list):
             for item in parsed_data:
-                cid = item.get('id')
+                cid = item.get("id")
                 if cid:
                     suggestions[cid] = item
         elif isinstance(parsed_data, dict):
-            if 'results' in parsed_data and isinstance(parsed_data['results'], list):
-                for item in parsed_data['results']:
-                    cid = item.get('id')
+            if "results" in parsed_data and isinstance(parsed_data["results"], list):
+                for item in parsed_data["results"]:
+                    cid = item.get("id")
                     if cid:
                         suggestions[cid] = item
             else:
@@ -211,6 +268,7 @@ Fragmente:
         st.error(f"KI-Fehler: {e}")
         return {}
 
+
 def load_chunks_deep(vs, speaker, ctype, text_filter):
     """
     Lädt Chunks aus ChromaDB mit client-seitiger Filterung.
@@ -220,29 +278,34 @@ def load_chunks_deep(vs, speaker, ctype, text_filter):
     results = []
 
     for d in all_chunks:
-        meta = d.get('metadata', {})
+        meta = d.get("metadata", {})
 
         if speaker != "Alle":
-            curr = meta.get('model_name', 'Unknown')
-            if speaker in ["Unknown", "Unbekannt"] and curr not in ["Unknown", "Unbekannt", None]:
+            curr = meta.get("model_name", "Unknown")
+            if speaker in ["Unknown", "Unbekannt"] and curr not in [
+                "Unknown",
+                "Unbekannt",
+                None,
+            ]:
                 continue
             if speaker not in ["Unknown", "Unbekannt"] and curr != speaker:
                 continue
 
-        if ctype != "Alle" and meta.get('content_type') != ctype:
+        if ctype != "Alle" and meta.get("content_type") != ctype:
             continue
 
-        if text_filter and text_filter.lower() not in d.get('content', '').lower():
+        if text_filter and text_filter.lower() not in d.get("content", "").lower():
             continue
 
         # Für UI-Kompatibilität: 'id' aus 'vector_doc_id' ableiten
-        d['id'] = d.get('vector_doc_id', '')
+        d["id"] = d.get("vector_doc_id", "")
         results.append(d)
 
         if len(results) >= 50:
             break
 
     return results
+
 
 def apply_batch_updates(vs, updates_dict):
     """
@@ -259,8 +322,11 @@ def apply_batch_updates(vs, updates_dict):
             fail_count += 1
 
     import logging
+
     logger = logging.getLogger(__name__)
-    logger.info(f"✅ Batch-Update: {success_count} erfolgreich, {fail_count} fehlgeschlagen.")
+    logger.info(
+        f"✅ Batch-Update: {success_count} erfolgreich, {fail_count} fehlgeschlagen."
+    )
 
     if fail_count > 0:
         st.warning(f"⚠️ {fail_count} Chunks konnten nicht aktualisiert werden.")

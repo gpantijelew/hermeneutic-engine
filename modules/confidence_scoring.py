@@ -10,7 +10,7 @@ Zweck:
 
 import numpy as np
 import logging
-from typing import List, Dict, Union
+from typing import List, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +36,13 @@ def cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
         cos(θ) = (a · b) / (||a|| * ||b||)
     """
     # Typprüfung
-    if not isinstance(vec_a, (list, np.ndarray)) or not isinstance(vec_b, (list, np.ndarray)):
+    if not isinstance(vec_a, (list, np.ndarray)) or not isinstance(
+        vec_b, (list, np.ndarray)
+    ):
         logger.warning(
             "cosine_similarity: Invalid input type. vec_a=%s, vec_b=%s",
             type(vec_a),
-            type(vec_b)
+            type(vec_b),
         )
         return 0.0
 
@@ -57,7 +59,7 @@ def cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
         logger.warning(
             "cosine_similarity: Dimension mismatch. vec_a=%d, vec_b=%d",
             a.shape[0],
-            b.shape[0]
+            b.shape[0],
         )
         return 0.0
 
@@ -75,8 +77,7 @@ def cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
 
 
 def calculate_confidence_scores(
-    query_vector: List[float],
-    results: List[Dict]
+    query_vector: List[float], results: List[Dict]
 ) -> List[Dict]:
     """
     Fügt jedem Ergebnis einen 'confidence_score' (0–100) hinzu und sortiert die Liste.
@@ -103,6 +104,16 @@ def calculate_confidence_scores(
         logger.warning("No results for confidence scoring.")
         return []
 
+    # K8 FIX: Wenn query_vector fehlt, nutze vorhandene 'score'-Felder als Fallback
+    if not query_vector:
+        logger.warning("K8: query_vector fehlt — nutze vorhandene 'score'-Felder als Fallback.")
+        for res in results:
+            base_score = res.get("score", 0.0)
+            res["_raw_similarity"] = base_score
+            res["confidence_score"] = float(max(0.0, min(100.0, base_score * 100.0)))
+        results.sort(key=lambda x: x["confidence_score"], reverse=True)
+        return results
+
     # PHASE 1: RAW SIMILARITY BERECHNUNG
     raw_scores: List[float] = []
 
@@ -113,7 +124,7 @@ def calculate_confidence_scores(
         if not isinstance(doc_vector_raw, (list, np.ndarray)):
             logger.debug(
                 "calculate_confidence_scores: Invalid embedding type. Expected list/ndarray, got %s",
-                type(doc_vector_raw)
+                type(doc_vector_raw),
             )
             doc_vector = None
         else:
@@ -122,12 +133,14 @@ def calculate_confidence_scores(
             except Exception as e:
                 logger.warning(
                     "calculate_confidence_scores: Failed to convert embedding to float array. %s",
-                    e
+                    e,
                 )
                 doc_vector = None
 
         if doc_vector is not None and doc_vector.size == 0:
-            logger.warning("calculate_confidence_scores: Empty embedding vector for result.")
+            logger.warning(
+                "calculate_confidence_scores: Empty embedding vector for result."
+            )
             doc_vector = None
 
         # Dimensionsgleichheit zur Query
@@ -137,7 +150,7 @@ def calculate_confidence_scores(
                 logger.warning(
                     "calculate_confidence_scores: Embedding dimension mismatch. query=%d, doc=%d",
                     query_len,
-                    doc_vector.shape[0]
+                    doc_vector.shape[0],
                 )
                 doc_vector = None
 
@@ -152,7 +165,9 @@ def calculate_confidence_scores(
         res["_raw_similarity"] = score
 
     if not raw_scores:
-        logger.error("calculate_confidence_scores: All embeddings invalid. No scores computed.")
+        logger.error(
+            "calculate_confidence_scores: All embeddings invalid. No scores computed."
+        )
         return results
 
     # PHASE 2: MIN-MAX-NORMALISIERUNG
@@ -164,13 +179,13 @@ def calculate_confidence_scores(
         "Confidence scoring distribution: min=%.3f, max=%.3f, range=%.3f",
         min_score,
         max_score,
-        score_range
+        score_range,
     )
 
     if score_range < MIN_SCORE_RANGE:
         logger.warning(
             "Confidence scores nearly identical (range=%.4f). Using fallback score=50.0.",
-            score_range
+            score_range,
         )
         for res in results:
             res["confidence_score"] = 50.0
@@ -186,7 +201,7 @@ def calculate_confidence_scores(
     logger.info(
         "Confidence scoring completed. Top=%.1f%%, Bottom=%.1f%%",
         results[0]["confidence_score"],
-        results[-1]["confidence_score"]
+        results[-1]["confidence_score"],
     )
 
     return results

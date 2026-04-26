@@ -44,7 +44,7 @@ def render_chat_list() -> None:
     st.header("💬 Konversationen")
 
     # --- Neuer Chat ---
-    if st.button("➕ Neuer Chat", use_container_width=True, type="primary"):
+    if st.button("➕ Neuer Chat", width="stretch", type="primary"):
         state.reset_chat()
         clear_chat_cache()
         st.rerun()
@@ -55,7 +55,7 @@ def render_chat_list() -> None:
         value="",
         placeholder="Titel oder Stichwort...",
         label_visibility="collapsed",
-        key="chat_list_search"
+        key="chat_list_search",
     )
 
     # --- Liste laden + filtern ---
@@ -75,7 +75,7 @@ def render_chat_list() -> None:
         else:
             # Fallback: Titel-Filter
             term_lower = search_term.lower()
-            chat_list = [c for c in chat_list if term_lower in c['title'].lower()]
+            chat_list = [c for c in chat_list if term_lower in c["title"].lower()]
             if chat_list:
                 st.caption(f"📋 Titel-Treffer: {len(chat_list)}")
 
@@ -93,7 +93,7 @@ def render_chat_list() -> None:
 
     # --- Chat-Einträge rendern ---
     for chat in chat_list:
-        is_active = (st.session_state.chat_id == chat['id'])
+        is_active = st.session_state.chat_id == chat["id"]
         _render_chat_entry(chat, is_active)
 
 
@@ -101,40 +101,43 @@ def _render_chat_entry(chat: dict, is_active: bool) -> None:
     """Rendert einen einzelnen Chat-Eintrag (Normal / Umbenennen / Löschen)."""
 
     with st.container():
-
         # FALL A: UMBENENNEN
-        if st.session_state.get("rename_chat_id") == chat['id']:
+        if st.session_state.get("rename_chat_id") == chat["id"]:
             new_name = st.text_input(
                 "Neuer Name:",
-                value=chat['title'],
+                value=chat["title"],
                 key=f"rename_input_{chat['id']}",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
             )
             c1, c2 = st.columns(2)
-            if c1.button("✓", key=f"save_{chat['id']}", use_container_width=True):
-                if rename_chat(chat['id'], new_name.strip()):
+            if c1.button("✓", key=f"save_{chat['id']}", width="stretch"):
+                if rename_chat(chat["id"], new_name.strip()):
                     st.session_state.rename_chat_id = None
                     clear_chat_cache()
                     st.rerun()
-            if c2.button("✗", key=f"cancel_{chat['id']}", use_container_width=True):
+            if c2.button("✗", key=f"cancel_{chat['id']}", width="stretch"):
                 st.session_state.rename_chat_id = None
                 st.rerun()
 
         # FALL B: LÖSCHEN BESTÄTIGEN
-        elif st.session_state.get("delete_confirm_id") == chat['id']:
+        elif st.session_state.get("delete_confirm_id") == chat["id"]:
             st.warning(f"**{chat['title']}** wirklich löschen?")
             c1, c2 = st.columns(2)
             if c1.button(
-                "Ja, löschen", key=f"confirm_del_{chat['id']}",
-                use_container_width=True, type="primary"
+                "Ja, löschen",
+                key=f"confirm_del_{chat['id']}",
+                width="stretch",
+                type="primary",
             ):
-                if delete_chat(chat['id']):
-                    if st.session_state.chat_id == chat['id']:
+                if delete_chat(chat["id"]):
+                    if st.session_state.chat_id == chat["id"]:
                         state.reset_chat()
                     st.session_state.delete_confirm_id = None
                     clear_chat_cache()
                     st.rerun()
-            if c2.button("Nein", key=f"cancel_del_{chat['id']}", use_container_width=True):
+            if c2.button(
+                "Nein", key=f"cancel_del_{chat['id']}", width="stretch"
+            ):
                 st.session_state.delete_confirm_id = None
                 st.rerun()
 
@@ -146,21 +149,18 @@ def _render_chat_entry(chat: dict, is_active: bool) -> None:
             # state.set_chat() schreibt alle Keys in einem Zug —
             # kein zweistufiges Update, keine Race Condition.
             if cols[0].button(
-                chat['title'],
+                chat["title"],
                 key=f"load_{chat['id']}",
-                use_container_width=True,
-                type="primary" if is_active else "secondary"
+                width="stretch",
+                type="primary" if is_active else "secondary",
             ):
-                state.set_chat(
-                    chat['id'],
-                    load_chat_history(chat['id'])
-                )
+                state.set_chat(chat["id"], load_chat_history(chat["id"]))
                 st.rerun()
 
             if cols[1].button("✏️", key=f"edit_{chat['id']}", help="Umbenennen"):
-                st.session_state.rename_chat_id = chat['id']
+                st.session_state.rename_chat_id = chat["id"]
                 st.rerun()
 
             if cols[2].button("🗑️", key=f"delete_{chat['id']}", help="Löschen"):
-                st.session_state.delete_confirm_id = chat['id']
+                st.session_state.delete_confirm_id = chat["id"]
                 st.rerun()

@@ -9,7 +9,7 @@ import streamlit as st
 import json
 import ui.state as state
 
-from modules.database import load_chat_history, create_chat_in_firestore, save_message
+from modules.database import load_chat_history, create_chat, save_message
 from modules.importers import get_importer, detect_platform, IMPORTERS
 
 
@@ -18,38 +18,43 @@ def render_import_tab() -> None:
     st.title("📥 Daten importieren")
     st.markdown("---")
 
-    tab_paste, tab_upload, tab_json = st.tabs([
-        "📋 Copy-Paste (Text)",
-        "📄 Datei-Upload (HTML/PDF/ePub/MD/json)",
-        "💾 JSON Backup"
-    ])
+    tab_paste, tab_upload, tab_json = st.tabs(
+        [
+            "📋 Copy-Paste (Text)",
+            "📄 Datei-Upload (HTML/PDF/ePub/MD/json)",
+            "💾 JSON Backup",
+        ]
+    )
 
     # ------------------------------------------------------------------
     with tab_paste:
-        st.info("Anleitung: Chat-Text markieren (Strg+A), kopieren (Strg+C) und hier einfügen.")
+        st.info(
+            "Anleitung: Chat-Text markieren (Strg+A), kopieren (Strg+C) und hier einfügen."
+        )
         chat_text_input = st.text_area(
-            "Chat-Text hier einfügen:", height=300, key="gemini_paste_area"
+            "Chat-Text hier einfügen:", height=300, key="chat_paste_area"
         )
 
-        if st.button("🚀 Importieren (Paste)", use_container_width=True, type="primary"):
+        if st.button(
+            "🚀 Importieren (Paste)", width="stretch", type="primary"
+        ):
             if chat_text_input.strip():
                 container = st.container()
                 try:
-                    importer = get_importer('text_fallback')
+                    importer = get_importer("text_fallback")
                     messages = importer.parse(chat_text_input, container=container)
 
                     if messages:
-                        result = importer.import_to_firestore(
-                            messages, metadata={'source': 'paste'}
+                        result = importer.import_to_db(
+                            messages, metadata={"source": "paste"}
                         )
-                        if result['chat_id']:
+                        if result["chat_id"]:
                             container.success(
                                 f"✅ Fertig! {result['message_count']} Nachrichten importiert."
                             )
                             st.cache_data.clear()
                             state.set_chat(  # v51: via ui/state.py
-                                result['chat_id'],
-                                load_chat_history(result['chat_id'])
+                                result["chat_id"], load_chat_history(result["chat_id"])
                             )
                             st.rerun()
                         else:
@@ -67,8 +72,12 @@ def render_import_tab() -> None:
 
         parser_mode = st.radio(
             "Modus:",
-            ["🤖 Auto-Detect (empfohlen)", "🎯 Manuell wählen", "🧠 Erzwinge KI-Parsing (Text)"],
-            horizontal=True
+            [
+                "🤖 Auto-Detect (empfohlen)",
+                "🎯 Manuell wählen",
+                "🧠 Erzwinge KI-Parsing (Text)",
+            ],
+            horizontal=True,
         )
 
         manual_platform = None
@@ -84,7 +93,7 @@ def render_import_tab() -> None:
         uploaded_files = st.file_uploader(
             "Dateien wählen:",
             type=["html", "htm", "txt", "pdf", "epub", "fb2", "md", "markdown", "json"],
-            accept_multiple_files=True
+            accept_multiple_files=True,
         )
 
         if uploaded_files and st.button("🚀 Start Upload", type="primary"):
@@ -94,32 +103,34 @@ def render_import_tab() -> None:
                 try:
                     file_content = uploaded_file
                     if uploaded_file.name.lower().endswith(
-                        ('.html', '.htm', '.txt', '.md', '.markdown', '.json')
+                        (".html", ".htm", ".txt", ".md", ".markdown", ".json")
                     ):
                         file_content = uploaded_file.read()
 
-                    platform_key = 'text_fallback'
+                    platform_key = "text_fallback"
 
                     if parser_mode == "🧠 Erzwinge KI-Parsing (Text)":
-                        platform_key = 'text_fallback'
+                        platform_key = "text_fallback"
                         if isinstance(file_content, bytes):
-                            file_content = file_content.decode('utf-8', errors='ignore')
+                            file_content = file_content.decode("utf-8", errors="ignore")
                     elif manual_platform:
                         platform_key = manual_platform
                     else:
                         filename = uploaded_file.name.lower()
-                        if filename.endswith('.pdf'):
-                            platform_key = 'pdf'
-                        elif filename.endswith('.epub'):
-                            platform_key = 'epub'
-                        elif filename.endswith('.fb2'):
-                            platform_key = 'fb2'
-                        elif filename.endswith(('.md', '.markdown')):
-                            platform_key = 'markdown'
-                        elif filename.endswith('.txt'):
-                            platform_key = 'text_fallback'
+                        if filename.endswith(".pdf"):
+                            platform_key = "pdf"
+                        elif filename.endswith(".epub"):
+                            platform_key = "epub"
+                        elif filename.endswith(".fb2"):
+                            platform_key = "fb2"
+                        elif filename.endswith((".md", ".markdown")):
+                            platform_key = "markdown"
+                        elif filename.endswith(".txt"):
+                            platform_key = "text_fallback"
                             if isinstance(file_content, bytes):
-                                file_content = file_content.decode('utf-8', errors='ignore')
+                                file_content = file_content.decode(
+                                    "utf-8", errors="ignore"
+                                )
                         else:
                             detected, conf, _ = detect_platform(file_content)
                             if detected:
@@ -132,28 +143,32 @@ def render_import_tab() -> None:
                                 file_container.warning(
                                     "⚠️ Keine Signatur erkannt. Nutze Text-Analyse..."
                                 )
-                                platform_key = 'text_fallback'
+                                platform_key = "text_fallback"
                                 if isinstance(file_content, bytes):
-                                    file_content = file_content.decode('utf-8', errors='ignore')
+                                    file_content = file_content.decode(
+                                        "utf-8", errors="ignore"
+                                    )
 
                     importer = get_importer(platform_key)
                     messages = importer.parse(file_content, container=file_container)
 
                     if messages:
-                        if len(messages) == 1 and \
-                                messages[0].get('content') == 'Diagnose Mode - Kein Import':
+                        if (
+                            len(messages) == 1
+                            and messages[0].get("content")
+                            == "Diagnose Mode - Kein Import"
+                        ):
                             continue
-                        res = importer.import_to_firestore(
-                            messages, metadata={'container': file_container}
+                        res = importer.import_to_db(
+                            messages, metadata={"container": file_container}
                         )
-                        if res['chat_id']:
+                        if res["chat_id"]:
                             file_container.success(
                                 f"✅ Importiert: {res['message_count']} Nachrichten."
                             )
                             st.cache_data.clear()
                             state.set_chat(  # v51: via ui/state.py
-                                res['chat_id'],
-                                load_chat_history(res['chat_id'])
+                                res["chat_id"], load_chat_history(res["chat_id"])
                             )
                             st.rerun()
                         else:
@@ -176,13 +191,11 @@ def render_import_tab() -> None:
                 json_data = json.load(uploaded_json)
                 if isinstance(json_data, list):
                     chat_title = f"Restore: {uploaded_json.name}"
-                    chat_id = create_chat_in_firestore(chat_title)
+                    chat_id = create_chat(chat_title)
                     count = 0
                     for msg in json_data:
                         save_message(
-                            chat_id,
-                            msg.get('role', 'user'),
-                            msg.get('content', '')
+                            chat_id, msg.get("role", "user"), msg.get("content", "")
                         )
                         count += 1
                     st.success(f"✅ {count} Nachrichten wiederhergestellt.")

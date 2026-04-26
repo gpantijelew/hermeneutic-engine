@@ -11,7 +11,7 @@ Utilities für die Synthese-Nachbearbeitung.
 
 import re
 import logging
-from typing import List, Set
+from typing import List
 
 from modules.llm_wrapper import llm_call
 
@@ -31,7 +31,7 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
     if not synthesis_text:
         return ""
 
-    lines = synthesis_text.split('\n')
+    lines = synthesis_text.split("\n")
     questions_to_convert = []
 
     valid_ids = set(used_source_ids)
@@ -45,7 +45,7 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
             continue
 
         # Überschriften behalten (starten mit #)
-        if stripped_line.startswith('#'):
+        if stripped_line.startswith("#"):
             temp_lines.append(stripped_line)
             continue
 
@@ -59,34 +59,34 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
                 pass
             return ""
 
-        line_validated = re.sub(r'\[(\d+)\]', validate_match, stripped_line)
+        line_validated = re.sub(r"\[(\d+)\]", validate_match, stripped_line)
 
         # Fragment-Check (Länge ohne Citations)
-        text_only = re.sub(r'\[\d+\]', '', line_validated).strip()
-        text_only_clean = re.sub(r'^[\-\*\d\.]+\s*', '', text_only)
+        text_only = re.sub(r"\[\d+\]", "", line_validated).strip()
+        text_only_clean = re.sub(r"^[\-\*\d\.]+\s*", "", text_only)
 
         if len(text_only_clean.split()) < 7:
             # WHITELIST 1: Speaker-Header (markdown bold: **Name**)
             is_speaker_header = (
-                stripped_line.startswith('**') and
-                stripped_line.endswith('**') and
-                len(stripped_line.strip('*').strip()) < 50
+                stripped_line.startswith("**")
+                and stripped_line.endswith("**")
+                and len(stripped_line.strip("*").strip()) < 50
             )
 
             # WHITELIST 2: Überschriften mit Doppelpunkt
-            is_heading = text_only_clean.endswith(':')
+            is_heading = text_only_clean.endswith(":")
 
             # WHITELIST 3: Markdown-Überschriften (### Name)
-            is_markdown_heading = stripped_line.startswith('###')
+            is_markdown_heading = stripped_line.startswith("###")
 
             # WHITELIST 4: Ranking/Struktur-Zeilen
-            clean_start = stripped_line.replace('*', '').strip().lower()
+            clean_start = stripped_line.replace("*", "").strip().lower()
             is_ranking = (
-                clean_start.startswith('platz') or
-                clean_start.startswith('rang') or
-                clean_start.startswith('rank') or
-                clean_start.startswith('text') or
-                clean_start.startswith('quelle')
+                clean_start.startswith("platz")
+                or clean_start.startswith("rang")
+                or clean_start.startswith("rank")
+                or clean_start.startswith("text")
+                or clean_start.startswith("quelle")
             )
 
             if is_speaker_header:
@@ -104,8 +104,11 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
 
             # WHITELIST 5: Forensische Struktur-Header (ANALYTICAL_FORENSIC)
             _FORENSIC_HEADERS = {
-                'befund', 'rhetorische strategie', 'funktionales motiv',
-                'diskursive konsequenz', 'fazit'
+                "befund",
+                "rhetorische strategie",
+                "funktionales motiv",
+                "diskursive konsequenz",
+                "fazit",
             }
             is_forensic_header = text_only_clean.lower() in _FORENSIC_HEADERS
 
@@ -118,9 +121,11 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
             continue
 
         # Frage-Check
-        if text_only.endswith('?'):
+        if text_only.endswith("?"):
             questions_to_convert.append(line_validated)
-            temp_lines.append(f"__QUESTION_PLACEHOLDER_{len(questions_to_convert)-1}__")
+            temp_lines.append(
+                f"__QUESTION_PLACEHOLDER_{len(questions_to_convert) - 1}__"
+            )
         else:
             temp_lines.append(line_validated)
 
@@ -133,7 +138,7 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
     final_lines = []
     for line in temp_lines:
         if "__QUESTION_PLACEHOLDER_" in line:
-            match = re.search(r'__QUESTION_PLACEHOLDER_(\d+)__', line)
+            match = re.search(r"__QUESTION_PLACEHOLDER_(\d+)__", line)
             if match:
                 try:
                     idx = int(match.group(1))
@@ -151,9 +156,9 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
             final_lines.append(line)
 
     # Doppelte Leerzeilen entfernen
-    result = '\n'.join(final_lines)
-    result = re.sub(r'\n{3,}', '\n\n', result)
-    result = re.sub(r'> \*\*Thinking:\*\*.*?(?=\n\n|\Z)', '', result, flags=re.DOTALL)
+    result = "\n".join(final_lines)
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    result = re.sub(r"> \*\*Thinking:\*\*.*?(?=\n\n|\Z)", "", result, flags=re.DOTALL)
 
     return result.strip()
 

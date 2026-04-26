@@ -8,24 +8,30 @@ sys.path.append(os.getcwd())
 # Versuch, die echten Module zu laden - falls das fehlschlägt, nutzen wir Mock-Daten
 try:
     from modules.vector_store import VectorStore
+
     print("✅ VectorStore Modul gefunden.")
 except ImportError:
     print("❌ VectorStore nicht gefunden. Prüfe Pfade.")
     sys.exit(1)
+
 
 def diagnose():
     print("--- DIAGNOSE START: ENGLISCH RETRIEVAL ---")
 
     # 1. Verbindung zur DB
     vs = VectorStore()
-    all_docs = vs.get_all_documents() # Annahme: Es gibt eine Methode, um Rohdaten zu holen
+    all_docs = (
+        vs.get_all_documents()
+    )  # Annahme: Es gibt eine Methode, um Rohdaten zu holen
 
     if not all_docs:
         # Fallback für ChromaDB direkten Zugriff, falls get_all_documents nicht existiert
-        print("⚠️ Keine direkte 'get_all_documents' Methode. Versuche Chroma Collection direkt...")
+        print(
+            "⚠️ Keine direkte 'get_all_documents' Methode. Versuche Chroma Collection direkt..."
+        )
         try:
-            all_docs = vs.collection.get()['documents']
-            ids = vs.collection.get()['ids']
+            all_docs = vs.collection.get()["documents"]
+            ids = vs.collection.get()["ids"]
             print(f"✅ {len(all_docs)} Dokumente aus Chroma geladen.")
         except Exception as e:
             print(f"❌ Kritischer Fehler beim Laden der DB: {e}")
@@ -40,9 +46,13 @@ def diagnose():
             break
 
     if english_sample:
-        print(f"\n✅ Englischen Beispiel-Text gefunden (Auszug):\n'{english_sample[:100]}...'\n")
+        print(
+            f"\n✅ Englischen Beispiel-Text gefunden (Auszug):\n'{english_sample[:100]}...'\n"
+        )
     else:
-        print("\n❌ WARNUNG: Keine offensichtlich englischen Texte in den ersten Samples gefunden.")
+        print(
+            "\n❌ WARNUNG: Keine offensichtlich englischen Texte in den ersten Samples gefunden."
+        )
         # Wir machen trotzdem weiter, vielleicht ist es nur Zufall.
 
     # 3. Tokenizer Test
@@ -50,7 +60,7 @@ def diagnose():
     # ACHTUNG: Hier muss ich raten, wie deine Tokenizer-Funktion aussieht.
     # Normalerweise nutzen wir eine einfache split() oder spacy.
 
-    query = "What is the analysis of Nietzsche?" # Beispiel-Query
+    query = "What is the analysis of Nietzsche?"  # Beispiel-Query
 
     print(f"Test-Query: '{query}'")
 
@@ -78,10 +88,15 @@ def diagnose():
 
     if hits == 0:
         print("\n❌ Auch im isolierten Test 0 Treffer.")
-        print("Mögliche Ursache: Die Query-Begriffe kommen so nicht im Text vor oder Stopwords wurden nicht entfernt.")
+        print(
+            "Mögliche Ursache: Die Query-Begriffe kommen so nicht im Text vor oder Stopwords wurden nicht entfernt."
+        )
     else:
         print(f"\n✅ Isolierter Test erfolgreich ({hits} Treffer).")
-        print("👉 FAZIT: Der Fehler liegt in der `app_forschung.py` Pipeline (z.B. erzwungene Übersetzung oder aggressiver Stopword-Filter), nicht in den Daten.")
+        print(
+            "👉 FAZIT: Der Fehler liegt in der `app_forschung.py` Pipeline (z.B. erzwungene Übersetzung oder aggressiver Stopword-Filter), nicht in den Daten."
+        )
+
 
 if __name__ == "__main__":
     diagnose()

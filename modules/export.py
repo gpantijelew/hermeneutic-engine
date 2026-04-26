@@ -20,192 +20,192 @@ from datetime import datetime
 
 
 def generate_markdown(
-    query: str, 
-    answer: str, 
-    results: List[Dict], 
-    chat_map: Dict, 
-    verification_log: Optional[Dict] = None
+    query: str,
+    answer: str,
+    results: List[Dict],
+    chat_map: Dict,
+    verification_log: Optional[Dict] = None,
 ) -> str:
     """
     Erstellt einen wissenschaftlich formatierten Markdown-Text für RAG-Analysen.
-    
+
     Für: Analyse-Fenster (vollständiger RAG-Workflow mit Quellen & Enforcer)
-    
+
     Args:
         query: User-Frage
         answer: Generierte Synthese
         results: Liste der gefundenen Quellen (mit metadata, confidence_score, etc.)
         chat_map: Dict {chat_id: title} für Quellenverzeichnis
         verification_log: Optional, Enforcer-Protokoll (structure_check, deep_check)
-    
+
     Returns:
         Formatierter Markdown-String
     """
     timestamp = datetime.now().strftime("%d.%m.%Y %H:%M")
-    
+
     md = f"# Forschungs-Notiz: {query}\n\n"
     md += f"**Datum:** {timestamp}\n\n"
-    
+
     # 1. Synthese
     md += "## 💡 Synthese\n\n"
     md += f"{answer}\n\n"
-    
+
     # 2. Enforcer Protokoll (falls vorhanden)
     if verification_log:
         md += "## 🛡️ Enforcer Protokoll (Validierung)\n\n"
-        
+
         # Struktur-Check
-        struc = verification_log.get('structure_check', [])
+        struc = verification_log.get("structure_check", [])
         if not struc:
             md += "- ✅ **Struktur-Check:** Bestanden (Alle Zitate gültig).\n"
         else:
             md += "- ⚠️ **Struktur-Check:** Warnungen:\n"
             for w in struc:
                 md += f"  - {w}\n"
-        
+
         # Tiefenprüfung (Deep Check) mit Summary-Stats
-        deep = verification_log.get('deep_check', [])
+        deep = verification_log.get("deep_check", [])
         if deep:
             # NEU v50.6: Summary-Statistik
-            valid_count = sum(1 for item in deep if item.get('valid', False))
+            valid_count = sum(1 for item in deep if item.get("valid", False))
             total_count = len(deep)
             pass_rate = (valid_count / total_count * 100) if total_count > 0 else 0
-            
+
             md += f"\n**Validierungs-Rate:** {valid_count}/{total_count} Aussagen bestätigt ({pass_rate:.1f}%)\n\n"
             md += "**Tiefenprüfung (Faktencheck):**\n\n"
-            
+
             for item in deep:
-                status_icon = "✅" if item.get('valid', False) else "❌"
-                sentence = item.get('sentence', '')[:100]  # Truncate lange Sätze
-                md += f"- {status_icon} *\"{sentence}...\"* → Quelle [{item.get('source_id', '?')}]\n"
-                
-                if not item.get('valid', False):
+                status_icon = "✅" if item.get("valid", False) else "❌"
+                sentence = item.get("sentence", "")[:100]  # Truncate lange Sätze
+                md += f'- {status_icon} *"{sentence}..."* → Quelle [{item.get("source_id", "?")}]\n'
+
+                if not item.get("valid", False):
                     md += f"  - **Diskrepanz:** {item.get('reason', 'Unbekannt')}\n"
         else:
             md += "\n*(Tiefenprüfung wurde für diesen Export nicht ausgeführt)*\n"
-        
+
         md += "\n"
-    
+
     # 3. Quellenverzeichnis
     md += "## 📚 Quellenverzeichnis\n\n"
-    
+
     for i, res in enumerate(results, 1):
-        meta = res.get('metadata', {})
-        chat_id = res.get('chat_id', 'unknown')
-        
+        meta = res.get("metadata", {})
+        chat_id = res.get("chat_id", "unknown")
+
         # Metadaten extrahieren
         chat_title = chat_map.get(chat_id, f"Chat {chat_id[:6]}")
-        platform = meta.get('platform', 'Unbekannt')
-        date = meta.get('real_date_str', 'o.D.')
-        score = res.get('confidence_score', 0)
-        
+        platform = meta.get("platform", "Unbekannt")
+        date = meta.get("real_date_str", "o.D.")
+        score = res.get("confidence_score", 0)
+
         # Content (volle Chunks für spätere Arbeit, wie gewünscht)
-        content = res.get('content', '').replace('\n', ' ')
-        
+        content = res.get("content", "").replace("\n", " ")
+
         # Quelle formatieren
         md += f"**[{i}] {platform}** ({date}). *{chat_title}*. Relevanz: {score:.1f}%.\n\n"
         md += f"> {content}\n\n"
-    
+
     return md
 
 
 def generate_chat_markdown(
-    messages: List[Dict], 
-    chat_title: str = "Chat-Protokoll"
+    messages: List[Dict], chat_title: str = "Chat-Protokoll"
 ) -> str:
     """
     Erstellt einen Markdown-Export für Chat-Konversationen (mit/ohne RAG).
-    
+
     Für: Chat-Fenster (Lite-Export ohne Quellen-Details)
-    
+
     v50.6: Minimal-Version – voller Chat-Verlauf, keine RAG-Metadaten.
     TODO v51: Integration mit rag_metadata aus Firestore für vollständige Persistenz.
-    
+
     Args:
         messages: Chat-Historie (Streamlit format: {"role": "...", "parts": [{"text": "..."}]})
         chat_title: Titel aus Firestore
-    
+
     Returns:
         Formatierter Markdown-String
     """
     timestamp = datetime.now().strftime("%d.%m.%Y %H:%M")
-    
+
     md = f"# {chat_title}\n\n"
     md += f"**Export-Datum:** {timestamp}\n"
     md += f"**Anzahl Nachrichten:** {len(messages)}\n\n"
     md += "---\n\n"
-    
+
     for i, msg in enumerate(messages, 1):
-        role = msg.get('role', 'user')
-        
+        role = msg.get("role", "user")
+
         # Content extrahieren (robust gegen verschiedene Formate)
-        parts = msg.get('parts', [])
+        parts = msg.get("parts", [])
         if parts and isinstance(parts, list) and len(parts) > 0:
-            content = parts[0].get('text', '')
+            content = parts[0].get("text", "")
         else:
-            content = '*(Keine Nachricht)*'
-        
+            content = "*(Keine Nachricht)*"
+
         # Header mit Icons
-        if role == 'user':
+        if role == "user":
             header = f"### 👤 Nachricht {i} (User)"
         else:
             header = f"### 🤖 Nachricht {i} (Assistent)"
-        
+
         md += f"{header}\n\n{content}\n\n---\n\n"
-    
+
     # TODO v51: Wenn rag_metadata in Message vorhanden, Quellen anhängen:
     # if msg.get('rag_metadata'):
     #     sources = msg['rag_metadata']['sources']
     #     md += "\n**Quellen für diese Antwort:**\n\n"
     #     for s in sources:
     #         md += f"- [{s['source_id']}] {s['metadata']['chat_title']}\n"
-    
+
     return md
 
 
 def generate_json(query: str, answer: str, results: List[Dict]) -> str:
     """
     Erstellt einen rohen JSON-Dump für Datenanalysen.
-    
+
     TODO v51: Metadaten hinzufügen (Engine-Version, Models, Reproduzierbarkeit)
-    
+
     Args:
         query: User-Frage
         answer: Generierte Antwort
         results: Quellen-Liste
-    
+
     Returns:
         JSON-String
     """
+
     # Hilfsfunktion: Konvertiert Firestore-Zeitstempel & Vektoren
     def json_serial(obj):
         """JSON serializer for objects not serializable by default"""
         if isinstance(obj, datetime):
             return obj.isoformat()
-        
+
         # FIX: Firestore Vector handling
-        if hasattr(obj, '__class__') and 'Vector' in obj.__class__.__name__:
+        if hasattr(obj, "__class__") and "Vector" in obj.__class__.__name__:
             try:
                 # Try to extract vector values (depends on Firestore version)
-                if hasattr(obj, 'to_map_value'):
+                if hasattr(obj, "to_map_value"):
                     return str(obj.to_map_value())
-                elif hasattr(obj, '_values'):
+                elif hasattr(obj, "_values"):
                     return list(obj._values)
                 else:
                     return str(obj)  # Fallback
-            except:
+            except Exception:
                 return str(obj)
-        
+
         # Fallback für unbekannte Typen
         return str(obj)
-    
+
     data = {
         "query": query,
         "generated_answer": answer,
         "timestamp": datetime.now().isoformat(),
-        "sources": results
+        "sources": results,
     }
-    
+
     # TODO v51: Erweitern mit:
     # "metadata": {
     #     "engine_version": "v50.6",
@@ -213,51 +213,51 @@ def generate_json(query: str, answer: str, results: List[Dict]) -> str:
     #     "enforcer_model": MODEL_ENFORCER,
     #     "retrieval_strategy": "hermeneutic"
     # }
-    
+
     return json.dumps(data, indent=2, ensure_ascii=False, default=json_serial)
 
 
 def generate_excel(results: List[Dict], chat_map: Dict) -> bytes:
     """
     Erstellt eine Excel-Datei mit den Rohdaten der Quellen.
-    
+
     TODO v51: Enforcer-Status als Spalte hinzufügen (für Filterung)
-    
+
     Args:
         results: Quellen-Liste
         chat_map: Dict {chat_id: title}
-    
+
     Returns:
         Excel-Datei als Bytes
     """
     rows = []
-    
+
     for i, res in enumerate(results, 1):
-        meta = res.get('metadata', {})
-        chat_id = res.get('chat_id', 'unknown')
-        
+        meta = res.get("metadata", {})
+        chat_id = res.get("chat_id", "unknown")
+
         row = {
             "Rank": i,
-            "Relevance (%)": round(res.get('confidence_score', 0), 1),
-            "Role": meta.get('role', 'unknown'),
-            "Platform": meta.get('platform', 'Unbekannt'),
-            "Date": meta.get('real_date_str', ''),
+            "Relevance (%)": round(res.get("confidence_score", 0), 1),
+            "Role": meta.get("role", "unknown"),
+            "Platform": meta.get("platform", "Unbekannt"),
+            "Date": meta.get("real_date_str", ""),
             "Chat Title": chat_map.get(chat_id, chat_id),
-            "Content": res.get('content', ''),
-            "Message ID": res.get('message_id', ''),
-            "Chat ID": chat_id
+            "Content": res.get("content", ""),
+            "Message ID": res.get("message_id", ""),
+            "Chat ID": chat_id,
         }
-        
+
         # TODO v51: Enforcer-Spalte hinzufügen
         # row["Enforcer Status"] = "✅ Valid" / "❌ Invalid" / "N/A"
-        
+
         rows.append(row)
-    
+
     df = pd.DataFrame(rows)
-    
+
     # In Bytes-Buffer schreiben
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Evidence')
-    
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Evidence")
+
     return output.getvalue()

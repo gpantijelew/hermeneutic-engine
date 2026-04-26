@@ -2,6 +2,7 @@ import re
 from datetime import datetime
 from typing import Optional
 
+
 def extract_date_from_chat_title(chat_title: str) -> Optional[str]:
     """
     Extrahiert Datum aus Chat-Titel.
@@ -16,9 +17,18 @@ def extract_date_from_chat_title(chat_title: str) -> Optional[str]:
     if match:
         month_name, year = match.groups()
         month_map = {
-            "januar": "01", "februar": "02", "märz": "03", "april": "04",
-            "mai": "05", "juni": "06", "juli": "07", "august": "08",
-            "september": "09", "oktober": "10", "november": "11", "dezember": "12"
+            "januar": "01",
+            "februar": "02",
+            "märz": "03",
+            "april": "04",
+            "mai": "05",
+            "juni": "06",
+            "juli": "07",
+            "august": "08",
+            "september": "09",
+            "oktober": "10",
+            "november": "11",
+            "dezember": "12",
         }
         month_num = month_map.get(month_name.lower())
         if month_num:

@@ -1,30 +1,30 @@
 # modules/config.py
 """
-Zentrale Konfiguration für die Hermeneutic Reconstruction Engine v52.
+Zentrale Konfiguration für die Hermeneutic Reconstruction Engine v50.9+.
 
 PHILOSOPHIE:
-- Local-First: LM Studio (LLM) + sentence-transformers (Embeddings)
-- Kein API-Key erforderlich für den Standard-Betrieb
-- LLM_BACKEND-Schalter ermöglicht optionalen Wechsel zu OpenAI-kompatiblen
-  Cloud-APIs oder Vertex AI
+- Vollständig lokal: LM Studio (LLM) + sentence-transformers (Embeddings)
+- Keine Cloud-Abhängigkeit, kein API-Key erforderlich
+- LLM_BACKEND-Schalter ermöglicht späteren Drop-in zu Claude API
 
 ÄNDERUNGSHISTORIE:
-- v52:   Public Release — Local-First, Cloud optional
-- v51:   4-Tier Model-Registry
+- v51: 4 Tiers
 - v50.9: Migration von Gemini/Firestore → LM Studio/ChromaDB/SQLite
 - v49:   Erstellt als zentrale Model-Registry
 """
 
 import os
 import sys
+import time
+import urllib.request
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Dict
 
 # Lade .env für lokale Entwicklung (optional)
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except ImportError:
     pass
@@ -32,7 +32,7 @@ except ImportError:
 # ==============================================================================
 # PROJEKT-ROOT BESTIMMUNG
 # ==============================================================================
-if hasattr(sys, '_MEIPASS'):
+if hasattr(sys, "_MEIPASS"):
     PROJECT_ROOT = Path(sys._MEIPASS)
 else:
     PROJECT_ROOT = Path(__file__).parent.parent
@@ -49,21 +49,28 @@ CHROMA_PATH = DATA_DIR / "chroma"
 # ==============================================================================
 # LLM BACKEND KONFIGURATION
 # ==============================================================================
-# Schalter für späteren Claude-API-Drop-in:
-# LLM_BACKEND=lmstudio  → LM Studio lokal (Standard)
-# LLM_BACKEND=anthropic → Claude API (sobald verfügbar)
+# Schalter für Backend-Wechsel:
+# LLM_BACKEND=local     → Lokales Modell via OpenAI-kompatibler API (Standard)
+# LLM_BACKEND=lmstudio  → Alias für 'local' (Legacy)
+# LLM_BACKEND=anthropic → Claude API
 # LLM_BACKEND=openai    → OpenAI API
-LLM_BACKEND = os.getenv("LLM_BACKEND", "lmstudio")
+# LLM_BACKEND=vertex    → Google Vertex AI
+LLM_BACKEND = os.getenv("LLM_BACKEND", "local")
 
-# LM Studio Konfiguration
-LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
-LM_STUDIO_API_KEY  = "lm-studio"  # Dummy — LM Studio prüft das nicht
+# Lokale LLM-Konfiguration (OpenAI-kompatibel, z.B. LM Studio, Ollama)
+# LOCAL_API_BASE kann in .env überschrieben werden (Standard: LM Studio Port 1234)
+LOCAL_API_BASE = os.getenv("LOCAL_API_BASE", "http://127.0.0.1:1234/v1")
+LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", LOCAL_API_BASE)
+LOCAL_API_KEY = os.getenv("LOCAL_API_KEY", "not-needed")  # Dummy — lokale Server prüfen meist nicht
 
-# Modell-Identifier (exakt wie LM Studio ihn meldet)
-# Nach Download von Gemma 3 27B Q3_K_M hier anpassen:
-LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "qwen3.5-9b-highiq-instruct")
+# Modell-Identifier (exakt wie der lokale Server ihn meldet)
+# In .env anpassen, z.B. LM_STUDIO_MODEL=qwen3.5-9b-highiq-instruct
+LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "local-model")
+# NEU: Konfigurierbare Timeouts für große Modelle (Gemma 3 27B etc.)
+LM_STUDIO_VALIDATE_TIMEOUT = int(os.getenv("LM_STUDIO_VALIDATE_TIMEOUT", "10"))
+LM_STUDIO_VALIDATE_RETRIES = int(os.getenv("LM_STUDIO_VALIDATE_RETRIES", "3"))
 # Vertex AI Konfiguration
-VERTEX_MODEL   = os.getenv("VERTEX_MODEL", "gemini-3.1-pro-preview")
+VERTEX_MODEL = os.getenv("VERTEX_MODEL", "gemini-3.1-pro-preview")
 VERTEX_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "hre-research-2026")
 
 # ==============================================================================
@@ -71,20 +78,33 @@ VERTEX_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "hre-research-2026")
 # ==============================================================================
 if LLM_BACKEND == "vertex":
     # Vertex AI Pipeline-Konfigurationen
-    RERANKER_CANDIDATES = 70
-    MAX_CHUNKS_FINAL = 8
-    MAX_TOKENS_PER_CALL = 32768 # v51: 8192 war zu knapp bei langen Synthesen
+    RERANKER_CANDIDATES = 70  # Unverändert — wir opfern keinen Recall
+    RERANKER_BATCH_SIZE = 6   # NEU: 6 Chunks × 800 Zeichen = 4800 Zeichen
+                           # + ~2000 Zeichen Prompt-Overhead = 6800 Zeichen
+                           # Sicher unter dem Fehler-Schwellwert (~10.000)
+    MAX_CHUNKS_FINAL = 30  # <--- NEU: Erhöht von 8 auf 30 für Meta-Analysen!
+    MAX_TOKENS_PER_CALL = 8192  # Verringert von 32768! Verhindert Timeouts bei langen Thinking-Prozessen. Reicht für ausführliche Analysen.
+    MAX_TOKENS_STILISIERUNG = 8192  # <--- NEU: Fehlte im Vertex-Zweig, verursachte ImportError
 else:
     # Lokale LM Studio / Standard-Pipeline Konfigurationen
     RERANKER_CANDIDATES = int(os.getenv("LOCAL_RERANKER_CANDIDATES", "20"))
     MAX_CHUNKS_FINAL = int(os.getenv("LOCAL_MAX_CHUNKS", "4"))
-    MAX_TOKENS_PER_CALL = 2048
+    MAX_TOKENS_PER_CALL = 4096  # <--- ERHÖHT: 2048 ist zu wenig, wenn der Prompt schon 2000 hat!
+    MAX_TOKENS_STILISIERUNG = 8192 # <--- NEU: LM Studio kann das auch!
+
+# Essence Parity & Rescue Mission
+ESSENCE_TOTAL_BUDGET = 60
+RESCUE_THRESHOLD = 4
+MINIMUM_RESCUE_SCORE = 0.5
+
+# Rate Limiting für Importer-Loops (Schutz vor 429 Quota Errors)
+IMPORT_RATE_LIMIT_DELAY = 0.5 if LLM_BACKEND == "vertex" else 0.0
 
 # ==============================================================================
 # MODEL-REGISTRY FÜR VERTEX AI (NEU - 3-TIER ARCHITEKTUR)
 # ==============================================================================
 if LLM_BACKEND == "vertex":
-# --- TIER 1: The Mastermind (Deepest Reasoning, User-Facing) ---
+    # --- TIER 1: The Mastermind (Deepest Reasoning, User-Facing) ---
     # Nutzt VERTEX_MODEL (Standard: gemini-3.1-pro-preview)
     # --- TIER 2: The Senior Analyst (High Logic, Background Tasks) ---
     # Nutzt gemini-2.5-pro (Starkes Reasoning, günstiger als 3.1)
@@ -93,23 +113,35 @@ if LLM_BACKEND == "vertex":
     # --- TIER 4: The Micro-Tasker (Ultra-Fast, Economy) ---
     # Nutzt gemini-2.5-flash-lite-preview (Minimale Latenz & Kosten)
     MODEL_REGISTRY = {
-        "chat":            VERTEX_MODEL,
-        "synthesis":       VERTEX_MODEL,
-        "enforcer":        "gemini-2.5-pro",         # Tier 2 (Regeln strikt durchsetzen)
-        "query_expansion": "gemini-2.5-pro",         # Tier 2 (Semantische Tiefe für die Suche)
-        "fact_extraction": "gemini-2.5-flash",       # Tier 3 (Der große Geldsparer!)
-        "reranker":        "gemini-2.5-flash",       # Tier 3
-        "bulk_labeling":   "gemini-2.5-flash",       # Tier 3
-        "router":          "gemini-2.5-flash-lite-preview-09-2025", # Tier 4
-        "title_gen":       "gemini-2.5-flash-lite-preview-09-2025", # Tier 4
-        "question_conv":   "gemini-2.5-flash-lite-preview-09-2025", # Tier 4
+        "chat": VERTEX_MODEL,
+        "synthesis": VERTEX_MODEL,
+        "enforcer": "gemini-2.5-pro",  # Tier 2 (Regeln strikt durchsetzen)
+        "query_expansion": "gemini-2.5-pro",  # Tier 2 (Semantische Tiefe für die Suche)
+        "fact_extraction": "gemini-2.5-flash",  # Tier 3 (Der große Geldsparer!)
+        "reranker": "gemini-3-flash-preview", # Tier 3 (Gen 3 Upgrade: Perfektes Batch-JSON & Speed!)
+        "bulk_labeling": "gemini-2.5-flash",  # Tier 3
+        "router": "gemini-2.5-flash-lite-preview-09-2025",  # Tier 4
+        "title_gen": "gemini-2.5-flash-lite-preview-09-2025",  # Tier 4
+        "question_conv": "gemini-2.5-flash-lite-preview-09-2025",  # Tier 4
     }
 else:
-    MODEL_REGISTRY = {k: LM_STUDIO_MODEL for k in [
-        "chat", "synthesis", "enforcer", "fact_extraction",
-        "query_expansion", "router", "reranker",
-        "bulk_labeling", "title_gen", "question_conv"
-    ]}
+    MODEL_REGISTRY = {
+        k: LM_STUDIO_MODEL
+        for k in [
+            "chat",
+            "synthesis",
+            "enforcer",
+            "fact_extraction",
+            "query_expansion",
+            "router",
+            "reranker",
+            "bulk_labeling",
+            "title_gen",
+            "question_conv",
+        ]
+    }
+
+
 # ==============================================================================
 # SYSTEM-HYGIENE & LOGGING
 # ==============================================================================
@@ -126,16 +158,16 @@ def setup_logging():
         logger.handlers.clear()
 
     file_handler = RotatingFileHandler(
-        log_file, maxBytes=5*1024*1024, backupCount=3, encoding='utf-8'
+        log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )
     file_formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
     file_handler.setFormatter(file_formatter)
     logger.addHandler(file_handler)
 
     console_handler = logging.StreamHandler()
-    console_formatter = logging.Formatter('%(levelname)s: %(message)s')
+    console_formatter = logging.Formatter("%(levelname)s: %(message)s")
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
 
@@ -143,6 +175,7 @@ def setup_logging():
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("chromadb").setLevel(logging.WARNING)
     logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
+
 
 setup_logging()
 
@@ -152,22 +185,31 @@ setup_logging()
 # auf dasselbe lokale Modell. Differenzierung möglich sobald
 # mehrere LM Studio Backends oder Claude API verfügbar.
 # ==============================================================================
-MODEL_CHAT_API       = LM_STUDIO_MODEL
-MODEL_SYNTHESIS      = LM_STUDIO_MODEL
-MODEL_ENFORCER       = LM_STUDIO_MODEL
-MODEL_FACT_EXTRACTION= LM_STUDIO_MODEL
-MODEL_QUERY_EXPANSION= LM_STUDIO_MODEL
-MODEL_ROUTER         = LM_STUDIO_MODEL
-MODEL_RERANKER       = LM_STUDIO_MODEL
-MODEL_BULK_LABELING  = LM_STUDIO_MODEL
-MODEL_TITLE_GEN      = LM_STUDIO_MODEL
-MODEL_QUESTION_CONV  = LM_STUDIO_MODEL
+MODEL_CHAT_API = LM_STUDIO_MODEL
+MODEL_SYNTHESIS = LM_STUDIO_MODEL
+MODEL_ENFORCER = LM_STUDIO_MODEL
+MODEL_FACT_EXTRACTION = LM_STUDIO_MODEL
+MODEL_QUERY_EXPANSION = LM_STUDIO_MODEL
+MODEL_ROUTER = LM_STUDIO_MODEL
+MODEL_RERANKER = LM_STUDIO_MODEL
+MODEL_BULK_LABELING = LM_STUDIO_MODEL
+MODEL_TITLE_GEN = LM_STUDIO_MODEL
+MODEL_QUESTION_CONV = LM_STUDIO_MODEL
 
 # ==============================================================================
 # EMBEDDING KONFIGURATION
 # ==============================================================================
-EMBEDDING_MODEL      = "intfloat/multilingual-e5-large"
+EMBEDDING_MODEL = "intfloat/multilingual-e5-large"
 EMBEDDING_DIMENSIONS = 1024  # XLM-RoBERTa-Large Architektur
+
+# ==============================================================================
+# CITATION RAG PIPELINE CONSTANTS (Phase 2.6)
+# ==============================================================================
+RESCUE_FETCH_LIMIT = (
+    3  # Wie viele Chunks bei der Rettungsmission pro Dokument geholt werden
+)
+# NEU: Dynamisches Token-Budget (Vertex verträgt massiv mehr als LM Studio)
+TRIM_TOKEN_BUDGET = 60000 if LLM_BACKEND == "vertex" else 4000
 
 # ==============================================================================
 # HELPER FUNCTIONS
@@ -176,10 +218,13 @@ def get_model_for_task(task: str) -> str:
     """Gibt das konfigurierte Modell für eine spezifische Aufgabe zurück."""
     # Wir nutzen das neue, dynamische MODEL_REGISTRY (das Vertex/LM Studio respektiert)
     if task not in MODEL_REGISTRY:
-        logger.warning(f"Task '{task}' nicht in MODEL_REGISTRY. Fallback auf Chat-Modell.")
-        return MODEL_REGISTRY.get("chat", VERTEX_MODEL)
+        logger.warning(
+            f"Task '{task}' nicht in MODEL_REGISTRY. Fallback auf Chat-Modell."
+        )
+        return MODEL_REGISTRY.get("chat", LM_STUDIO_MODEL)
 
     return MODEL_REGISTRY[task]
+
 
 def get_llm_client(task: str = "synthesis"):
     """
@@ -191,20 +236,16 @@ def get_llm_client(task: str = "synthesis"):
     """
     from openai import OpenAI
 
-    if LLM_BACKEND == "lmstudio":
-        client = OpenAI(
-            base_url=LM_STUDIO_BASE_URL,
-            api_key=LM_STUDIO_API_KEY
-        )
+    if LLM_BACKEND in ("local", "lmstudio"):
+        client = OpenAI(base_url=LM_STUDIO_BASE_URL, api_key=LOCAL_API_KEY)
         return client, LM_STUDIO_MODEL
 
     elif LLM_BACKEND == "anthropic":
-        # TODO: Claude API integration
+        # TODO: Claude API Drop-in sobald verfügbar
         # import anthropic
         # return anthropic.Anthropic(), "claude-sonnet-4-20250514"
         raise NotImplementedError(
-            "Anthropic API not yet configured. "
-            "Set LLM_BACKEND=lmstudio in .env."
+            "Claude API noch nicht konfiguriert. LLM_BACKEND=local in .env setzen."
         )
 
     elif LLM_BACKEND == "openai":
@@ -214,16 +255,18 @@ def get_llm_client(task: str = "synthesis"):
     elif LLM_BACKEND == "vertex":
         from google import genai
         from google.genai.types import HttpOptions
+
         client = genai.Client(
             vertexai=True,
             project=VERTEX_PROJECT,
             location="global",
-            http_options=HttpOptions(api_version="v1")
+            http_options=HttpOptions(api_version="v1"),
         )
         return client, MODEL_REGISTRY.get(task, VERTEX_MODEL)
 
     else:
         raise ValueError(f"Unbekanntes LLM_BACKEND: {LLM_BACKEND}")
+
 
 def get_system_message() -> str:
     """
@@ -234,23 +277,52 @@ def get_system_message() -> str:
     return os.getenv(
         "LLM_SYSTEM_PREFIX",
         "/no_think\nDu bist ein präziser Forschungsassistent der "
-        "Hermeneutic Reconstruction Engine."
+        "Hermeneutic Reconstruction Engine.",
     )
 
+
 def validate_config() -> bool:
-    """Prüft ob LM Studio erreichbar ist."""
-    import urllib.request
+    """
+    Prüft ob LM Studio erreichbar ist.
+
+    Mit Retry-Logik und exponentiellem Backoff für große Modelle
+    (Gemma 3 27B kann 5-10s zum Starten brauchen).
+    """
     all_valid = True
-    if LLM_BACKEND != "vertex":
-        try:
-            urllib.request.urlopen(
-                LM_STUDIO_BASE_URL.replace("/v1", ""), timeout=2
-            )
-            print(f"✅ LM Studio erreichbar: {LM_STUDIO_BASE_URL}")
-        except Exception:
-            print(f"⚠️  LM Studio nicht erreichbar: {LM_STUDIO_BASE_URL}")
-            print(f"    Starte LM Studio und aktiviere den Developer-Server.")
-            all_valid = False
+
+    if LLM_BACKEND not in ("vertex",):
+        # Lokale Backends: Verbindung zum lokalen Server testen
+        url = LM_STUDIO_BASE_URL.replace("/v1", "")
+
+        # Retry-Logik mit exponentiellem Backoff
+        for attempt in range(1, LM_STUDIO_VALIDATE_RETRIES + 1):
+            try:
+                urllib.request.urlopen(url, timeout=LM_STUDIO_VALIDATE_TIMEOUT)
+                print(f"✅ LM Studio erreichbar: {LM_STUDIO_BASE_URL} "
+                      f"(Versuch {attempt}/{LM_STUDIO_VALIDATE_RETRIES})")
+                break  # Erfolg — keine weiteren Retries
+
+            except Exception as e:
+                wait_time = 2 ** (attempt - 1)  # 1s, 2s, 4s
+
+                if attempt < LM_STUDIO_VALIDATE_RETRIES:
+                    print(f"⏳  LM Studio nicht erreichbar (Versuch {attempt}): {e}")
+                    print(f"     Warte {wait_time}s vor Retry...")
+                    time.sleep(wait_time)
+                else:
+                    # Letzter Versuch fehlgeschlagen
+                    print(f"⚠️  LM Studio nach {LM_STUDIO_VALIDATE_RETRIES} Versuchen "
+                          f"nicht erreichbar: {LM_STUDIO_BASE_URL}")
+                    print(f"     Letzter Fehler: {e}")
+                    print("     Tipps:")
+                    print("       1. LM Studio gestartet?")
+                    print("       2. Developer-Server aktiv (Port 8888)?")
+                    print("       3. Firewall blockiert?")
+                    print("       4. Großes Modell lädt noch? (Gemma 3 27B: bis zu 30s)")
+                    print(f"     Konfigurierbar via Umgebungsvariable: "
+                          f"LM_STUDIO_VALIDATE_TIMEOUT (aktuell: {LM_STUDIO_VALIDATE_TIMEOUT}s)")
+                    all_valid = False
+
     else:
         print(f"✅ Vertex AI Backend: {VERTEX_PROJECT} / {VERTEX_MODEL}")
 
@@ -261,7 +333,7 @@ def validate_config() -> bool:
     return all_valid
 
 if __name__ == "__main__":
-    print("=== HERMENEUTIC ENGINE CONFIG v50.9 ===")
+    print("=== HERMENEUTIC ENGINE CONFIG v53 ===")
     print(f"Projekt-Root:  {PROJECT_ROOT}")
     print(f"LLM Backend:   {LLM_BACKEND}")
     print(f"LLM Modell:    {LM_STUDIO_MODEL}")

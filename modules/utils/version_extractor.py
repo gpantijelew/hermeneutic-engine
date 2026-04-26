@@ -4,9 +4,12 @@ from modules.utils.date_extractor import extract_date_from_chat_title
 
 # --- KONFIGURATION HEURISTIKEN ---
 # Ab wann gilt DeepSeek als v3.0? (Format: YYYY-MM-DD)
-DEEPSEEK_V3_CUTOFF = "2025-11-01" 
+DEEPSEEK_V3_CUTOFF = "2025-11-01"
 
-def extract_version_from_chat_title(chat_title: str, speaker: str = "") -> Optional[str]:
+
+def extract_version_from_chat_title(
+    chat_title: str, speaker: str = ""
+) -> Optional[str]:
     """
     Extrahiert Modell-Version aus Chat-Titel oder Speaker-Name.
     """

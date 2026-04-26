@@ -9,11 +9,15 @@ print(f"📂 Arbeitsverzeichnis: {current_dir}")
 
 try:
     from modules.vector_store import VectorStore
+
     print("✅ VectorStore Modul geladen.")
 except ImportError as e:
     print(f"❌ Fehler beim Importieren von VectorStore: {e}")
-    print("Stelle sicher, dass du das Skript aus dem Root-Ordner des Projekts ausführst.")
+    print(
+        "Stelle sicher, dass du das Skript aus dem Root-Ordner des Projekts ausführst."
+    )
     sys.exit(1)
+
 
 def simple_diagnose():
     print("\n--- DIAGNOSE START: DATEN-INTEGRITÄT ---")
@@ -23,9 +27,9 @@ def simple_diagnose():
         vs = VectorStore()
         # Wir greifen direkt auf die Chroma Collection zu, um die Rohdaten zu sehen
         data = vs.collection.get()
-        docs = data['documents']
-        ids = data['ids']
-        metadatas = data['metadatas']
+        docs = data["documents"]
+        ids = data["ids"]
+        metadatas = data["metadatas"]
 
         count = len(docs)
         print(f"✅ Datenbank verbunden. Anzahl Dokumente: {count}")
@@ -53,7 +57,7 @@ def simple_diagnose():
             if k in doc_lower:
                 hits[k] += 1
                 if hits[k] == 1 and not sample_hit:
-                    sample_hit = doc # Speichere den ersten Treffer als Beweis
+                    sample_hit = doc  # Speichere den ersten Treffer als Beweis
 
     # 3. Auswertung
     print("\n--- ERGEBNIS ---")
@@ -64,10 +68,15 @@ def simple_diagnose():
 
     if total_hits == 0:
         print("\n❌ ALARM: Keine der englischen Begriffe gefunden!")
-        print("Hypothese: Die englischen Texte wurden gar nicht importiert oder sind korrupt.")
+        print(
+            "Hypothese: Die englischen Texte wurden gar nicht importiert oder sind korrupt."
+        )
     else:
         print(f"\n✅ Daten sind da! (Beispiel: '{sample_hit[:100]}...')")
-        print("👉 FAZIT: Die Datenbank ist okay. Das Problem liegt im Retrieval-Code (Filter/Spracherkennung).")
+        print(
+            "👉 FAZIT: Die Datenbank ist okay. Das Problem liegt im Retrieval-Code (Filter/Spracherkennung)."
+        )
+
 
 if __name__ == "__main__":
     simple_diagnose()

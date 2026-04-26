@@ -1,10 +1,13 @@
 from ..base import ConfigBasedImporter
 
+
 class HotBotImporter(ConfigBasedImporter):
-    config_key = 'hotbot'
+    config_key = "hotbot"
 
     @property
-    def platform_name(self): return "HotBot"
+    def platform_name(self):
+        return "HotBot"
 
     @property
-    def platform_id(self): return "hotbot"
+    def platform_id(self):
+        return "hotbot"

@@ -19,6 +19,7 @@ from modules.database import load_global_settings
 # DEFAULT SETTINGS
 # ==============================================================================
 
+
 def get_default_settings() -> dict:
     """
     Kapselt die Default-Einstellungen.
@@ -26,18 +27,19 @@ def get_default_settings() -> dict:
     — kein Import aus app.py, kein Circular Import.
     """
     return {
-        'temperature': 0.2,
-        'top_p': 0.95,
-        'system_instruction': get_system_message(),
-        'use_search': False,
-        'debug_mode': False,
-        'model_name': LM_STUDIO_MODEL
+        "temperature": 0.2,
+        "top_p": 0.95,
+        "system_instruction": get_system_message(),
+        "use_search": False,
+        "debug_mode": False,
+        "model_name": LM_STUDIO_MODEL,
     }
 
 
 # ==============================================================================
 # INIT (Einstiegspunkt, einmal pro Session)
 # ==============================================================================
+
 
 def init_state() -> None:
     """
@@ -71,7 +73,7 @@ def init_state() -> None:
     # Lebenszyklus: überleben Chat-Wechsel bewusst!
     _set_default("rag_saved_titles", [])
     _set_default("rag_saved_query", "")
-    _set_default("verification_log", {'structure_check': [], 'deep_check': []})
+    _set_default("verification_log", {"structure_check": [], "deep_check": []})
 
     # Chat-RAG-State, Analyse-Ergebnisse, Export:
     # Bewusst KEIN Default — Abwesenheit ist Signal.
@@ -84,6 +86,7 @@ def init_state() -> None:
 # ==============================================================================
 # LIFECYCLE-SETTER (autorisierte Schreibpfade)
 # ==============================================================================
+
 
 def reset_chat() -> None:
     """
@@ -106,9 +109,16 @@ def reset_analysis_search() -> None:
     Eigener Lebenszyklus: wird nur explizit durch
     den User (Reset-Button) ausgelöst — nie durch Chat-Wechsel.
     """
-    for key in ("rag_saved_titles", "rag_saved_query",
-                "rag_results", "rag_answer", "rag_mode",
-                "rag_query", "verification_log", "rag_pipeline_trace"):
+    for key in (
+        "rag_saved_titles",
+        "rag_saved_query",
+        "rag_results",
+        "rag_answer",
+        "rag_mode",
+        "rag_query",
+        "verification_log",
+        "rag_pipeline_trace",
+    ):
         if key in st.session_state:
             del st.session_state[key]
 
@@ -129,12 +139,9 @@ def set_rag_result(sources: list, query: str, intent: str) -> None:
     st.session_state.last_rag_query = query
     st.session_state.last_rag_intent = intent
 
+
 def set_analysis_result(
-    results: list,
-    answer: str,
-    query: str,
-    mode: str,
-    pipeline_trace: dict = None
+    results: list, answer: str, query: str, mode: str, pipeline_trace: dict = None
 ) -> None:
     """Autorisierter Schreibpfad für Analyse-Tab-Ergebnisse."""
     st.session_state.rag_results = results
@@ -144,11 +151,13 @@ def set_analysis_result(
     if pipeline_trace is not None:
         st.session_state.rag_pipeline_trace = pipeline_trace
 
+
 def clear_rag_state() -> None:
     """Löscht transiente RAG-Keys (Chat-Pfad)."""
     for key in ("last_rag_sources", "last_rag_query", "last_rag_intent"):
         if key in st.session_state:
             del st.session_state[key]
+
 
 def remove_last_turn() -> None:
     """
@@ -159,6 +168,7 @@ def remove_last_turn() -> None:
     if len(st.session_state.history) >= 2:
         st.session_state.history = st.session_state.history[:-2]
 
+
 def pop_last_message() -> None:
     """
     Entfernt nur den letzten einzelnen Eintrag aus der History.
@@ -168,20 +178,22 @@ def pop_last_message() -> None:
     if st.session_state.history:
         st.session_state.history.pop()
 
+
 def append_to_history(role: str, text: str) -> None:
     """
     Autorisierter Schreibpfad für history.
     Kapselt das Format — kein UI-Modul kennt die interne Struktur.
     """
-    st.session_state.history.append({
-        "role": role,
-        "parts": [{"text": text}]
-    })
+    st.session_state.history.append({"role": role, "parts": [{"text": text}]})
 
+def set_last_error(message: str | None = None) -> None:
+    """Autorisierter Schreibpfad für Fehlermeldungen. None löscht den Fehler."""
+    st.session_state.last_error = message
 
 # ==============================================================================
 # PRIVATE HELPERS
 # ==============================================================================
+
 
 def _set_default(key: str, value) -> None:
     """Setzt einen Key nur, wenn er noch nicht existiert."""

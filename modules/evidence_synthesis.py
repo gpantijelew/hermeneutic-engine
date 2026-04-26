@@ -3,16 +3,19 @@ import json
 import logging
 from modules.config import MODEL_FACT_EXTRACTION
 from modules.llm_wrapper import llm_call, llm_call_json
-from typing import List, Dict, Any, Optional
+from typing import List, Dict
 
 logger = logging.getLogger(__name__)
+
 
 class EvidenceFirstSynthesizer:
     def __init__(self, model_name=MODEL_FACT_EXTRACTION):
         self.model_name = model_name
         # API Key wird global konfiguriert, wir verlassen uns darauf
 
-    def generate(self, query: str, results: List[Dict], target_speakers: List[str]) -> str:
+    def generate(
+        self, query: str, results: List[Dict], target_speakers: List[str]
+    ) -> str:
         """
         Führt die 3-Schritt-Synthese durch:
         1. Extraction (Primärquellen finden)
@@ -25,11 +28,11 @@ class EvidenceFirstSynthesizer:
         # 2. Schritt 1: Extraction
         evidence = self._extract_evidence(query, context_text, target_speakers)
 
-        # Fallback: Wenn keine Primärquellen gefunden wurden, brechen wir ab 
+        # Fallback: Wenn keine Primärquellen gefunden wurden, brechen wir ab
         # und lassen den normalen RAG weitermachen (wird vom Caller gehandhabt)
-        if not evidence.get('primary_quotes'):
+        if not evidence.get("primary_quotes"):
             logger.info("EvidenceFirst: Keine Primärquellen gefunden. Fallback.")
-            return None 
+            return None
 
         # 3. Schritt 2: Validation
         validated = self._validate_evidence(evidence)
@@ -42,13 +45,17 @@ class EvidenceFirstSynthesizer:
     def _prepare_context(self, results: List[Dict]) -> str:
         context = ""
         for i, res in enumerate(results):
-            meta = res.get('metadata', {})
-            model = meta.get('model_name', 'Unbekannt')
-            content = res.get('content', '').replace('\n', ' ')
-            context += f"SOURCE_ID [{i+1}] | SPEAKER: {model} | CONTENT: {content}\n\n"
+            meta = res.get("metadata", {})
+            model = meta.get("model_name", "Unbekannt")
+            content = res.get("content", "").replace("\n", " ")
+            context += (
+                f"SOURCE_ID [{i + 1}] | SPEAKER: {model} | CONTENT: {content}\n\n"
+            )
         return context
 
-    def _extract_evidence(self, query: str, context: str, target_speakers: List[str]) -> Dict:
+    def _extract_evidence(
+        self, query: str, context: str, target_speakers: List[str]
+    ) -> Dict:
         """Schritt 1: Extrahiere Zitate (Aggressive Version v48.2)."""
         targets_str = ", ".join(target_speakers)
 
@@ -90,36 +97,26 @@ class EvidenceFirstSynthesizer:
         """
 
         try:
-            evidence = llm_call_json(prompt, task="fact_extraction", fallback={"primary_quotes": [], "secondary_mentions": []})
-            # =========================================================
-            # DIAGNOSTIK TEST 2: EXTRACTION
-            # =========================================================
-            print("\n=== [TEST 2] EXTRACTION DIAGNOSTIK ===")
-            print(f"Target Speakers: {target_speakers}")
-            primaries = evidence.get('primary_quotes', [])
-            print(f"Primärquellen gefunden: {len(primaries)}")
+            evidence = llm_call_json(
+                prompt,
+                task="fact_extraction",
+                fallback={"primary_quotes": [], "secondary_mentions": []},
+            )
+            primaries = evidence.get("primary_quotes", [])
+            logger.debug("Target Speakers: %s", target_speakers)
+            logger.debug("Primärquellen gefunden: %d", len(primaries))
 
             for q in primaries:
-                sid = q.get('source_id', '??')
-                spk = q.get('speaker', 'Unknown')
-                txt = q.get('quote', '')[:80].replace('\n', ' ')
-                print(f"  - [{sid}] {spk}: {txt}...")
-
-            # Check auf Blade Runner
-            br_found = any('blade runner' in q.get('quote', '').lower() for q in primaries)
-            if br_found:
-                print("✅ 'Blade Runner' Zitat extrahiert!")
-            else:
-                print("❌ 'Blade Runner' Zitat NICHT extrahiert!")
-            print("======================================\n")
-            # =========================================================
+                sid = q.get("source_id", "??")
+                spk = q.get("speaker", "Unknown")
+                txt = q.get("quote", "")[:80].replace("\n", " ")
+                logger.debug("  - [%s] %s: %s...", sid, spk, txt)
 
             return evidence
         except Exception as e:
             logger.error(f"Extraction Error: {e}")
-            print(f"❌ EXTRACTION CRASH: {e}")
             return {"primary_quotes": [], "secondary_mentions": []}
-    
+
     def _validate_evidence(self, evidence: Dict) -> Dict:
         """Schritt 2: Prüfe auf Widersprüche."""
 
@@ -127,10 +124,10 @@ class EvidenceFirstSynthesizer:
         ANALYSE DER BEWEISLAGE.
 
         PRIMÄRQUELLEN (Das Original):
-        {json.dumps(evidence.get('primary_quotes', []), indent=2)}
+        {json.dumps(evidence.get("primary_quotes", []), indent=2)}
 
         SEKUNDÄRQUELLEN (Die Analyse durch Dritte):
-        {json.dumps(evidence.get('secondary_mentions', []), indent=2)}
+        {json.dumps(evidence.get("secondary_mentions", []), indent=2)}
 
         AUFGABE:
         Vergleiche. Widersprechen die Sekundärquellen den Primärquellen?
@@ -150,30 +147,33 @@ class EvidenceFirstSynthesizer:
         """
 
         try:
-            validated = llm_call_json(prompt, task="fact_extraction", fallback={"validated_primary": evidence.get('primary_quotes', []), "contradictions": []})
+            validated = llm_call_json(
+                prompt,
+                task="fact_extraction",
+                fallback={
+                    "validated_primary": evidence.get("primary_quotes", []),
+                    "contradictions": [],
+                },
+            )
 
-            # =========================================================
-            # DIAGNOSTIK TEST 3: VALIDATION
-            # =========================================================
-            print("\n=== [TEST 3] VALIDATION DIAGNOSTIK ===")
-            val_prim = validated.get('validated_primary', [])
-            print(f"Validierte Primärquellen: {len(val_prim)}")
+            val_prim = validated.get("validated_primary", [])
+            logger.debug("Validierte Primärquellen: %d", len(val_prim))
 
             for v in val_prim:
-                print(f"  ✅ [{v.get('source_id')}] {v.get('speaker')}")
+                logger.debug("  ✅ [%s] %s", v.get("source_id"), v.get("speaker"))
 
-            contradictions = validated.get('contradictions', [])
+            contradictions = validated.get("contradictions", [])
             if contradictions:
-                print(f"⚠️ {len(contradictions)} Widersprüche gefunden.")
-            print("======================================\n")
-            # =========================================================
+                logger.debug("%d Widersprüche gefunden.", len(contradictions))
 
             return validated
         except Exception as e:
             logger.error(f"Validation Error: {e}")
-            print(f"❌ VALIDATION CRASH: {e}")
             # Fallback: Alles durchlassen, wenn Validation crasht (für Debugging)
-            return {"validated_primary": evidence.get('primary_quotes', []), "contradictions": []}
+            return {
+                "validated_primary": evidence.get("primary_quotes", []),
+                "contradictions": [],
+            }
 
     def _synthesize(self, query: str, validated: Dict) -> str:
         """Schritt 3: Schreibe den Artikel."""
@@ -182,10 +182,10 @@ class EvidenceFirstSynthesizer:
         Du bist ein investigativer Journalist. Schreibe einen Artikel über: "{query}"
 
         BASIS (Primärquellen - HÖCHSTE PRIORITÄT):
-        {json.dumps(validated.get('validated_primary', []), indent=2)}
+        {json.dumps(validated.get("validated_primary", []), indent=2)}
 
         KONFLIKTE (Primär vs. Sekundär):
-        {json.dumps(validated.get('contradictions', []), indent=2)}
+        {json.dumps(validated.get("contradictions", []), indent=2)}
 
         AUFGABE:
         Schreibe eine "Investigative Synthese".
@@ -199,26 +199,21 @@ class EvidenceFirstSynthesizer:
         try:
             text = llm_call(prompt, task="synthesis")
 
-            # =========================================================
-            # DIAGNOSTIK TEST 4: SYNTHESIS
-            # =========================================================
-            print("\n=== [TEST 4] SYNTHESIS DIAGNOSTIK ===")
-            # Prüfen, ob IDs im Text vorkommen
-            val_ids = [str(v.get('source_id')) for v in validated.get('validated_primary', [])]
+            val_ids = [
+                str(v.get("source_id")) for v in validated.get("validated_primary", [])
+            ]
             found_ids = [vid for vid in val_ids if f"[{vid}]" in text]
 
-            print(f"Erwartete IDs aus Validation: {val_ids}")
-            print(f"Gefundene IDs im Text: {found_ids}")
+            logger.debug("Erwartete IDs aus Validation: %s", val_ids)
+            logger.debug("Gefundene IDs im Text: %s", found_ids)
 
             if len(found_ids) == len(val_ids) and len(val_ids) > 0:
-                print("✅ Alle Beweise zitiert.")
+                logger.debug("Alle Beweise zitiert.")
             elif len(val_ids) == 0:
-                print("⚠️ Keine validierten Beweise vorhanden.")
+                logger.debug("Keine validierten Beweise vorhanden.")
             else:
                 missing = set(val_ids) - set(found_ids)
-                print(f"❌ Synthese hat Beweise ignoriert! Fehlend: {missing}")
-            print("======================================\n")
-            # =========================================================
+                logger.warning("Synthese hat Beweise ignoriert! Fehmend: %s", missing)
 
             return text
         except Exception as e:

@@ -14,29 +14,31 @@ Architektur:
 - Entfernt Header/Footer heuristisch (Seitenzahlen, wiederkehrende Patterns)
 - Fügt Seiten nahtlos zusammen
 """
+
 import fitz  # PyMuPDF
 import re
 from typing import List, Dict, Any, Optional
 from collections import Counter
-import logging # Für Fehler-Logging
+import logging  # Für Fehler-Logging
 
 # Relative Imports
 import sys
 import os
+
 if __name__ == "__main__":
-     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from modules.importers.base import BaseImporter
-from modules.database import create_chat_in_firestore, save_message
+from modules.database import create_chat, save_message
 
 
 class PDFImporter(BaseImporter):
     @property
-    def platform_name(self): 
+    def platform_name(self):
         return "PDF Dokument"
 
     @property
-    def platform_id(self): 
+    def platform_id(self):
         return "pdf"
 
     def _detect_headers_footers(self, doc: fitz.Document) -> tuple:
@@ -56,7 +58,7 @@ class PDFImporter(BaseImporter):
 
         for page in doc:
             text = page.get_text("text", sort=True)
-            lines = [l.strip() for l in text.split('\n') if l.strip()]
+            lines = [l.strip() for l in text.split("\n") if l.strip()]
 
             if len(lines) >= 2:
                 # Erste 2 Zeilen (Header)
@@ -91,7 +93,7 @@ class PDFImporter(BaseImporter):
         Returns:
             Gereinigter Text
         """
-        lines = text.split('\n')
+        lines = text.split("\n")
         cleaned_lines = []
 
         for line in lines:
@@ -106,21 +108,21 @@ class PDFImporter(BaseImporter):
                 continue
 
             # Skip reine Seitenzahlen (Regex: nur Zahlen, evtl. mit "Seite" davor)
-            if re.match(r'^(Seite\s+)?\d+$', stripped, re.IGNORECASE):
+            if re.match(r"^(Seite\s+)?\d+$", stripped, re.IGNORECASE):
                 continue
 
             cleaned_lines.append(line)  # Behalte Original-Einrückung
 
         # Füge Zeilen zusammen
-        result = '\n'.join(cleaned_lines)
+        result = "\n".join(cleaned_lines)
 
         # De-Hyphenation (auch für Kyrillisch)
         # Pattern: Wort + Bindestrich + Zeilenumbruch + optional Whitespace + Wort
         # \w+ matcht auch kyrillische Buchstaben in Python 3
-        result = re.sub(r'(\w+)-\n\s*(\w+)', r'\1\2', result)
+        result = re.sub(r"(\w+)-\n\s*(\w+)", r"\1\2", result)
 
         # Mehrfache Leerzeilen reduzieren (3+ → 2)
-        result = re.sub(r'\n{3,}', '\n\n', result)
+        result = re.sub(r"\n{3,}", "\n\n", result)
 
         return result.strip()
 
@@ -133,12 +135,12 @@ class PDFImporter(BaseImporter):
         - Extrahiere vollen Text, filtere heuristisch
         - v49.6: Memory Leak Fix (doc.close)
         """
-        container = kwargs.get('container')
-        doc = None # Initialisieren für finally-Block
+        container = kwargs.get("container")
+        doc = None  # Initialisieren für finally-Block
 
         try:
             # 1. Datei-Bytes laden
-            if hasattr(content, 'read'):
+            if hasattr(content, "read"):
                 file_bytes = content.read()
             else:
                 file_bytes = content
@@ -147,13 +149,17 @@ class PDFImporter(BaseImporter):
             doc = fitz.open(stream=file_bytes, filetype="pdf")
 
             if container:
-                container.info(f"📄 PDF geladen: {len(doc)} Seiten. Analysiere Header/Footer...")
+                container.info(
+                    f"📄 PDF geladen: {len(doc)} Seiten. Analysiere Header/Footer..."
+                )
 
             # 2. Header/Footer-Patterns erkennen
             headers, footers = self._detect_headers_footers(doc)
 
             if container and (headers or footers):
-                container.info(f"🔍 Erkannt: {len(headers)} Header, {len(footers)} Footer-Patterns")
+                container.info(
+                    f"🔍 Erkannt: {len(headers)} Header, {len(footers)} Footer-Patterns"
+                )
 
             # 3. Text extrahieren (OHNE Bounding Box!)
             full_content = []
@@ -161,7 +167,9 @@ class PDFImporter(BaseImporter):
             for i, page in enumerate(doc):
                 # Fortschritt im UI
                 if container and i % 10 == 0:
-                    container.progress(i / len(doc), text=f"Verarbeite Seite {i+1}...")
+                    container.progress(
+                        i / len(doc), text=f"Verarbeite Seite {i + 1}..."
+                    )
 
                 # Extrahiere VOLLEN Text (sort=True für Column-Detection)
                 text = page.get_text("text", sort=True)
@@ -170,13 +178,13 @@ class PDFImporter(BaseImporter):
                     # Optional: Seiten-Marker (für Referenzen)
                     # Nur bei langen Docs sinnvoll
                     if len(doc) > 5:
-                        page_marker = f"\n--- Seite {i+1} ---\n"
+                        page_marker = f"\n--- Seite {i + 1} ---\n"
                         full_content.append(page_marker + text)
                     else:
                         full_content.append(text)
 
             if not full_content:
-                if container: 
+                if container:
                     container.warning("⚠️ PDF scheint leer zu sein (oder nur Bilder).")
                 return []
 
@@ -191,8 +199,8 @@ class PDFImporter(BaseImporter):
 
             # 5. Metadaten extrahieren
             meta_info = doc.metadata
-            title = meta_info.get('title', 'Unbenanntes Dokument')
-            author = meta_info.get('author', 'Unbekannter Autor')
+            title = meta_info.get("title", "Unbenanntes Dokument")
+            author = meta_info.get("author", "Unbekannter Autor")
 
             # 6. In Nachrichten strukturieren
             messages = []
@@ -206,29 +214,25 @@ class PDFImporter(BaseImporter):
                 f"*Der folgende Text wurde automatisch aus dem PDF extrahiert und bereinigt.*"
             )
 
-            messages.append({
-                "role": "system",
-                "content": intro_text
-            })
+            messages.append({"role": "system", "content": intro_text})
 
             # Content in Chunks (Firestore-Limit: 1MB pro Doc)
             CHUNK_SIZE = 20000  # Zeichen pro Nachricht
 
             for i in range(0, len(cleaned_text), CHUNK_SIZE):
                 chunk = cleaned_text[i : i + CHUNK_SIZE]
-                messages.append({
-                    "role": "model",
-                    "content": chunk
-                })
+                messages.append({"role": "model", "content": chunk})
 
             if container:
-                container.success(f"✅ Import fertig: {len(messages)} Abschnitte, {len(cleaned_text)} Zeichen.")
+                container.success(
+                    f"✅ Import fertig: {len(messages)} Abschnitte, {len(cleaned_text)} Zeichen."
+                )
 
             return messages
 
         except Exception as e:
             error_msg = f"❌ Konnte PDF nicht öffnen/verarbeiten: {e}"
-            if container: 
+            if container:
                 container.error(error_msg)
             logging.error(error_msg, exc_info=True)
             raise ImportError(error_msg)
@@ -238,20 +242,18 @@ class PDFImporter(BaseImporter):
             if doc:
                 doc.close()
 
-    def import_to_firestore(
-        self, 
-        messages: List[Dict[str, Any]], 
-        metadata: Optional[Dict] = None
+    def import_to_db(
+        self, messages: List[Dict[str, Any]], metadata: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """
-        Speichert die PDF-Struktur in Firestore.
+        Speichert die PDF-Struktur in der Datenbank.
         """
         if not messages:
-            return {'chat_id': None, 'message_count': 0}
+            return {"chat_id": None, "message_count": 0}
 
         # Titel aus der ersten Nachricht extrahieren
-        first_content = messages[0].get('content', '')
-        title_match = re.search(r'\*\*(.+?)\*\*', first_content)
+        first_content = messages[0].get("content", "")
+        title_match = re.search(r"\*\*(.+?)\*\*", first_content)
 
         if title_match:
             chat_title = f"PDF: {title_match.group(1)}"
@@ -259,21 +261,21 @@ class PDFImporter(BaseImporter):
             chat_title = f"PDF Import ({len(messages)} Teile)"
 
         # Chat erstellen
-        chat_id = create_chat_in_firestore(chat_title)
+        chat_id = create_chat(chat_title)
 
         if not chat_id:
-            return {'chat_id': None, 'message_count': 0}
+            return {"chat_id": None, "message_count": 0}
 
         # Nachrichten speichern
         saved_count = 0
         for msg in messages:
-            role = msg.get('role', 'model')
-            content = msg.get('content', '')
+            role = msg.get("role", "model")
+            content = msg.get("content", "")
             if content and save_message(chat_id, role, content):
                 saved_count += 1
 
         return {
-            'chat_id': chat_id,
-            'message_count': saved_count,
-            'model_name': 'PDF Reader v49.5'
+            "chat_id": chat_id,
+            "message_count": saved_count,
+            "model_name": "PDF Reader v49.5",
         }

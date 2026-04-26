@@ -33,8 +33,8 @@ class StructuredFactExtractor:
         chunks_text = ""
         for i, chunk in enumerate(chunks):
             # Wir nutzen den Index i als ID für die Zuordnung
-            meta = chunk.get('metadata', {})
-            content = chunk.get('content', '')[:800]
+            meta = chunk.get("metadata", {})
+            content = chunk.get("content", "")[:800]
 
             chunks_text += f"\n--- CHUNK ID {i} ---\n"
             chunks_text += f"Metadaten: Datum={meta.get('real_date_str')}, Modell={meta.get('platform')}, Rolle={meta.get('role')}\n"

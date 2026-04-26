@@ -46,57 +46,60 @@ logger = logging.getLogger(__name__)
 class QueryIntent(Enum):
     """
     Intent-Taxonomie für Retrieval-Strategie.
-    
+
     FACTUAL: Definitionen, Fakten, "Was ist X?"
         → retrieval_limit: ~15, threshold: 0.75 (eng & präzise)
-    
+
     LITERARY: Gedichte, Essays, Stil, Atmosphäre
         → retrieval_limit: ~40, threshold: 0.45 (weit & inklusiv)
-    
+
     ANALYTICAL: Vergleiche, Entwicklungen, "X vs. Y"
         → retrieval_limit: ~30, threshold: 0.6 (Balance)
 
     ANALYTICAL_FORENSIC: Dekonstruktion, Motivanalyse, Widersprüche
         → retrieval_limit: ~35, threshold: 0.45 (Balance + Breite)
     """
+
     FACTUAL = "factual"
     LITERARY = "literary"
     ANALYTICAL = "analytical"
     ANALYTICAL_FORENSIC = "analytical_forensic"
-
+    META_ANALYTICAL = "meta_analytical"
+    SYNTHESIS_BEST_OF = "synthesis_best_of"
+    STILISIERUNG = "stilisierung"
 
 class HermeneuticRouter:
     """
     Entscheidet VOR dem Retrieval über die Strategie.
-    
+
     ROLLE IN DER PIPELINE:
     1. Router analysiert Query → FACTUAL/LITERARY/ANALYTICAL/ANALYTICAL_FORENSIC
     2. Retrieval mit adaptiven Parametern (limit, threshold)
     3. Query-Classifier analysiert Results → DISCOURSE/EXEGESIS
     4. Synthesis mit passendem Prompt (beide Infos kombiniert)
     """
-    
+
     def __init__(self):
         """
         Initialisiert den Router.
         v50.9-local: Kein eigener Client mehr – llm_wrapper übernimmt.
         """
         logger.info("✅ HermeneuticRouter initialized (llm_wrapper backend).")
-    
+
     def route_query(self, query: str) -> Dict[str, Any]:
         """
         Analysiert die Query und gibt Retrieval-Parameter zurück.
-        
+
         Args:
             query: User-Frage (natürlichsprachig)
-        
+
         Returns:
             Dict mit:
             - intent (str): FACTUAL, LITERARY, ANALYTICAL, ANALYTICAL_FORENSIC
             - limit (int): Anzahl Chunks aus DB (15-40)
             - threshold (float): Reranker-Schwelle (0.45-0.75)
             - reasoning (str): Begründung der Entscheidung
-        
+
         Bei Fehler: Fallback auf sichere Defaults
         """
         prompt = f"""Du bist der Router für eine hermeneutische Suchmaschine.
@@ -126,9 +129,34 @@ KATEGORIEN:
 → Braucht: Viele Belege, breite Abdeckung für kritische Analyse
 → Parameter: retrieval_limit=35, rerank_threshold=0.45
 
+**ANALYTICAL_FORENSIC**: Dekonstruktion, Motivanalyse, Widersprüche aufdecken,
+"Warum hat X seine Meinung geändert?", "Welche Interessen stecken hinter?",
+"Was verschweigt der Text?", Selbstzeugnisse kritisch hinterfragen
+→ Braucht: Viele Belege, breite Abdeckung für kritische Analyse
+→ Parameter: retrieval_limit=35, rerank_threshold=0.45
+
+**META_ANALYTICAL**: Der User fragt nach der METHODIK eines Analyse-Protokolls,
+nach der Arbeitsweise oder den blinden Flecken eines ANALYSTEN.
+Der User will wissen, WIE analysiert wird, nicht WAS analysiert wird.
+→ Braucht: Breite Abdeckung des Protokolls, Fokus auf Methodik
+→ Parameter: retrieval_limit=30, rerank_threshold=0.5
+ERKENNUNGSMERKMALE (mindestens eines muss zutreffen):
+- Query enthält: "Methodik", "Vorgehen", "Arbeitsweise", "Ansatz",
+  "Herangehensweise", "Analysemethode", "methodisch"
+- Query fragt nach dem Autor des Protokolls oder dem Analysten:
+  "wie hat der Analyst...", "wie geht der Autor vor...",
+  "mit welcher Methode..."
+- Query zielt auf den Analyserahmen, nicht den Inhalt:
+  "Wie ist diese Analyse aufgebaut?", "Was ist das für ein Verfahren?",
+  "Welche Theorie steckt dahinter?"
+ABGRENZUNG zu ANALYTICAL_FORENSIC:
+ANALYTICAL_FORENSIC dekonstruiert einen TEXT oder DISKURS.
+META_ANALYTICAL dekonstruiert eine ANALYSE oder ein PROTOKOLL.
+Faustregel: Ist das Dokument selbst eine Analyse? → META_ANALYTICAL.
+
 OUTPUT (JSON):
 {{
-    "intent": "FACTUAL" | "LITERARY" | "ANALYTICAL" | "ANALYTICAL_FORENSIC",
+    "intent": "FACTUAL" | "LITERARY" | "ANALYTICAL" | "ANALYTICAL_FORENSIC" | "META_ANALYTICAL",
     "retrieval_limit": int,
     "rerank_threshold": float,
     "reasoning": "Kurze Begründung (1 Satz)"
@@ -138,12 +166,12 @@ WICHTIG:
 - Antworte NUR mit dem JSON-Objekt, ohne Markdown-Backticks oder Präambel!
 - Wähle EINE Kategorie (die dominante)
 """
-        
+
         fallback = {
             "intent": "FACTUAL",
             "retrieval_limit": 20,
             "rerank_threshold": 0.65,
-            "reasoning": "Router Error - Fallback zu sicheren Defaults"
+            "reasoning": "Router Error - Fallback zu sicheren Defaults",
         }
 
         try:
@@ -155,39 +183,43 @@ WICHTIG:
                     result = result[0]
                 else:
                     raise ValueError("Empty JSON list returned by Router")
-            
+
             # Validierung & Normalisierung
             intent_str = result.get("intent", "FACTUAL").upper()
             limit = result.get("retrieval_limit", 20)
             threshold = result.get("rerank_threshold", 0.65)
             reasoning = result.get("reasoning", "Default reasoning")
-            
+
             # Sanity Checks
             if limit < 5 or limit > 100:
-                logger.warning(f"⚠️ Router gab unplausibles Limit: {limit}. Normalisiere auf 20.")
+                logger.warning(
+                    f"⚠️ Router gab unplausibles Limit: {limit}. Normalisiere auf 20."
+                )
                 limit = 20
-            
+
             if threshold < 0.0 or threshold > 1.0:
-                logger.warning(f"⚠️ Router gab unplausible Threshold: {threshold}. Normalisiere auf 0.65.")
+                logger.warning(
+                    f"⚠️ Router gab unplausible Threshold: {threshold}. Normalisiere auf 0.65."
+                )
                 threshold = 0.65
-            
+
             logger.info(
                 f"🧭 Router Decision: {intent_str} "
                 f"(k={limit}, thresh={threshold:.2f}) - {reasoning}"
             )
-            
+
             return {
                 "intent": intent_str,
                 "limit": limit,
                 "threshold": threshold,
-                "reasoning": reasoning
+                "reasoning": reasoning,
             }
-        
+
         except Exception as e:
             logger.error(f"❌ Router failed: {e}. Falling back to FACTUAL defaults.")
             return {
                 "intent": "FACTUAL",
                 "limit": 20,
                 "threshold": 0.65,
-                "reasoning": "Router Error - Fallback zu sicheren Defaults"
+                "reasoning": "Router Error - Fallback zu sicheren Defaults",
             }

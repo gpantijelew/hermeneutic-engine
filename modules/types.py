@@ -20,20 +20,23 @@ für konzeptuelle Kategorien der Hermeneutik (z.B. DISCOURSE vs. EXEGESIS).
 - v48: EXEGESIS-Modus hinzugefügt
 - v47: Initiale Version mit DISCOURSE
 """
+
 from enum import Enum
+
 
 class QueryType(Enum):
     """
     Fundamentale Modi der hermeneutischen Analyse.
-    
+
     DISCOURSE: Dialektische Vielstimmigkeit (≥3 Sprecher, Vergleich)
     EXEGESIS: Konzeptuelle Auslegung (Erklärung, Definition)
-    
+
     Diese Unterscheidung folgt Dilthey/Gadamer: Verstehen vs. Erklären.
-    
+
     Verwendung:
         - query_classifier.py: Entscheidet basierend auf Query + Chunks
         - enforcer_config.py: Passt Validierungs-Regeln an Query-Typ an
     """
+
     DISCOURSE = "discourse"
     EXEGESIS = "exegesis"

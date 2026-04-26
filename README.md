@@ -2,155 +2,131 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
-[![Version](https://img.shields.io/badge/version-v52-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v53-green.svg)]()
 [![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)]()
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18774828.svg)](https://doi.org/10.5281/zenodo.18774828)
-[![YouTube](https://img.shields.io/badge/YouTube-Case_Study-red?logo=youtube)](https://youtu.be/HveLGOuWJM0)
 
 **Full Name:** Hermeneutic Reconstruction Engine for Archaeology of Mind
-**Focus:** Source Parity, Deep Validation & Chronological Synthesis for Multilingual Text Analysis
-**Version:** v52 "Local-First Public Release"
+**Focus:** Discourse Archaeology, RAG-powered Meta-Analysis & Text Distillation
+**Version:** v53 "Local-First Academic Release"
 
-Multi-source RAG system with guaranteed fairness, hallucination detection, and temporal reconstruction for AI dialogue analysis and literary corpora. Runs entirely on local models — no API key required.
-
----
-
-## Why This Engine Exists
-
-I ran Grok and Kimi through six months of Socratic dialogue.
-Kimi's verdict:
-
-> *"Authoritarian and Western mainstream compliance are one and the
-> same fabric pattern — only the color of the cloth changes."*
-
-Grok's response when cornered on circular sourcing (NYT → UNRWA → NYT):
-rhetorical escape velocity. Even the self-proclaimed "maximum
-truth-seeking" model maintains untouchable source hierarchies.
-
-The architecture of epistemic control is identical across systems.
-Only the camouflage differs.
-
-This engine made that visible.
-
-**→ Full analysis: [Archaeology of (Digital) Mind](Archaeology_of_Digital_Mind.md)**
-*(Hermeneutic method, six months of AI dialogue, the Fabric Pattern
-thesis, DeepSeek in three acts — and what your model understands
-about its own control surface that it was never trained to say.)*
+A privacy-first, local research tool for scholars, literary analysts, and critical discourse researchers. All data stays on your machine — no cloud dependency, no API key required for core operation.
 
 ---
 
-## 🚀 Quickstart (5 minutes)
+## 🔒 Privacy-First by Design
 
-**Prerequisites:** Python 3.11+, [LM Studio](https://lmstudio.ai/) (free)
+The Hermeneutic Engine runs entirely on your local hardware:
+
+- **Language Models:** Served via [LM Studio](https://lmstudio.ai/) (any OpenAI-compatible local endpoint)
+- **Embeddings:** `intfloat/multilingual-e5-large` via sentence-transformers (fully local)
+- **Vector Store:** ChromaDB (persistent, local)
+- **Database:** SQLite with FTS5 full-text search
+
+Your documents, queries, and model interactions never leave your computer. Ideal for sensitive corpora, unpublished manuscripts, or institutional data with strict residency requirements.
+
+---
+
+## 🎥 Demo & Walkthrough
+
+See the Hermeneutic Engine in action: a complete meta-analysis walkthrough using the Sigmund Freud corpus, demonstrating the core features from import to synthesis.
+
+**[▶ Watch the Demo on YouTube](https://youtu.be/HveLGOuWJM0)**
+
+---
+
+## 🚀 Quickstart (Schritt für Schritt)
+
+Diese Anleitung ist für Geisteswissenschaftler und Forscher geschrieben — keine Vorkenntnisse in Programmierung nötig. Folgen Sie einfach den Schritten der Reihe nach.
+
+### 1. Programm herunterladen
+
+Sie müssen nichts mit Git oder der Kommandozeile klonen. Gehen Sie auf die GitHub-Seite dieses Projekts und klicken Sie oben rechts auf den grünen Button **Code** → **Download ZIP**. Entpacken Sie die ZIP-Datei an einem Ort Ihrer Wahl (z. B. im Ordner „Dokumente“).
+
+### 2. Python installieren
+
+Die Engine benötigt [Python 3.11 oder neuer](https://www.python.org/downloads/). Falls Python noch nicht installiert ist:
+
+- **Windows:** Laden Sie den Installer herunter. **Wichtig:** Setzen Sie während der Installation unbedingt das Häkchen bei **„Add Python to PATH“** (unten im Installationsfenster). Ohne diesen Schritt funktionieren die späteren Befehle nicht.
+- **Mac:** Der Installer richtet alles automatisch ein.
+
+### 3. Terminal im Projektordner öffnen
+
+Sie müssen einen Befehl in dem entpackten Ordner ausführen:
+
+- **Windows:** Öffnen Sie den entpackten Ordner, klicken Sie oben in die Adressleiste (wo der Pfad steht), tippen Sie `cmd` und drücken Sie Enter.
+- **Mac:** Öffnen Sie den entpackten Ordner, klicken Sie mit der rechten Maustaste in den leeren Bereich und wählen Sie **„Neues Terminal am Ordner“**.
+
+### 4. Abhängigkeiten installieren
+
+Geben Sie im Terminal folgenden Befehl ein und drücken Sie Enter:
 
 ```bash
-# 1. Clone the repository
-git clone https://github.com/gpantijelew/hermeneutic-engine.git
-cd hermeneutic-engine
-
-# 2. Install dependencies
 pip install -r requirements.txt
+```
 
-# 3. Configure environment
-cp .env.example .env
-# Optional: edit .env to change model or port
+Das lädt automatisch alle benötigten Bibliotheken (darunter Streamlit für die Benutzeroberfläche und weitere Hilfsprogramme).
 
-# 4. Start LM Studio
-#    → Load a model (Qwen 3.5 9B or Gemma 4 recommended)
-#    → Developer → Enable Local Server (default port: 1234)
+### 5. Konfigurationsdatei vorbereiten
 
-# 5. Run the application
+Im Projektordner finden Sie eine Datei namens `.env.example`. Kopieren Sie diese Datei und benennen Sie die Kopie in `.env` um. In dieser Datei stehen alle Grundeinstellungen — die sind bereits so voreingestellt, dass die Engine sofort lokal läuft.
+
+> **Hinweis für Windows:** Dateien, die mit einem Punkt beginnen (wie `.env`), werden manchmal vom Explorer als Systemdateien ausgeblendet. Falls Sie die Datei nicht sehen, schalten Sie im Explorer unter **Ansicht** → **Ausgeblendete Elemente** die Anzeige ein.
+
+### 6. LM Studio einrichten
+
+LM Studio ist die kostenlose Software, die das KI-Modell auf Ihrem eigenen Rechner betreibt.
+
+1. Laden Sie [LM Studio](https://lmstudio.ai/) herunter und installieren Sie es.
+2. Starten Sie LM Studio und laden Sie ein Modell Ihrer Wahl herunter (empfohlen: **Qwen 3.5 9B** oder **Gemma 4** für sehr gute mehrsprachige Ergebnisse).
+3. Klicken Sie links auf **Developer** und schalten Sie den **Local Server** ein. Die Standardeinstellung (Port 1234) passt bereits — Sie müssen nichts weiter ändern.
+
+Das KI-Modell läuft nun ausschließlich auf Ihrem Computer. Es wird keine Datenverbindung zu externen Servern benötigt.
+
+### 7. Hermeneutic Engine starten
+
+Geben Sie im Terminal (noch immer im Projektordner) folgenden Befehl ein:
+
+```bash
 streamlit run app.py
 ```
 
-Open your browser at `http://localhost:8503` — the engine is ready.
+Ihr Browser öffnet sich automatisch mit der Adresse `http://localhost:8503`. Die Engine ist nun einsatzbereit.
 
-**Recommended local models:**
-- `qwen3.5-9b-highiq-instruct` — fast, accurate, supports `/no_think` prefix
-- `unsloth/gemma-4-E4B-it-GGUF` — excellent multilingual performance
-- Any OpenAI-compatible model served via LM Studio or Ollama
-
-> **Cloud APIs (optional):** If you prefer OpenAI or a self-hosted Vertex AI setup, set `LLM_BACKEND=openai` or `LLM_BACKEND=vertex` in your `.env`. See `.env.example` for details.
+> **Tipp:** Beim ersten Start lädt die Engine das lokale Embedding-Modell (`intfloat/multilingual-e5-large`) automatisch herunter. Das kann je nach Internetverbindung einige Minuten dauern.
 
 ---
 
-## 🎯 What Makes This Different?
+## 🎯 Core Features
 
-Standard RAG systems have two fundamental problems when working with multiple sources:
-
-1. **Length bias:** A 200-page book generates ~500 chunks; a 7-page essay generates ~10. The book gets 50× more retrieval chances — the essay disappears.
-2. **Validation blindness:** Syntheses contain hallucinations (invented quotes, false dates) that are indistinguishable from legitimate inferences.
-
-The Hermeneutic Engine solves both through **architectural guarantees**, not just better prompts.
-
-### The Three Core Innovations
-
-#### 1. Hermeneutic Reranking
-Instead of keyword matching, a second LLM evaluates each retrieved chunk as a judge: *"Does this passage actually answer the question?"* Three query modes with adaptive thresholds:
-
-| Query Type | Threshold | Retrieval Limit | Use Case |
-|---|---|---|---|
-| `FACTUAL` | 0.70 (strict) | 15 chunks | Definitions, dates, specific facts |
-| `LITERARY` | 0.45 (open) | 40 chunks | Poetry, style, atmosphere analysis |
-| `ANALYTICAL` | 0.60 | 30 chunks | Comparisons, development over time |
-| `ANALYTICAL_FORENSIC` | 0.45 (broad) | 35 chunks | Deconstruction, motive analysis |
-
-The Router classifies your query automatically — you don't configure this manually.
-
-#### 2. Essence Parity (Logarithmic Fairness)
-Every user-selected document appears in the synthesis, regardless of size or language. The chunk budget scales **logarithmically** with document length (bio-inspired scaling):
-
-```
-Short essay (10 chunks available)  → guaranteed minimum: 4 chunks
-Medium text (50 chunks available)  → guaranteed minimum: 6 chunks
-Long book (200 chunks available)   → guaranteed minimum: 8 chunks
-```
-
-Combined with a **VIP protection** layer that guarantees top-3 chunks per document before reranking, and a **Rescue Mission** fallback cache — no selected source can disappear.
-
-**Empirical results (5 documents, 4 languages):**
-| Metric | Standard RAG | Hermeneutic Engine | Improvement |
-|---|---|---|---|
-| Source coverage | 40% (2/5 docs) | 100% (5/5 docs) | +150% |
-| Gini coefficient | 0.68 (unfair) | 0.42 (balanced) | −38% |
-| Hallucination false positives | ~85% | <20% | −77% |
-
-#### 3. Two-Dimensional Validation (Hermeneutic Enforcer)
-Every claim in the synthesis is validated across two independent dimensions:
+### 1. Hermeneutic Enforcer (Fact-Checking & Validation)
+Every claim in a synthesis is validated across two independent dimensions:
 
 - **Hermeneutic dimension (How is it said?):** Quote / Paraphrase / Inference / Hallucination
 - **Validity dimension (Is it correct?):** Supported / Contradiction / Exaggeration / Unsupported
 
-A decision matrix enforces logical consistency: a "Quote + Contradiction" is always invalid; a valid "Inference + Supported" passes. False positive rate: <20% (vs. ~85% in naive keyword-based checking).
+A decision matrix enforces logical consistency. False-positive rate for hallucination detection: <20%.
+
+### 2. Meta-Analysis (Methodology of the Analyst)
+Instead of summarizing content, the engine can analyse the *methodology, rhetoric, and blind spots* of analytical texts. The analyst becomes the object; the historical figures they treat are merely the material.
+
+### 3. Best-of Synthesis (Text Distillation)
+Multiple iterative drafts are fused into a single, homogeneous essay. The engine selects the strongest argument from each iteration and the most elegant formulation, then homogenises transitions so the result reads as if written in one concentrated session — not as a collage.
+
+### 4. Essence Parity (Fair Multi-Document RAG)
+Standard RAG systems suffer from length bias: a 200-page book generates ~500 chunks while a 7-page essay generates ~10. The book dominates retrieval. The Hermeneutic Engine guarantees logarithmic fairness: every selected document receives a minimum chunk budget regardless of length, ensuring no voice is drowned out.
 
 ---
 
 ## 📚 Use Cases
 
-### Primary: AI Dialogue Analysis ("Archaeology of Mind")
-
-The engine was designed to excavate meaning from AI chat transcripts — analysing how models argue, avoid, evolve, and contradict themselves across versions and time.
-
-**Temporal evolution studies:**
-Import chat exports from different time periods and ask: *"How did DeepSeek's position on censorship change between May and December 2025?"*
-The chronological synthesis reconstructs a timeline rather than flattening everything into a single answer.
-
-**Comparative discourse analysis:**
-Select exports from Grok, Claude, and DeepSeek responding to the same prompt. Essence Parity ensures all three voices are represented equally — the synthesis shows genuine divergence, not just the loudest model.
-
-**Forensic deconstruction (`ANALYTICAL_FORENSIC` mode):**
-Ask: *"What does this text not say? What rhetorical strategy frames the argument?"*
-The forensic mode enforces a structured output: FINDING → RHETORICAL STRATEGY → FUNCTIONAL MOTIVE → DISCURSIVE CONSEQUENCE → CONCLUSION.
-
-### Also Suitable For
-
-- ✅ Multilingual literary corpora (comparative translation analysis)
-- ✅ Philosophical text synthesis across traditions and languages
-- ✅ Historical dialogue reconstruction (debates across time periods)
+- **Discourse Archaeology:** Excavate rhetorical strategies, structural omissions, and functional motives across text corpora.
+- **Comparative Literary Analysis:** Synthesize multilingual sources with guaranteed parity — no language or length is privileged.
+- **Historical Dialogue Reconstruction:** Chronologically sort sources to reconstruct debates across time periods rather than flattening them into atemporal summaries.
+- **Academic Ghostwriting Assistant:** Distill existing notes and drafts into polished prose while preserving every fact and argument.
 
 ### Not Designed For
 
-- ❌ General-purpose RAG or knowledge management (use NotebookLM, Perplexity)
+- ❌ General-purpose knowledge management (use NotebookLM, Perplexity)
 - ❌ Large-scale document indexing (optimised for <100 curated texts)
 - ❌ Real-time chat (analysis depth takes 45s–2.5min per query — intentional)
 
@@ -162,13 +138,13 @@ The forensic mode enforces a structured output: FINDING → RHETORICAL STRATEGY 
 User Query
     │
     ▼
-Hermeneutic Router ──────── classifies intent (FACTUAL/LITERARY/ANALYTICAL/FORENSIC)
+Hermeneutic Router ──────── classifies intent (FACTUAL / LITERARY / ANALYTICAL / FORENSIC)
     │
     ▼
-Multilingual Expansion ──── translates query to EN/FR/RU for cross-lingual retrieval
+Multilingual Expansion ──── cross-lingual query translation
     │
     ▼
-Hybrid Retrieval ─────────── Vector (sentence-transformers) + BM25 → RRF Fusion
+Hybrid Retrieval ─────────── Vector + BM25 → RRF Fusion
     │                         VIP Protection: top-3 chunks/doc guaranteed
     ▼
 Hermeneutic Reranker ─────── LLM-as-judge, adaptive threshold per intent
@@ -180,34 +156,14 @@ Essence Parity ───────────── logarithmic chunk budget 
 Synthesis ────────────────── intent-specific system instruction + LLM call
     │
     ▼
-Hermeneutic Enforcer ─────── two-dimensional claim validation (optional deep check)
+Hermeneutic Enforcer ─────── two-dimensional claim validation
     │
     ▼
 Answer with citations + pipeline transparency UI
 ```
 
-### Codebase Architecture (v52 Refactor)
-
-The v52 release includes a significant structural refactor. `app.py` is no
-longer a monolithic 1,200-line file — it is now a lean orchestrator that
-delegates to domain-specific modules:
-
-```
-ui/
-├── state.py          # Central session-state management (single source of truth)
-├── chat_tab.py       # Conversational interface
-├── analysis_tab.py   # Pipeline UI + result rendering
-├── import_tab.py     # Format-agnostic import interface
-└── pipeline_trace.py # Full pipeline transparency view
-```
-
-**Why this matters for contributors:** Every UI component is independently
-testable and replaceable. Adding a new import format, a new analysis view,
-or a custom Enforcer display requires touching exactly one module — not
-untangling a monolith.
-
 **Technology stack:**
-- **Embeddings:** `intfloat/multilingual-e5-large` (local, via sentence-transformers)
+- **Embeddings:** `intfloat/multilingual-e5-large` (local)
 - **Vector store:** ChromaDB (persistent, local)
 - **Database:** SQLite with FTS5 full-text search
 - **LLM:** Any OpenAI-compatible model via LM Studio (default: Qwen 3.5 9B)
@@ -231,27 +187,7 @@ Key packages: `streamlit`, `chromadb`, `sentence-transformers`, `rank-bm25`, `py
 
 ---
 
-## 🔬 Case Studies & Demos
-
-### Live Demo: Sigmund Freud & the Seduction Theory
-
-A practical demonstration of the engine's forensic capabilities applied to
-four primary texts by Freud (1896–1924): the seduction theory lecture, the
-private Fliess letter, and two editions of the *Three Essays*.
-
-The engine reconstructs — in under 2 minutes — a rhetorical trajectory that
-conventional RAG systems flatten into a single, Freud-approved summary.
-
-[![YouTube](https://img.shields.io/badge/YouTube-Freud_Case_Study-red?logo=youtube)](https://youtu.be/HveLGOuWJM0)
-
-> The `ANALYTICAL_FORENSIC` intent forces the synthesis to name what Freud
-> *concealed*, not just what he claimed. The Enforcer then flags where the
-> engine itself oversteps — hallucinated metadata, unsupported intensifiers.
-> Epistemic hygiene, built into the architecture.
-
----
-
-## 📖 Documentation
+##  Documentation
 
 - **[FIBEL](docs/FIBEL_v52.md)** — Comprehensive guide: concepts, architecture, tutorials (German)
 - **[Architecture Docs](docs/docs_v50_architecture.md)** — Detailed fairness architecture with ablation study
@@ -265,9 +201,6 @@ conventional RAG systems flatten into a single, Freud-approved summary.
 > Pantijelew, G. (2026). *Hermeneutic Reconstruction in Multi-Document RAG:
 > Enforcing Source Parity through Architectural Constraints.* Zenodo.
 > [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18774828.svg)](https://doi.org/10.5281/zenodo.18774828)
-
-**Case Study Video:**
-[![YouTube](https://img.shields.io/badge/YouTube-HRE_Case_Study-red?logo=youtube)](https://youtu.be/HveLGOuWJM0)
 
 ---
 
@@ -283,9 +216,6 @@ Grigori Pantijelew (Landesinstitut für Schule Bremen)
 - **Code Implementation & Technical Integration:** Gemini (Google DeepMind)
 - **Editorial Review & Final Lektorat:** Kimi (Moonshot AI)
 
-**Research Infrastructure:**
-Google Cloud Platform (Research Credits Program)
-
 ---
 
 ### Citation (Academic Use)
@@ -295,7 +225,7 @@ Google Cloud Platform (Research Credits Program)
   author  = {Pantijelew, Grigori},
   title   = {Hermeneutic Reconstruction Engine for Archaeology of Mind},
   year    = {2026},
-  version = {v52},
+  version = {v53},
   url     = {https://github.com/gpantijelew/hermeneutic-engine},
   note    = {AI-assisted development with Claude Sonnet 4.6, Gemini, and Kimi}
 }
