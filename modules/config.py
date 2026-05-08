@@ -1,6 +1,6 @@
 # modules/config.py
 """
-Zentrale Konfiguration für die Hermeneutic Reconstruction Engine v50.9+.
+Zentrale Konfiguration für die Hermeneutic Reconstruction Engine seit v50.9+.
 
 PHILOSOPHIE:
 - Vollständig lokal: LM Studio (LLM) + sentence-transformers (Embeddings)
@@ -8,6 +8,7 @@ PHILOSOPHIE:
 - LLM_BACKEND-Schalter ermöglicht späteren Drop-in zu Claude API
 
 ÄNDERUNGSHISTORIE:
+- v55: IFS-Supervisions-Panel, Map-Reduce Pipeline, supervision_tab.py, wissenschaftliche Methodik in hermeneutic_protocol.yaml
 - v51: 4 Tiers
 - v50.9: Migration von Gemini/Firestore → LM Studio/ChromaDB/SQLite
 - v49:   Erstellt als zentrale Model-Registry
@@ -49,23 +50,19 @@ CHROMA_PATH = DATA_DIR / "chroma"
 # ==============================================================================
 # LLM BACKEND KONFIGURATION
 # ==============================================================================
-# Schalter für Backend-Wechsel:
-# LLM_BACKEND=local     → Lokales Modell via OpenAI-kompatibler API (Standard)
-# LLM_BACKEND=lmstudio  → Alias für 'local' (Legacy)
-# LLM_BACKEND=anthropic → Claude API
+# Schalter für späteren Claude-API-Drop-in:
+# LLM_BACKEND=lmstudio  → LM Studio lokal (Standard)
+# LLM_BACKEND=anthropic → Claude API (sobald verfügbar)
 # LLM_BACKEND=openai    → OpenAI API
-# LLM_BACKEND=vertex    → Google Vertex AI
-LLM_BACKEND = os.getenv("LLM_BACKEND", "local")
+LLM_BACKEND = os.getenv("LLM_BACKEND", "lmstudio")
 
-# Lokale LLM-Konfiguration (OpenAI-kompatibel, z.B. LM Studio, Ollama)
-# LOCAL_API_BASE kann in .env überschrieben werden (Standard: LM Studio Port 1234)
-LOCAL_API_BASE = os.getenv("LOCAL_API_BASE", "http://127.0.0.1:1234/v1")
-LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", LOCAL_API_BASE)
-LOCAL_API_KEY = os.getenv("LOCAL_API_KEY", "not-needed")  # Dummy — lokale Server prüfen meist nicht
+# LM Studio Konfiguration
+LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://127.0.0.1:8888/v1")
+LM_STUDIO_API_KEY = "lm-studio"  # Dummy — LM Studio prüft das nicht
 
-# Modell-Identifier (exakt wie der lokale Server ihn meldet)
-# In .env anpassen, z.B. LM_STUDIO_MODEL=qwen3.5-9b-highiq-instruct
-LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "local-model")
+# Modell-Identifier (exakt wie LM Studio ihn meldet)
+# Nach Download von Gemma 3 27B Q3_K_M hier anpassen:
+LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "qwen3.5-27b-instruct")
 # NEU: Konfigurierbare Timeouts für große Modelle (Gemma 3 27B etc.)
 LM_STUDIO_VALIDATE_TIMEOUT = int(os.getenv("LM_STUDIO_VALIDATE_TIMEOUT", "10"))
 LM_STUDIO_VALIDATE_RETRIES = int(os.getenv("LM_STUDIO_VALIDATE_RETRIES", "3"))
@@ -84,8 +81,10 @@ if LLM_BACKEND == "vertex":
                            # Sicher unter dem Fehler-Schwellwert (~10.000)
     MAX_CHUNKS_FINAL = 30  # <--- NEU: Erhöht von 8 auf 30 für Meta-Analysen!
     MAX_TOKENS_PER_CALL = 8192  # Verringert von 32768! Verhindert Timeouts bei langen Thinking-Prozessen. Reicht für ausführliche Analysen.
-    MAX_TOKENS_STILISIERUNG = 8192  # <--- NEU: Fehlte im Vertex-Zweig, verursachte ImportError
+    MAX_TOKENS_STILISIERUNG = 8192 # <--- NEU: Fehlte im Vertex-Zweig, verursachte ImportError
+    MAX_IFS_TOKENS = 2048  # FIX: 3.1-pro-preview braucht mehr Puffer (war 768, MAX_TOKENS-Abbruch)
 else:
+    MAX_IFS_TOKENS = 2048  # FIX: 3.1-pro-preview braucht mehr Puffer (war 768, MAX_TOKENS-Abbruch)
     # Lokale LM Studio / Standard-Pipeline Konfigurationen
     RERANKER_CANDIDATES = int(os.getenv("LOCAL_RERANKER_CANDIDATES", "20"))
     MAX_CHUNKS_FINAL = int(os.getenv("LOCAL_MAX_CHUNKS", "4"))
@@ -115,6 +114,7 @@ if LLM_BACKEND == "vertex":
     MODEL_REGISTRY = {
         "chat": VERTEX_MODEL,
         "synthesis": VERTEX_MODEL,
+        "ifs": "gemini-3.1-pro-preview",  # Tier 1 — max_output_tokens respektiert (2.5-pro hat technical limitation)
         "enforcer": "gemini-2.5-pro",  # Tier 2 (Regeln strikt durchsetzen)
         "query_expansion": "gemini-2.5-pro",  # Tier 2 (Semantische Tiefe für die Suche)
         "fact_extraction": "gemini-2.5-flash",  # Tier 3 (Der große Geldsparer!)
@@ -130,6 +130,7 @@ else:
         for k in [
             "chat",
             "synthesis",
+            "ifs",
             "enforcer",
             "fact_extraction",
             "query_expansion",
@@ -221,7 +222,7 @@ def get_model_for_task(task: str) -> str:
         logger.warning(
             f"Task '{task}' nicht in MODEL_REGISTRY. Fallback auf Chat-Modell."
         )
-        return MODEL_REGISTRY.get("chat", LM_STUDIO_MODEL)
+        return MODEL_REGISTRY.get("chat", VERTEX_MODEL)
 
     return MODEL_REGISTRY[task]
 
@@ -236,8 +237,8 @@ def get_llm_client(task: str = "synthesis"):
     """
     from openai import OpenAI
 
-    if LLM_BACKEND in ("local", "lmstudio"):
-        client = OpenAI(base_url=LM_STUDIO_BASE_URL, api_key=LOCAL_API_KEY)
+    if LLM_BACKEND == "lmstudio":
+        client = OpenAI(base_url=LM_STUDIO_BASE_URL, api_key=LM_STUDIO_API_KEY)
         return client, LM_STUDIO_MODEL
 
     elif LLM_BACKEND == "anthropic":
@@ -245,7 +246,7 @@ def get_llm_client(task: str = "synthesis"):
         # import anthropic
         # return anthropic.Anthropic(), "claude-sonnet-4-20250514"
         raise NotImplementedError(
-            "Claude API noch nicht konfiguriert. LLM_BACKEND=local in .env setzen."
+            "Claude API noch nicht konfiguriert. LLM_BACKEND=lmstudio in .env setzen."
         )
 
     elif LLM_BACKEND == "openai":
@@ -290,8 +291,7 @@ def validate_config() -> bool:
     """
     all_valid = True
 
-    if LLM_BACKEND not in ("vertex",):
-        # Lokale Backends: Verbindung zum lokalen Server testen
+    if LLM_BACKEND != "vertex":
         url = LM_STUDIO_BASE_URL.replace("/v1", "")
 
         # Retry-Logik mit exponentiellem Backoff
@@ -331,6 +331,36 @@ def validate_config() -> bool:
     print(f"✅ ChromaDB: {CHROMA_PATH}")
 
     return all_valid
+
+# --- A.2 DETERMINISTIC PIPELINE MODE ---
+
+DOMAIN_ANALYSIS = "analysis_pipeline"
+DOMAIN_IFS = "ifs_resonanzraum"
+DOMAIN_STILISIERUNG = "stilisierung"
+
+# Backend-Fähigkeiten (Schutz für lokale Server)
+BACKEND_CAPABILITIES = {
+    "vertex": {"seed": True},
+    "openai": {"seed": True},
+    "lm_studio": {"seed": False},
+}
+
+# Parameter-Profile pro Domain
+DOMAIN_PROFILES = {
+    DOMAIN_ANALYSIS: {
+        "temperature": 0.3,
+        "top_p": 0.85,
+        "seed": 42,
+    },
+    DOMAIN_IFS: None,          # Nutzt YAML-Defaults
+    DOMAIN_STILISIERUNG: None, # Nutzt YAML-Defaults
+}
+
+# --- A.7 ENFORCER SAMPLING ---
+ENFORCER_SAMPLING_RATE_HIGH = 5     # 20% Sampling-Rate am Anfang
+ENFORCER_SAMPLING_RATE_LOW = 20     # 5% Sampling-Rate für Dauerbetrieb
+ENFORCER_CALIBRATION_TARGET = 100   # Ab 100 manuellen Reviews greift die LOW-Rate
+ENFORCER_VERSION = "v1.0"           # Aktuelle Version der Enforcer-Logik/Prompts
 
 if __name__ == "__main__":
     print("=== HERMENEUTIC ENGINE CONFIG v53 ===")

@@ -59,6 +59,8 @@ def init_state() -> None:
     # Chat List UI
     _set_default("rename_chat_id", None)
     _set_default("delete_confirm_id", None)
+    _set_default("sidebar_offset", 0)
+    _set_default("sidebar_page_size", 50)
 
     # Settings
     if "global_settings" not in st.session_state:
@@ -81,6 +83,19 @@ def init_state() -> None:
 
     # Analyse-Modus-Kontext
     _set_default("selected_chat_for_analysis", None)
+
+    # IFS Resonanzraum (Mission D) — Dual-Modus: Triad + Single (D.S3.3)
+    _set_default("ifs_mode", "triad")        # "triad" | "single"
+    _set_default("ifs_situation", "")
+    _set_default("ifs_current_part", None)   # Nur im Single-Modus aktiv
+    _set_default("ifs_histories", {
+        "ifs_control": [],
+        "ifs_fight": [],
+        "ifs_fear": [],
+    })
+    _set_default("ifs_started", False)
+    _set_default("ifs_emergency", False)
+    _set_default("ifs_exile_warned", False)
 
 
 # ==============================================================================
@@ -159,6 +174,16 @@ def clear_rag_state() -> None:
             del st.session_state[key]
 
 
+def reset_sidebar_offset() -> None:
+    """Setzt Sidebar-Pagination auf Seite 1 zurück."""
+    st.session_state.sidebar_offset = 0
+
+
+def increment_sidebar_offset() -> None:
+    """Lädt die nächste Seite Chats in der Sidebar."""
+    st.session_state.sidebar_offset += st.session_state.sidebar_page_size
+
+
 def remove_last_turn() -> None:
     """
     Entfernt die letzte User+Model-Runde (2 Einträge) aus der History.
@@ -189,6 +214,63 @@ def append_to_history(role: str, text: str) -> None:
 def set_last_error(message: str | None = None) -> None:
     """Autorisierter Schreibpfad für Fehlermeldungen. None löscht den Fehler."""
     st.session_state.last_error = message
+
+
+def reset_ifs_session() -> None:
+    """
+    Setzt den IFS-Resonanzraum vollständig zurück.
+    Eigener Lebenszyklus — nie durch Chat-Wechsel ausgelöst.
+    Nur durch expliziten User-Klick.
+    """
+    st.session_state.ifs_mode = "triad"
+    st.session_state.ifs_situation = ""
+    st.session_state.ifs_current_part = None
+    st.session_state.ifs_histories = {
+        "ifs_control": [],
+        "ifs_fight": [],
+        "ifs_fear": [],
+    }
+    st.session_state.ifs_started = False
+    st.session_state.ifs_emergency = False
+    st.session_state.ifs_exile_warned = False
+
+
+def start_ifs_session(situation: str, mode: str = "triad", part: str = "ifs_control") -> None:
+    """Startet eine neue IFS-Session im gewählten Modus."""
+    st.session_state.ifs_mode = mode
+    st.session_state.ifs_situation = situation
+    st.session_state.ifs_current_part = part if mode == "single" else None
+    st.session_state.ifs_histories = {
+        "ifs_control": [],
+        "ifs_fight": [],
+        "ifs_fear": [],
+    }
+    st.session_state.ifs_started = True
+    st.session_state.ifs_emergency = False
+
+
+def switch_ifs_part(new_part: str, old_label: str = "", new_label: str = "") -> None:
+    """Wechselt im Single-Modus zu einer anderen inneren Stimme.
+    Fügt eine Reflection-Nachricht im alten Part ein."""
+    current = st.session_state.get("ifs_current_part")
+    if current and current != new_part:
+        st.session_state.ifs_histories[current].append({
+            "role": "reflection",
+            "text": f"Wechsel zur {new_label}-Stimme.",
+        })
+    st.session_state.ifs_current_part = new_part
+
+
+def append_ifs_message(part: str, role: str, text: str) -> None:
+    """
+    Autorisierter Schreibpfad für IFS-Gesprächsverlauf.
+    part: 'ifs_control', 'ifs_fight', oder 'ifs_fear'
+    role: 'user', 'assistant', oder 'reflection'
+    """
+    st.session_state.ifs_histories[part].append({
+        "role": role,
+        "text": text,
+    })
 
 # ==============================================================================
 # PRIVATE HELPERS

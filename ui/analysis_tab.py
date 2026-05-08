@@ -18,7 +18,11 @@ from modules.vector_store import LocalVectorStore
 from modules.citation_rag import CitationRAG
 from modules.synthesis_utils import post_process_synthesis
 from modules.confidence_scoring import calculate_confidence_scores
-from modules.export import generate_markdown, generate_json, generate_excel
+from modules.export import (
+    generate_markdown, generate_json, generate_excel,
+    generate_markdown_from_record,
+)
+from modules.database import get_analysis_list, get_analysis_by_id
 
 
 def render_analysis_tab(all_chats: list) -> None:
@@ -191,6 +195,7 @@ def _render_results_block(chat_map: dict) -> None:
         results,
         chat_map,
         st.session_state.get("verification_log"),
+        st.session_state.get("rag_pipeline_trace"),
     )
     json_data = generate_json(st.session_state.rag_query, answer, results)
     excel_data = generate_excel(results, chat_map)
@@ -225,6 +230,38 @@ def _render_results_block(chat_map: dict) -> None:
             "application/json",
             width="stretch",
         )
+
+    # --- A.3: GESPEICHERTE ANALYSEN (Lazy Loading) ---
+    st.markdown("---")
+    with st.expander("📜 Gespeicherte Analysen", expanded=False):
+        analyses = get_analysis_list(limit=20)
+        if not analyses:
+            st.info("Noch keine Analysen in der Datenbank. Führe eine Analyse durch, um sie zu persistieren.")
+        else:
+            st.caption(f"Letzte {len(analyses)} Analysen (neueste zuerst)")
+            for a in analyses:
+                col_a1, col_a2 = st.columns([3, 1])
+                with col_a1:
+                    ts = a.get("timestamp", "")[:16]
+                    query_short = a.get("query", "")[:60]
+                    intent = a.get("intent", "N/A")
+                    st.markdown(f"**{ts}** — `{intent}` — *{query_short}...*")
+                with col_a2:
+                    if st.button("📥", key=f"dl_analysis_{a['analysis_id']}", help="Markdown herunterladen"):
+                        full = get_analysis_by_id(a["analysis_id"])
+                        if full:
+                            md = generate_markdown_from_record(full)
+                            safe = "".join(
+                                c for c in full.get("query", "analyse")
+                                if c.isalnum() or c in (" ", "-", "_")
+                            ).strip()[:30]
+                            st.download_button(
+                                "⬇️ Download",
+                                md,
+                                f"Analyse_{safe}_{full['analysis_id']}.md",
+                                "text/markdown",
+                                key=f"dl_confirm_{a['analysis_id']}",
+                            )
 
 
 # ==============================================================================

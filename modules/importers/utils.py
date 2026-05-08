@@ -7,7 +7,7 @@ utils.py (v52 - Minimale Ergänzung zu Grigoris Version)
 """
 import os
 from modules.llm_wrapper import llm_call
-from typing import Tuple, Optional, Dict, List
+from typing import Tuple, Optional, Dict, List, Any
 
 # Marker (aus alter importer.py) + ERGÄNZUNGEN
 PLATFORM_MARKERS = {
@@ -34,12 +34,25 @@ PLATFORM_MARKERS = {
         "mw-content-text",  # Content-Wrapper
         "ws-noexport",  # Wikisource-spezifisch
     ],
+    # NEU: Grok, Perplexity, GLM (v52.1)
+    "grok": ["grok.com", "x.ai", "response-content-markdown", "message-bubble"],
+    "perplexity": ["perplexity.ai", "group/query", "prose dark:prose-invert", "pplx-icon"],
+    "glm": ["glm-chat-item", "zhipu-ai-response"],
+}
+
+# JSON-Struktur-Signaturen für Auto-Detection
+JSON_SIGNATURES = {
+    "gemini_json": ("exportType", "dialogue"),
+    "chatgpt_json": ("conversations", "mapping"),
+    "claude_json": ("chat_messages", "sender"),
 }
 
 
-def detect_platform(html_content: bytes) -> Tuple[Optional[str], float, Dict]:
+def detect_platform(
+    content: bytes, file_path: Optional[str] = None
+) -> Tuple[Optional[str], float, Dict]:
     """
-    Erkennt die Plattform anhand von HTML-Signaturen.
+    Erkennt die Plattform anhand von HTML/JSON-Signaturen und File-Extension.
 
     Returns:
         Tuple: (platform_name, confidence, diagnostics)
@@ -47,22 +60,55 @@ def detect_platform(html_content: bytes) -> Tuple[Optional[str], float, Dict]:
         - confidence: Float 0.0-1.0 (Anteil gefundener Marker)
         - diagnostics: Dict mit gefundenen Signaturen pro Plattform
     """
-    # JSON-Erkennung (vor HTML-Analyse)
+    diagnostics: Dict[str, Any] = {}
+
+    # ── 1. File-Extension als schwacher Hinweis ──────────────────────────
+    ext_hint: Optional[str] = None
+    if file_path:
+        ext = os.path.splitext(file_path)[1].lower()
+        ext_map = {
+            ".pdf": "pdf",
+            ".epub": "epub",
+            ".fb2": "fb2",
+            ".md": "markdown",
+            ".markdown": "markdown",
+            ".json": "json_probe",
+            ".html": "html_probe",
+            ".htm": "html_probe",
+        }
+        ext_hint = ext_map.get(ext)
+        diagnostics["extension"] = ext
+        diagnostics["ext_hint"] = ext_hint
+
+    # ── 2. JSON-Erkennung (vor HTML-Analyse) ─────────────────────────────
     try:
-        json_str = html_content.decode("utf-8", errors="ignore").strip()
-        if json_str.startswith("{"):
+        text = content.decode("utf-8", errors="ignore").strip()
+        if text.startswith("{") or text.startswith("["):
             import json as _json
 
-            data = _json.loads(json_str)
-            if data.get("exportType") == "combined" and "dialogue" in data:
-                return "gemini_json", 1.0, {"gemini_json": ["exportType", "dialogue"]}
+            data = _json.loads(text)
+            # Gemini JSON
+            if isinstance(data, dict) and data.get("exportType") == "combined" and "dialogue" in data:
+                return "gemini_json", 1.0, {**diagnostics, "gemini_json": ["exportType", "dialogue"]}
+            # ChatGPT JSON (v50.7 Export-Format)
+            if isinstance(data, dict) and "conversations" in data and any(
+                "mapping" in c for c in data.get("conversations", []) if isinstance(c, dict)
+            ):
+                return "chatgpt_json", 1.0, {**diagnostics, "chatgpt_json": ["conversations", "mapping"]}
+            # Claude JSON
+            if isinstance(data, dict) and "chat_messages" in data and any(
+                "sender" in m for m in data.get("chat_messages", []) if isinstance(m, dict)
+            ):
+                return "claude_json", 1.0, {**diagnostics, "claude_json": ["chat_messages", "sender"]}
     except Exception:
         pass
 
+    # ── 3. HTML-Erkennung ───────────────────────────────────────────────
     try:
-        html_str = html_content.decode("utf-8", errors="ignore").lower()
+        html_str = content.decode("utf-8", errors="ignore").lower()
     except Exception:
-        return None, 0.0, {}
+        return ext_hint or None, 0.1 if ext_hint else 0.0, diagnostics
+
     found_signatures = {}
 
     for platform, signatures in PLATFORM_MARKERS.items():
@@ -70,20 +116,20 @@ def detect_platform(html_content: bytes) -> Tuple[Optional[str], float, Dict]:
         if matches:
             found_signatures[platform] = len(matches)
 
-    if not found_signatures:
-        return None, 0.0, {}
+    if found_signatures:
+        best_match = max(found_signatures, key=found_signatures.get)
+        confidence = found_signatures[best_match] / len(PLATFORM_MARKERS[best_match])
+        diag_signatures = {
+            p: [s for s in PLATFORM_MARKERS[p] if s in html_str] for p in found_signatures
+        }
+        diagnostics.update(diag_signatures)
+        return best_match, confidence, diagnostics
 
-    best_match_platform = max(found_signatures, key=found_signatures.get)
-    confidence = found_signatures[best_match_platform] / len(
-        PLATFORM_MARKERS[best_match_platform]
-    )
+    # ── 4. Fallback: Ext-Hinweis ohne Inhaltserkennung ────────────────────
+    if ext_hint and ext_hint != "json_probe" and ext_hint != "html_probe":
+        return ext_hint, 0.1, diagnostics
 
-    # Diagnostics: Welche Signaturen wurden gefunden?
-    diag_signatures = {
-        p: [s for s in PLATFORM_MARKERS[p] if s in html_str] for p in found_signatures
-    }
-
-    return best_match_platform, confidence, diag_signatures
+    return None, 0.0, diagnostics
 
 
 def get_topic_summary(history: List[Dict]) -> str:

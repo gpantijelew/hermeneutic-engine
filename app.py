@@ -1,5 +1,5 @@
-# app.py - v53: Hybrid Cockpit Integration (Full Version)
-APP_VERSION = "[v53 (Refactoring 2Gb lokal)]"
+# app.py - v55: IFS Dual-Modus + Reproducibility Manifest
+APP_VERSION = "[v55 (IFS Dual-Modus + A.1 Manifest)]"
 
 import os
 from dotenv import load_dotenv
@@ -42,6 +42,32 @@ st.markdown(
             min-width: 450px !important;
             max-width: 600px !important;
         }
+
+        /* 1. Oberstes Padding der Sidebar radikal killen */
+        [data-testid="stSidebarUserContent"] {
+            padding-top: 0rem !important;
+        }
+
+        /* 2. Abstand zwischen den vertikalen Blöcken (Buttons/Texte) in der Sidebar minimieren */
+        [data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] {
+            gap: 0.2rem !important;
+        }
+
+        /* 3. Buttons flacher machen */
+        [data-testid="stSidebarUserContent"] button {
+            padding-top: 0.2rem !important;
+            padding-bottom: 0.2rem !important;
+            min-height: 2rem !important;
+        }
+
+        /* 4. Margins von Überschriften in der Sidebar entfernen */
+        [data-testid="stSidebarUserContent"] h1, 
+        [data-testid="stSidebarUserContent"] h2, 
+        [data-testid="stSidebarUserContent"] h3 {
+            margin-top: 0.2rem !important;
+            margin-bottom: 0.2rem !important;
+            padding-top: 0rem !important;
+        }
     </style>
     """,
     unsafe_allow_html=True,
@@ -54,13 +80,14 @@ st.markdown(
 # Neue Module-Importe
 from modules.database import (
     get_chat_list,
+    get_unreviewed_count,
 )
 
 from modules.importers.base import validate_parser_configs
 
 try:
     validate_parser_configs()
-except ValueError as e:
+except (ValueError, FileNotFoundError) as e:
     st.error(f"❌ CRITICAL: Parser-Config Fehler: {e}")
     st.stop()
 
@@ -76,6 +103,11 @@ from ui.chat_list import render_chat_list, clear_chat_cache
 from ui.emergency_sidebar import render_emergency_sidebar
 from ui.chat_tab import render_chat_tab
 from ui.destillation_tab import render_destillation_tab
+from ui.stilisierung_tab import render_stilisierung_tab
+from ui.supervision_tab import render_supervision_tab
+from ui.ifs_tab import render_ifs_tab
+from ui.qa_review_tab import render_qa_review_tab
+from ui.system_health_tab import render_system_health_tab  # (A.8: Confidence Calibration)
 
 # ==============================================================================
 # AUTHENTIFIZIERUNG (mit st.secrets) - NACH PAGE CONFIG!
@@ -142,12 +174,19 @@ if DEBUG_MODE:
 # ==============================================================================
 state.init_state()
 
+# --- A.7: QA Reviews Badge ---
+_unreviewed = get_unreviewed_count()
+_badge = f" 🔴 {_unreviewed}" if _unreviewed > 0 else ""
+
 st.sidebar.title("📡 Navigation")
+_page_options = ["Chat", "Import", "Analyse", "Destillation", "Stilisierung", "Resonanzraum", "Supervision", "System Health", "Labeling", "DB-Export", f"QA Reviews{_badge}"]
 page = st.sidebar.selectbox(
     "Seite wählen",
-    ["Chat", "Import", "Analyse", "Destillation", "Labeling", "DB-Export"],
+    _page_options,
     help="Wähle die gewünschte Funktion aus",
 )
+# Normalisiere Badge zurück für Vergleich
+page = page.replace(_badge, "")
 
 use_db = False
 use_router = False
@@ -220,6 +259,8 @@ if page == "Chat":
 
 if page == "Import":
     render_import_tab()
+elif page == "System Health":
+    render_system_health_tab()
 elif page == "Labeling":
     render_bulk_labeling_ui()
 elif page == "DB-Export":
@@ -229,6 +270,14 @@ elif page == "Analyse":
     render_analysis_tab(all_chats)
 elif page == "Destillation":
     render_destillation_tab()
+elif page == "Stilisierung":
+    render_stilisierung_tab()
+elif page == "Resonanzraum":
+    render_ifs_tab()
+elif page == "Supervision":              # <--- NEU
+    render_supervision_tab()             # <--- NEU
+elif page == "QA Reviews":
+    render_qa_review_tab()
 elif page == "Chat":
     render_chat_tab(
         use_db=use_db,

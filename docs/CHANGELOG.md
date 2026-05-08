@@ -4,6 +4,12 @@ All significant changes to this project are documented here.
 
 ---
 
+## [v55] - 2026-05-08
+### Highlights
+- Mission D: Neues IFS-Supervisions-Panel integriert (Map-Reduce-Pipeline mit SUPERVISION_MANAGER, SUPERVISION_EXILE und SUPERVISION_META Agenten für psycho-algorithmische Diagnostik).
+
+---
+
 ## [52.0] - 2026 — "Local-First Public Release"
 
 ### 🎯 Summary
@@ -48,7 +54,7 @@ Vertex AI and OpenAI-compatible cloud backends remain available as opt-in.
   forensic output headers
 
 ### 🔧 Technical
-- Router bypass fix for the analysis window (was silently using stale context)
+- Router context fix for the analysis window (was silently using stale context)
 - Temperature split: `ANALYTICAL_FORENSIC` synthesis uses 0.4,
   all other intents use 0.7
 
@@ -122,8 +128,8 @@ Intent types: `LITERARY`, `FACTUAL`, `ANALYTICAL`.
 Dynamically adjusts retrieval limit (k: 15–50) and reranker threshold (0.45–0.7).
 
 **Investigativ-Modus**
-Triggered for ≤5 selected documents. Bypasses global vector index,
-loads all chunks of selected docs into RAM, enforces fairness quota
+Triggered for ≤5 selected documents. Directly loads selected documents
+into RAM (skipping global vector index), enforces fairness quota
 (min. 20 chunks/document).
 
 **VIP Protection (RRF Fusion)**

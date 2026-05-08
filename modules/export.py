@@ -13,10 +13,13 @@ PHILOSOPHIE:
 """
 
 import json
+import uuid
 import pandas as pd
 import io
 from typing import List, Dict, Optional
 from datetime import datetime
+
+from modules.config import MODEL_SYNTHESIS
 
 
 def generate_markdown(
@@ -25,6 +28,7 @@ def generate_markdown(
     results: List[Dict],
     chat_map: Dict,
     verification_log: Optional[Dict] = None,
+    pipeline_trace: Optional[Dict] = None,
 ) -> str:
     """
     Erstellt einen wissenschaftlich formatierten Markdown-Text für RAG-Analysen.
@@ -42,8 +46,54 @@ def generate_markdown(
         Formatierter Markdown-String
     """
     timestamp = datetime.now().strftime("%d.%m.%Y %H:%M")
+    analysis_id = str(uuid.uuid4())[:8]
 
-    md = f"# Forschungs-Notiz: {query}\n\n"
+    # --- A.1 Reproducibility Manifest + A.2 Deterministic Pipeline ---
+    from modules.config import DOMAIN_PROFILES, DOMAIN_ANALYSIS
+    profile = DOMAIN_PROFILES.get(DOMAIN_ANALYSIS, {})
+
+    # --- P3: Enforcer-Score + Domain-Profile in Export-Header ---
+    enforcer_score = None
+    if verification_log:
+        deep = verification_log.get("deep_check", [])
+        if deep:
+            valid_count = sum(1 for item in deep if item.get("valid", False))
+            total_count = len(deep)
+            enforcer_score = (valid_count / total_count * 100) if total_count > 0 else 0
+    # --- /P3 ---
+
+    md = "---\n"
+    md += "reproducibility_manifest:\n"
+    md += f"  analysis_id:      {analysis_id}\n"
+    md += f"  timestamp:        {datetime.now().isoformat()}\n"
+    md += f"  engine_version:   v54.1\n"
+    md += f"  query:            \"{query.replace(chr(34), chr(39))}\"\n"
+    md += f"  model_synthesis:  {MODEL_SYNTHESIS}\n"
+    md += f"  deterministic_mode: True (Domain: {DOMAIN_ANALYSIS})\n"
+    md += f"  analysis_domain:  {DOMAIN_ANALYSIS}\n"
+    md += f"  analysis_temperature: {profile.get('temperature', 'default')}\n"
+    md += f"  analysis_seed: {profile.get('seed', 'none')}\n"
+    md += f"  analysis_top_p: {profile.get('top_p', 'default')}\n"
+    md += f"  enforcer_score: {enforcer_score:.1f}%\n" if enforcer_score is not None else "  enforcer_score: N/A (Tiefenprüfung nicht ausgeführt)\n"
+
+    if pipeline_trace:
+        md += f"  intent:           {pipeline_trace.get('intent', 'N/A')}\n"
+        md += f"  semantic_intent:  {pipeline_trace.get('semantic_intent', 'N/A')}\n"
+        md += f"  threshold:        {pipeline_trace.get('threshold', 'N/A')}\n"
+        md += f"  query_type:       {pipeline_trace.get('query_type', 'N/A')}\n"
+        md += f"  essence_parity:   {pipeline_trace.get('essence_parity', False)}\n"
+        md += f"  chunks_used:      {pipeline_trace.get('chunks_retrieved', 0)}\n"
+        md += f"  reranker_total:   {pipeline_trace.get('reranker_total', 0)}\n"
+        md += f"  reranker_passed:  {pipeline_trace.get('reranker_passed', 0)}\n"
+        md += f"  reranker_rejected:{pipeline_trace.get('reranker_rejected', 0)}\n"
+        md += f"  reranker_avg:     {pipeline_trace.get('reranker_avg', 'N/A')}\n"
+        md += f"  reranker_failed:  {pipeline_trace.get('reranker_failed', False)}\n"
+    else:
+        md += "  pipeline_trace:   null\n"
+
+    md += "---\n\n"
+
+    md += f"# Forschungs-Notiz: {query}\n\n"
     md += f"**Datum:** {timestamp}\n\n"
 
     # 1. Synthese
@@ -105,6 +155,80 @@ def generate_markdown(
         # Quelle formatieren
         md += f"**[{i}] {platform}** ({date}). *{chat_title}*. Relevanz: {score:.1f}%.\n\n"
         md += f"> {content}\n\n"
+
+    return md
+
+
+def generate_markdown_from_record(record: Dict) -> str:
+    """
+    A.3: Rekonstruiert Markdown aus einem DB-Analyse-Record.
+
+    Nutzt nur die persistierten Felder — kein Zugriff auf Streamlit-State
+    oder aktuelle Pipeline-Trace. Für Lazy-Loading aus der DB gedacht.
+
+    Args:
+        record: Dict aus get_analysis_by_id() (alle Felder der analyses-Tabelle)
+
+    Returns:
+        Markdown-String mit Manifest + Synthese (kein Quellenverzeichnis,
+        da Chunks nicht in DB persistiert werden).
+    """
+    from modules.config import DOMAIN_PROFILES, DOMAIN_ANALYSIS
+
+    analysis_id = record.get("analysis_id", "unknown")
+    timestamp = record.get("timestamp", datetime.now().isoformat())
+    query = record.get("query", "")
+    answer = record.get("answer_text", "")
+    intent = record.get("intent", "N/A")
+    semantic_intent = record.get("semantic_intent", "N/A")
+    model = record.get("model", "unknown")
+    temperature = record.get("temperature")
+    seed = record.get("seed")
+    top_p = record.get("top_p")
+    domain = record.get("analysis_domain", DOMAIN_ANALYSIS)
+
+    profile = DOMAIN_PROFILES.get(domain, {})
+
+    # --- P3: Enforcer-Score aus DB-Record rekonstruieren ---
+    enforcer_score = record.get("enforcer_score")
+    # --- /P3 ---
+
+    # Manifest aus Record rekonstruieren
+    md = "---\n"
+    md += "reproducibility_manifest:\n"
+    md += f"  analysis_id:      {analysis_id}\n"
+    md += f"  timestamp:        {timestamp}\n"
+    md += f"  engine_version:   v54.1\n"
+    md += f"  query:            \"{query.replace(chr(34), chr(39))}\"\n"
+    md += f"  model_synthesis:  {model}\n"
+    md += f"  deterministic_mode: True (Domain: {domain})\n"
+    md += f"  analysis_domain:  {domain}\n"
+    md += f"  analysis_temperature: {temperature if temperature is not None else profile.get('temperature', 'default')}\n"
+    md += f"  analysis_seed: {seed if seed is not None else profile.get('seed', 'none')}\n"
+    md += f"  analysis_top_p: {top_p if top_p is not None else profile.get('top_p', 'default')}\n"
+    md += f"  enforcer_score: {enforcer_score:.1f}%\n" if enforcer_score is not None else "  enforcer_score: N/A (nicht persistiert)\n"
+    md += f"  intent:           {intent}\n"
+    md += f"  semantic_intent:  {semantic_intent}\n"
+    md += "  pipeline_trace:   (rekonstruiert aus DB-Record)\n"
+
+    cited_ids = record.get("cited_document_ids", [])
+    if cited_ids:
+        md += f"  cited_documents:  {len(cited_ids)}\n"
+    md += "---\n\n"
+
+    md += f"# Forschungs-Notiz: {query}\n\n"
+    md += f"**Datum:** {timestamp[:16] if len(timestamp) >= 16 else timestamp}\n\n"
+
+    md += "## 💡 Synthese\n\n"
+    md += f"{answer}\n\n"
+
+    if cited_ids:
+        md += "## 📚 Zitierte Dokumente\n\n"
+        for cid in cited_ids:
+            md += f"- [{cid}]\n"
+        md += "\n"
+
+    md += "---\n\n*(Vollständiges Quellenverzeichnis mit Chunk-Inhalten war zum Zeitpunkt der Persistenz nicht in der DB gespeichert.)*\n"
 
     return md
 

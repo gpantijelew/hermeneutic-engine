@@ -40,7 +40,7 @@ def render_settings_panel() -> None:
         else:
             current_model = LM_STUDIO_MODEL
             st.info(
-                f"🤖 Aktives Modell: **{current_model}** (Lokales Modell)\n"
+                f"🤖 Aktives Modell: **{current_model}** (via LM Studio)\n"
                 f"Modell wechseln: `LM_STUDIO_MODEL` in `.env` anpassen."
             )
             selected_model = current_model

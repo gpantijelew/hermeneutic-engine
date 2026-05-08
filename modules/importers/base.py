@@ -14,11 +14,14 @@ Architektur:
 
 import sys
 import os
+from pathlib import Path
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional, Callable
 from enum import Enum
 import re
 from bs4 import BeautifulSoup
+
+import yaml
 
 # Path-Fix für direkte Ausführung (Tests)
 if __name__ == "__main__":
@@ -52,97 +55,33 @@ class PlatformKey(Enum):
 
 
 # ==============================================================================
-# PARSER CONFIGURATIONS
+# PARSER CONFIGURATIONS (YAML-Geladen)
 # ==============================================================================
 
-PARSER_CONFIGS = {
-    # --- Etablierte Plattformen ---
-    PlatformKey.CHATGPT.value: {
-        "name": "ChatGPT (OpenAI)",
-        "sidebar_selector": "#stage-slideover-sidebar",
-        "message_block_selector": 'article[data-testid^="conversation-turn-"]',
-        "role_detection": {
-            "attribute_based": {
-                "element_selector": "div[data-message-author-role]",
-                "attribute": "data-message-author-role",
-                "user_value": "user",
-                "model_value": "assistant",
-            }
-        },
-        "content_selectors": {
-            "user": ".whitespace-pre-wrap",
-            "model": ".markdown.prose",
-        },
-        "model_name_selector": "div[data-model-name]",
-    },
-    PlatformKey.KIMI.value: {
-        "name": "Kimi Chat (Moonshot)",
-        "message_block_selector": "div.chat-content-item",
-        "role_detection": {
-            "class_based": {
-                "user": "chat-content-item-user",
-                "model": "chat-content-item-assistant",
-            }
-        },
-        "content_selectors": {"user": "div.user-content", "model": "div.markdown"},
-    },
-    PlatformKey.CLAUDE.value: {
-        "name": "Claude (Anthropic)",
-        "message_block_selector": "div[data-test-render-count]",
-        "role_detection": {
-            "class_based": {"user": "font-user-message", "model": "font-claude-message"}
-        },
-        "content_selectors": {
-            "user": "div.whitespace-pre-wrap",
-            "model": "div.whitespace-pre-wrap",
-        },
-    },
-    PlatformKey.GEMINI.value: {
-        "name": "Gemini (Google)",
-        "message_block_selector": "div.message-box",
-        "role_detection": {
-            "class_based": {"user": "message-box--user", "model": "model-response"}
-        },
-        "content_selectors": {
-            "user": "span.prompt-response-text-area",
-            "model": "span.ai-markdown-artifact-renderer",
-        },
-    },
-    PlatformKey.HOTBOT.value: {
-        "name": "HotBot",
-        "message_block_selector": "div.tyn-qa-item",
-        "role_detection": {
-            "class_based": {"user": "tyn-qa-item-usr", "model": "tyn-qa-item-bot"}
-        },
-        "content_selectors": {
-            "user": "div.tyn-qa-message",
-            "model": "div.tyn-qa-message",
-        },
-    },
-    # --- Neue / Experimentelle Plattformen ---
-    PlatformKey.PERPLEXITY.value: {
-        "name": "Perplexity AI",
-        "message_block_selector": "div.perplexity-message",
-        "role_detection": {
-            "class_based": {"user": "user-message", "model": "assistant-message"}
-        },
-        "content_selectors": {"user": "div.content", "model": "div.content"},
-    },
-    PlatformKey.GROK.value: {
-        "name": "Grok (xAI)",
-        "message_block_selector": "div.grok-response",
-        "role_detection": {"class_based": {"user": "user-row", "model": "model-row"}},
-        "content_selectors": {"user": "div.text-content", "model": "div.text-content"},
-    },
-    PlatformKey.GLM.value: {
-        "name": "GLM-4 (Zhipu)",
-        "message_block_selector": "div.glm-chat-item",
-        "role_detection": {
-            "class_based": {"user": "user-msg", "model": "assistant-msg"}
-        },
-        "content_selectors": {"user": "div.msg-content", "model": "div.msg-content"},
-    },
-}
+_PARSER_CONFIGS = None
+
+
+def get_parser_configs() -> dict:
+    """
+    Lazy-Load der Parser-Konfigurationen aus parser_configs.yaml.
+
+    Returns:
+        dict: Geladene YAML-Konfiguration
+
+    Raises:
+        FileNotFoundError: Wenn parser_configs.yaml nicht existiert
+        yaml.YAMLError: Wenn die Datei invalides YAML enthält
+    """
+    global _PARSER_CONFIGS
+    if _PARSER_CONFIGS is None:
+        config_path = Path("parser_configs.yaml")
+        if not config_path.exists():
+            raise FileNotFoundError(
+                f"Parser-Konfiguration nicht gefunden: {config_path.absolute()}"
+            )
+        with open(config_path, "r", encoding="utf-8") as f:
+            _PARSER_CONFIGS = yaml.safe_load(f)
+    return _PARSER_CONFIGS
 
 # ==============================================================================
 # CONFIG VALIDATION (v49.3)
@@ -164,7 +103,7 @@ def validate_parser_configs():
         "content_selectors",
     ]
 
-    for platform, config in PARSER_CONFIGS.items():
+    for platform, config in get_parser_configs().items():
         # Prüfe erforderliche Keys
         for key in required_keys:
             if key not in config:
@@ -178,7 +117,7 @@ def validate_parser_configs():
                 f"Erlaubt: {role_methods}"
             )
 
-    print(f"✅ Alle {len(PARSER_CONFIGS)} Parser-Configs validiert.")
+    print(f"✅ Alle {len(get_parser_configs())} Parser-Configs validiert.")
 
 
 # ==============================================================================
@@ -555,7 +494,7 @@ class ConfigBasedImporter(HTMLImporter):
         container = kwargs.get("container")
 
         # Config laden
-        config = PARSER_CONFIGS.get(self.config_key)
+        config = get_parser_configs().get(self.config_key)
         if not config:
             error_msg = (
                 f"⚠️ Keine Parser-Konfiguration für '{self.config_key}' gefunden."

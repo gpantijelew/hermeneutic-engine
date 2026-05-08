@@ -286,7 +286,7 @@ def _render_mode_selector() -> bool:
 
     search_mode = st.radio(
         "Modus:",
-        ["🌐 Online (Web-Suche aktiv)", "🔬 Labor (nur Modell-Wissen)"],
+        ["🌐 Online (Google Search aktiv)", "🔬 Labor (nur Modell-Wissen)"],
         index=0,
         horizontal=True,
         key="chat_search_mode",
@@ -462,7 +462,7 @@ def _handle_free_chat(prompt: str, use_search: bool, uploaded_files=None, image_
                 )
 
             if not protocol:
-                st.error("❌ Vision-Analyse fehlgeschlagen. Gesamtgröße < 20MB? Vision-fähiges Modell geladen?")
+                st.error("❌ Vision-Analyse fehlgeschlagen. Backend=Vertex? Gesamtgröße < 20MB?")
                 return
 
             # UX-Marker für den Chat-Verlauf

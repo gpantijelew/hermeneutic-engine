@@ -97,7 +97,8 @@ Bewerte die Relevanz (0.0-1.0): """
 
         try:
             reranker_temp = 0.1 if (intent and intent.lower() in ["analytical_forensic", "analytical", "meta_analytical"]) else 0.3
-            score_text = llm_call(prompt, task="reranker", system_instruction=RERANKER_INSTRUCTION, temperature=reranker_temp)
+            from modules.config import DOMAIN_ANALYSIS
+            score_text = llm_call(prompt, task="reranker", system_instruction=RERANKER_INSTRUCTION, temperature=reranker_temp, domain=DOMAIN_ANALYSIS)
             score_clean = re.sub(r'(\d+)[.,]\s+(\d+)', r'\1.\2', score_text.strip())
             match = re.search(r'(\d+[.,]\d+)', score_clean)
             if match:

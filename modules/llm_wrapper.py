@@ -45,6 +45,41 @@ from modules.config import (
 # Marker-Objekt für interne JSON-Parse-Failure-Erkennung (Retry-Logik)
 _JSON_PARSE_FAILED = object()
 
+
+# --- A.2: DETERMINISTIC PIPELINE MODE ---
+
+def _get_backend_type() -> str:
+    """Ermittelt das aktive Backend robust."""
+    from modules.config import LLM_BACKEND
+    if LLM_BACKEND == "lm_studio":
+        return "lm_studio"
+    elif LLM_BACKEND == "openai":
+        return "openai"
+    return "vertex"
+
+
+def _apply_domain_profile(
+    kwargs: dict, domain: str, backend: str
+) -> dict:
+    """Injiziert das Parameter-Profil basierend auf der Domain."""
+    from modules.config import DOMAIN_PROFILES, BACKEND_CAPABILITIES
+
+    profile = DOMAIN_PROFILES.get(domain)
+    if not profile:
+        return kwargs
+
+    caps = BACKEND_CAPABILITIES.get(backend, {"seed": False})
+
+    if "temperature" in profile:
+        kwargs["temperature"] = profile["temperature"]
+    if "top_p" in profile:
+        kwargs["top_p"] = profile["top_p"]
+
+    if "seed" in profile and caps.get("seed"):
+        kwargs["seed"] = profile["seed"]
+
+    return kwargs
+
 # ==============================================================================
 # THREAD-SICHERE STATISTIK-SAMMLUNG
 # ==============================================================================
@@ -131,7 +166,7 @@ logger = logging.getLogger(__name__)
 
 def _get_system_instruction() -> str:
     prefix = ""
-    if LLM_BACKEND in ("local", "lmstudio"):
+    if LLM_BACKEND == "lmstudio":
         prefix = os.getenv("LLM_SYSTEM_PREFIX", "/no_think") + "\n"
 
     hre_context = (
@@ -185,12 +220,18 @@ def _vertex_call(
     messages: list,
     temperature: float,
     max_tokens: int,
+    seed: Optional[int] = None,
+    top_p: float = 0.95,
 ) -> str:
     """Übersetzt den OpenAI-Message-Stack in Vertex AI generate_content()."""
     from google.genai.types import (
         GenerateContentConfig,
         Content,
         Part,
+        HarmCategory,
+        HarmBlockThreshold,
+        SafetySetting,
+        AutomaticFunctionCallingConfig,
     )
 
     contents = []
@@ -200,7 +241,25 @@ def _vertex_call(
         role = "user" if msg["role"] == "user" else "model"
         contents.append(Content(role=role, parts=[Part(text=msg["content"])]))
 
-    # Standard-Sicherheitseinstellungen von Vertex AI werden verwendet.
+    # Safety settings für Vertex AI
+    safety_settings = [
+        SafetySetting(
+            category=HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold=HarmBlockThreshold.BLOCK_LOW,
+        ),
+        SafetySetting(
+            category=HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold=HarmBlockThreshold.BLOCK_LOW,
+        ),
+        SafetySetting(
+            category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold=HarmBlockThreshold.BLOCK_LOW,
+        ),
+        SafetySetting(
+            category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold=HarmBlockThreshold.BLOCK_LOW,
+        ),
+    ]
 
     # --- TICKET 11: Prompt-Monitoring (Claudes sichere Version) ---
     total_chars = sum(
@@ -214,17 +273,22 @@ def _vertex_call(
         logger.warning(f"⚠️ [PROMPT-MONITOR] Großer Payload: {total_chars} Zeichen")
     # --------------------------------------------------------------
 
-    config = GenerateContentConfig(
+    config_kwargs = dict(
         system_instruction=sys_msg,
         temperature=temperature,
+        top_p=top_p,
         max_output_tokens=max_tokens,
+        safety_settings=safety_settings,
+        automatic_function_calling=AutomaticFunctionCallingConfig(disable=True),
     )
+    if seed is not None:
+        config_kwargs["seed"] = seed
+
+    config = GenerateContentConfig(**config_kwargs)
 
     response = _vertex_call_with_retry(
         lambda: client.models.generate_content(
-            model=model,
-            contents=contents,
-            config=config
+            model=model, contents=contents, config=config
         )
     )
 
@@ -259,12 +323,17 @@ def _vertex_call_streaming(
     temperature: float,
     max_tokens: int,
     use_search: bool = False,  # <--- NEU
+    seed: Optional[int] = None,
+    top_p: float = 0.95,
 ):
     """Übersetzt den OpenAI-Message-Stack in Vertex AI generate_content_stream()."""
     from google.genai.types import (
         GenerateContentConfig,
         Content,
         Part,
+        HarmCategory,
+        HarmBlockThreshold,
+        SafetySetting,
         Tool,  # <--- NEU
         GoogleSearch,  # <--- NEU
     )
@@ -276,17 +345,39 @@ def _vertex_call_streaming(
         role = "user" if msg["role"] == "user" else "model"
         contents.append(Content(role=role, parts=[Part(text=msg["content"])]))
 
-    # Standard-Sicherheitseinstellungen von Vertex AI werden verwendet.
+    # Safety settings für Vertex AI
+    safety_settings = [
+        SafetySetting(
+            category=HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold=HarmBlockThreshold.BLOCK_LOW,
+        ),
+        SafetySetting(
+            category=HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold=HarmBlockThreshold.BLOCK_LOW,
+        ),
+        SafetySetting(
+            category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold=HarmBlockThreshold.BLOCK_LOW,
+        ),
+        SafetySetting(
+            category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold=HarmBlockThreshold.BLOCK_LOW,
+        ),
+    ]
 
     # --- NEU: Google Search Grounding ---
     tools = [Tool(google_search=GoogleSearch())] if use_search else None
     config_kwargs = dict(
         system_instruction=sys_msg,
         temperature=temperature,
+        top_p=top_p,
         max_output_tokens=max_tokens,
+        safety_settings=safety_settings,
     )
     if tools:
         config_kwargs["tools"] = tools
+    if seed is not None:
+        config_kwargs["seed"] = seed
     from google.genai.types import AutomaticFunctionCallingConfig
 
     config_kwargs["automatic_function_calling"] = AutomaticFunctionCallingConfig(
@@ -335,6 +426,8 @@ def llm_call(
     temperature: float = 0.3,
     max_tokens: int = MAX_TOKENS_PER_CALL,  # v51: aus config.py
     history: Optional[list] = None,
+    top_p: float = 0.95,
+    domain: str = None,
 ) -> str:
     """
     Universeller LLM-Aufruf — gibt Text zurück.
@@ -348,6 +441,8 @@ def llm_call(
         history:            Konversationshistorie für Multi-Turn
                             Format: [{"role": "user"|"assistant",
                                       "content": "..."}]
+        top_p:              Nucleus-Sampling (default: 0.95)
+        domain:             A.2 Domain-Profil (analysis_pipeline, ifs_resonanzraum, etc.)
 
     Returns:
         Antwort-Text als String. Bei Fehler: leerer String.
@@ -359,6 +454,15 @@ def llm_call(
     try:
         client, model = get_llm_client(task=task)
         sys_msg = system_instruction or _get_system_instruction()
+
+        # --- A.2: DETERMINISTIC PIPELINE MODE ---
+        backend_type = _get_backend_type()
+        call_params = {"temperature": temperature, "top_p": top_p}
+        if domain:
+            call_params = _apply_domain_profile(call_params, domain, backend_type)
+        temperature = call_params.get("temperature", temperature)
+        top_p = call_params.get("top_p", top_p)
+        seed = call_params.get("seed")
 
         # Messages aufbauen
         messages = [{"role": "system", "content": sys_msg}]
@@ -378,15 +482,21 @@ def llm_call(
         # Vertex AI: anderes SDK, anderer Response-Typ
         if LLM_BACKEND == "vertex":
             return _vertex_call(
-                client, model, sys_msg, messages, temperature, max_tokens
+                client, model, sys_msg, messages, temperature, max_tokens,
+                seed=seed, top_p=top_p,
             )
 
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
+        openai_kwargs = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "top_p": top_p,
+        }
+        if seed is not None:
+            openai_kwargs["seed"] = seed
+
+        response = client.chat.completions.create(**openai_kwargs)
 
         result = response.choices[0].message.content.strip()
         # --- TICKET 1b: THREAD-SAFE STATS ---
@@ -432,6 +542,7 @@ def llm_call_json(
     temperature: float = 0.1,
     max_tokens: int = MAX_TOKENS_PER_CALL,
     fallback: Any = None,
+    domain: str = None,
 ) -> Any:
     """
     LLM-Aufruf mit JSON-Rückgabe.
@@ -467,22 +578,25 @@ def llm_call_json(
             system_instruction=sys_msg,
             temperature=temperature,
             max_tokens=max_tokens,
+            domain=domain,
         )
 
         if not raw:
             return fallback
 
-        # JSON parsen mit internem Marker für Cutoff-Erkennung
-        result = _parse_json_safe(raw, fallback=_JSON_PARSE_FAILED)
-        if result is not _JSON_PARSE_FAILED:
+        try:
+            # JSON parsen — echtes Fallback, damit wir Cutoff vs. echtes Ergebnis unterscheiden
+            result = _parse_json_safe(raw, fallback=fallback)
+            # Wenn Parsing fehlschlägt UND der Raw-Text wie ein Cutoff aussieht → Retry triggern
+            if result == fallback and _is_json_cutoff(raw):
+                raise ValueError("JSON Cutoff detected")
             return result  # Erfolg
-
-        # Cutoff erkannt - Retry oder Fallback
-        if attempt < _MAX_JSON_RETRIES:
-            logger.warning(f"JSON Cutoff erkannt, starte Retry {attempt}/{_MAX_JSON_RETRIES}...")
-            _time.sleep(0.5 * attempt)  # Lokaler Backoff: 0.5s, 1.0s
-        else:
-            logger.error(f"JSON-Parsing nach {_MAX_JSON_RETRIES} Versuchen fehlgeschlagen")
+        except Exception:
+            if attempt < _MAX_JSON_RETRIES:
+                logger.warning(f"JSON Cutoff erkannt, starte Retry {attempt}/{_MAX_JSON_RETRIES}...")
+                _time.sleep(0.5 * attempt)  # Lokaler Backoff: 0.5s, 1.0s
+            else:
+                logger.error(f"JSON-Parsing nach {_MAX_JSON_RETRIES} Versuchen fehlgeschlagen")
 
     return fallback
 
@@ -495,6 +609,8 @@ def llm_call_streaming(
     max_tokens: int = MAX_TOKENS_PER_CALL,  # v51: aus config.py
     history: Optional[list] = None,
     use_search: bool = False,  # <--- NEU
+    top_p: float = 0.95,
+    domain: str = None,
 ):
     """
     Streaming-Variante für das Chat-Interface (Streamlit).
@@ -509,6 +625,15 @@ def llm_call_streaming(
     try:
         client, model = get_llm_client(task=task)
         sys_msg = system_instruction or _get_system_instruction()
+
+        # --- A.2: DETERMINISTIC PIPELINE MODE ---
+        backend_type = _get_backend_type()
+        call_params = {"temperature": temperature, "top_p": top_p}
+        if domain:
+            call_params = _apply_domain_profile(call_params, domain, backend_type)
+        temperature = call_params.get("temperature", temperature)
+        top_p = call_params.get("top_p", top_p)
+        seed = call_params.get("seed")
 
         messages = [{"role": "system", "content": sys_msg}]
 
@@ -533,16 +658,23 @@ def llm_call_streaming(
                 temperature,
                 max_tokens,
                 use_search=use_search,  # <--- NEU
+                seed=seed,
+                top_p=top_p,
             )
             return
 
-        stream = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=True,
-        )
+        openai_kwargs = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "top_p": top_p,
+            "stream": True,
+        }
+        if seed is not None:
+            openai_kwargs["seed"] = seed
+
+        stream = client.chat.completions.create(**openai_kwargs)
 
         for chunk in stream:
             delta = chunk.choices[0].delta.content
@@ -571,48 +703,58 @@ def _extract_text_from_parts(msg: dict) -> str:
     return ""
 
 
-def _parse_json_safe(raw: str, fallback: Any = None) -> Any:
+def _parse_json_safe(raw_text: str, fallback: Any = None) -> Any:
     """
-    Robustes JSON-Parsing mit mehreren Fallback-Strategien.
-    v53: Ersetzt fehleranfällige Regex durch exakte Index-Suche.
+    Versucht, JSON aus einem String zu extrahieren, selbst wenn das Modell
+    Markdown-Blöcke (```json) oder 'lautes Denken' (Chain-of-Thought) davor/danach packt.
+    Sucht gezielt nach dem ersten '[' und dem letzten ']'.
     """
-    if not raw or not isinstance(raw, str):
+    if not raw_text:
         return fallback
 
-    # Strategie 1: Direktes Parsing
+    text = raw_text.strip()
+
+    # 1. Versuch: Direkter Parse (falls es schon sauberes JSON ist)
     try:
-        return json.loads(raw)
+        return json.loads(text)
     except json.JSONDecodeError:
         pass
 
-    # Strategie 2: Markdown-Fences und Füllwörter bereinigen
-    text = raw
-    text = re.sub(r"```(?:json)?\s*", "", text)
-    text = text.replace("```", "")
-
-    # Strategie 3: Exakte Extraktion des äußersten JSON-Objekts/Arrays
-    start_dict = text.find("{")
-    end_dict = text.rfind("}") + 1
-
-    start_list = text.find("[")
-    end_list = text.rfind("]") + 1
-
-    # Prüfe, ob ein Dict gefunden wurde
-    if start_dict != -1 and end_dict > start_dict:
+    # 2. Versuch: Markdown-Blöcke entfernen
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
         try:
-            return json.loads(text[start_dict:end_dict])
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+        try:
+            return json.loads(text)
         except json.JSONDecodeError:
             pass
 
-    # Prüfe, ob eine Liste gefunden wurde
-    if start_list != -1 and end_list > start_list:
+    # 3. Versuch: Brute-Force Regex für JSON-Arrays [...]
+    # Sucht das erste '[' und das letzte ']' im gesamten Text
+    import re
+    match = re.search(r'\[.*\]', raw_text, re.DOTALL)
+    if match:
         try:
-            return json.loads(text[start_list:end_list])
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+            
+    # 4. Versuch: Brute-Force Regex für JSON-Objekte {...}
+    match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(0))
         except json.JSONDecodeError:
             pass
 
-    logger.warning(f"⚠️ JSON-Parsing fehlgeschlagen. Raw: {raw[:200]}...")
+    logger.error(f"JSON-Parsing endgültig fehlgeschlagen. Raw: {raw_text[:100]}...")
     return fallback
+
 
 def llm_call_vision(
     images: list,
@@ -620,17 +762,23 @@ def llm_call_vision(
     image_origin: str = "photograph",
     system_instruction: Optional[str] = None,
     temperature: float = 0.3,
+    top_p: float = 0.95,
+    domain: str = None,
+    seed: Optional[int] = None,
 ) -> str:
     """
     Vision-Call: Analysiert ein oder mehrere Bilder mit dem konfigurierten Vision-Modell.
     Nur für LLM_BACKEND='vertex' implementiert.
-    
+
     Args:
         images: Liste von Dictionaries [{"bytes": bytes, "mime": str}, ...]
         user_question: Frage/Kontext vom User
         image_origin: Ursprungstyp für hermeneutische Regel
         system_instruction: Überschreibt Standard Vision-Prompt
         temperature: Sampling-Temperatur
+        top_p: Nucleus-Sampling (default: 0.95)
+        domain: A.2 Domain-Profil
+        seed: Deterministischer Seed (A.2)
     """
     if LLM_BACKEND != "vertex":
         logger.error("❌ llm_call_vision: Nur für LLM_BACKEND='vertex' verfügbar.")
@@ -688,14 +836,28 @@ def llm_call_vision(
             Content(role="user", parts=content_parts)
         ]
 
+        # --- A.2: DETERMINISTIC PIPELINE MODE ---
+        backend_type = _get_backend_type()
+        call_params = {"temperature": temperature, "top_p": top_p}
+        if domain:
+            call_params = _apply_domain_profile(call_params, domain, backend_type)
+        temperature = call_params.get("temperature", temperature)
+        top_p = call_params.get("top_p", top_p)
+        seed = call_params.get("seed", seed)
+
+        config_kwargs = dict(
+            system_instruction=system_instruction,
+            temperature=temperature,
+            top_p=top_p,
+            max_output_tokens=8192,
+        )
+        if seed is not None:
+            config_kwargs["seed"] = seed
+
         response = client.models.generate_content(
             model=model,
             contents=contents,
-            config=GenerateContentConfig(
-                system_instruction=system_instruction,
-                temperature=temperature,
-                max_output_tokens=8192,  # Hochgesetzt für Vergleiche!
-            ),
+            config=GenerateContentConfig(**config_kwargs),
         )
 
         result = (response.text or "").strip()
@@ -708,10 +870,13 @@ def llm_call_vision(
 
 def llm_call_json_structured(
     prompt: str,
-    response_schema, # Erwartet ein Pydantic-Modell
+    response_schema,  # Erwartet ein Pydantic-Modell
     system_instruction: Optional[str] = None,
     temperature: float = 0.1,
-    task: str = "reranker"
+    task: str = "reranker",
+    top_p: float = 0.95,
+    domain: str = None,
+    seed: Optional[int] = None,
 ) -> dict:
     """
     Structured Output Call: Zwingt Vertex AI, EXAKT das übergebene JSON-Schema zurückzugeben.
@@ -725,21 +890,57 @@ def llm_call_json_structured(
     try:
         from google.genai.types import (
             GenerateContentConfig,
+            HarmCategory,
+            HarmBlockThreshold,
+            SafetySetting,
             AutomaticFunctionCallingConfig
         )
 
         client, model = get_llm_client(task=task)
 
-        # Standard-Sicherheitseinstellungen von Vertex AI werden verwendet.
+        # --- A.2: DETERMINISTIC PIPELINE MODE ---
+        backend_type = _get_backend_type()
+        call_params = {"temperature": temperature, "top_p": top_p}
+        if domain:
+            call_params = _apply_domain_profile(call_params, domain, backend_type)
+        temperature = call_params.get("temperature", temperature)
+        top_p = call_params.get("top_p", top_p)
+        seed = call_params.get("seed", seed)
 
-        config = GenerateContentConfig(
+        # Safety settings für Vertex AI JSON-Mode
+        safety_settings = [
+            SafetySetting(
+                category=HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                threshold=HarmBlockThreshold.BLOCK_LOW,
+            ),
+            SafetySetting(
+                category=HarmCategory.HARM_CATEGORY_HARASSMENT,
+                threshold=HarmBlockThreshold.BLOCK_LOW,
+            ),
+            SafetySetting(
+                category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                threshold=HarmBlockThreshold.BLOCK_LOW,
+            ),
+            SafetySetting(
+                category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                threshold=HarmBlockThreshold.BLOCK_LOW,
+            ),
+        ]
+
+        config_kwargs = dict(
             system_instruction=system_instruction,
             temperature=temperature,
+            top_p=top_p,
             max_output_tokens=4096,
             response_mime_type="application/json",
             response_schema=response_schema,
-            automatic_function_calling=AutomaticFunctionCallingConfig(disable=True) # <--- Verhindert AFC-Logs und Tool-Verwirrung
+            safety_settings=safety_settings,
+            automatic_function_calling=AutomaticFunctionCallingConfig(disable=True),
         )
+        if seed is not None:
+            config_kwargs["seed"] = seed
+
+        config = GenerateContentConfig(**config_kwargs)
 
         response = _vertex_call_with_retry(
             lambda: client.models.generate_content(

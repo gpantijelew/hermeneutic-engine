@@ -30,6 +30,7 @@ import logging
 import time
 import uuid
 import re
+import hashlib
 import threading
 import numpy as np
 from typing import List, Dict, Optional, Any, Tuple
@@ -48,6 +49,17 @@ from modules.config import EMBEDDING_MODEL, EMBEDDING_DIMENSIONS, CHROMA_PATH
 # Phase 4.4: Embedding Cache
 from modules.database import get_db_connection
 from modules.embedding_cache import EmbeddingCache
+
+# Phase 4.3: Chunk Registry (SQLite treibt, ChromaDB folgt)
+from modules.database import (
+    register_chunks,
+    unregister_chat_chunks,
+    update_chunk_count,
+    get_chunk_ids_page,
+    get_chunk_registry_count,
+    is_duplicate_chunk,
+    backfill_chunk_registry,
+)
 
 # BM25 für RRF (optional)
 try:
@@ -142,12 +154,12 @@ def _get_chroma_collection():
 
 
 # ==============================================================================
-# THREAD-SAFE BM25-CACHE (unverändert v50.7)
+# THREAD-SAFE BM25-CACHE (v53 — Direct Injection Support)
 # ==============================================================================
 class BM25Cache:
     """
     Thread-safe Singleton für BM25-Index.
-    Vollständig unverändert gegenüber v50.7.
+    v53+: Direct Injection — inkrementelle Updates ohne Full-Rebuild.
     """
 
     _instance = None
@@ -158,26 +170,64 @@ class BM25Cache:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance.index = None
-                    cls._instance.doc_map = None
+                    cls._instance.bm25 = None
+                    cls._instance.corpus: List[List[str]] = []
+                    cls._instance.doc_ids: List[str] = []
+                    cls._instance.metadata: List[Dict] = []
                     cls._instance.last_build_time = 0
         return cls._instance
 
     def get_index(self) -> Tuple[Optional[Any], Optional[Dict]]:
         with self._lock:
-            return self.index, self.doc_map
+            if self.bm25 is not None:
+                doc_map = {
+                    i: {
+                        "vector_doc_id": self.doc_ids[i],
+                        "content": " ".join(self.corpus[i]),
+                        "metadata": self.metadata[i],
+                        "chat_id": self.metadata[i].get("chat_id", ""),
+                    }
+                    for i in range(len(self.doc_ids))
+                }
+                return self.bm25, doc_map
+            return None, None
 
     def set_index(self, index, doc_map):
         with self._lock:
-            self.index = index
-            self.doc_map = doc_map
+            self.bm25 = index
+            if doc_map:
+                self.doc_ids = [doc_map[i]["vector_doc_id"] for i in sorted(doc_map.keys())]
+                self.corpus = [doc_map[i]["content"].lower().split() for i in sorted(doc_map.keys())]
+                self.metadata = [doc_map[i]["metadata"] for i in sorted(doc_map.keys())]
+            else:
+                self.doc_ids = []
+                self.corpus = []
+                self.metadata = []
             self.last_build_time = time.time()
-            logger.info(f"🔄 BM25-Cache aktualisiert. Docs: {len(doc_map)}")
+            logger.info(f"🔄 BM25-Cache aktualisiert. Docs: {len(self.doc_ids)}")
+
+    def append_docs(self, new_doc_ids: List[str], new_corpus: List[List[str]], new_metadata: List[Dict]) -> bool:
+        """Inkrementelle Erweiterung ohne ChromaDB-Reload."""
+        with self._lock:
+            if self.bm25 is None:
+                return False
+            self.doc_ids.extend(new_doc_ids)
+            self.corpus.extend(new_corpus)
+            self.metadata.extend(new_metadata)
+            self.bm25 = BM25Okapi(self.corpus)
+            self.last_build_time = time.time()
+            logger.info(
+                f"➕ BM25 Direct Injection: +{len(new_doc_ids)} Docs "
+                f"(Total: {len(self.doc_ids)})"
+            )
+            return True
 
     def invalidate(self):
         with self._lock:
-            self.index = None
-            self.doc_map = None
+            self.bm25 = None
+            self.corpus = []
+            self.doc_ids = []
+            self.metadata = []
             self.last_build_time = 0
             logger.info("🗑️ BM25-Cache invalidiert.")
 
@@ -326,11 +376,9 @@ class LocalVectorStore:
         """
         logger.info(f"🔄 Starte Vektorisierung für Chat {chat_id}...")
 
-        # 1. Cache invalidieren
-        cache = BM25Cache()
-        cache.invalidate()
+        # Phase 4.2: BM25 Direct Injection — kein Full-Rebuild bei Import
 
-        # 2. Alte Vektoren löschen (Reimport-Sicherheit)
+        # 1. Alte Vektoren löschen (Reimport-Sicherheit)
         self.delete_chat_embeddings(chat_id)
 
         collection = _get_chroma_collection()
@@ -355,7 +403,13 @@ class LocalVectorStore:
         batch_embeddings = []
         batch_documents = []
         batch_metadatas = []
+        batch_hashes = []
         BATCH_SIZE = 100  # ChromaDB verträgt große Batches problemlos
+
+        # Phase 4.3: Alle erfolgreich eingefügten doc_ids sammeln für Registry
+        # A.13: Auch content_hashes sammeln für Deduplizierung
+        all_inserted_doc_ids = []
+        all_inserted_hashes = []
 
         for msg in messages:
             content = msg.get("content", "")
@@ -403,6 +457,13 @@ class LocalVectorStore:
                     skipped_chunks += 1
                     continue
 
+                # A.13 Deduplication: SHA-256 Hash prüfen
+                content_hash = hashlib.sha256(chunk_text_str.encode("utf-8")).hexdigest()
+                if is_duplicate_chunk(content_hash):
+                    skipped_chunks += 1
+                    logger.info(f"🚫 Chunk {i} dedupliziert (Hash {content_hash[:8]}... bereits in Registry)")
+                    continue
+
                 doc_id = f"{chat_id}_{msg_id}_{i}"
 
                 # Metadaten aufbauen
@@ -412,6 +473,7 @@ class LocalVectorStore:
                     "chunk_index": i,
                     "role": role,
                     "source_length": len(content),
+                    "content_hash": content_hash,
                 }
                 meta.update(custom_metadata)
 
@@ -444,6 +506,7 @@ class LocalVectorStore:
                 batch_embeddings.append(vec)
                 batch_documents.append(chunk_text_str)
                 batch_metadatas.append(clean_meta)
+                batch_hashes.append(content_hash)
                 total_chunks += 1
 
                 # Batch-Commit (ROBUSTE VERSION)
@@ -466,6 +529,16 @@ class LocalVectorStore:
                             except Exception as cache_err:
                                 logger.warning(f"⚠️ Embedding Cache-Commit fehlgeschlagen: {cache_err}")
 
+                        # Phase 4.2: BM25 Direct Injection
+                        bm25_cache = BM25Cache()
+                        if bm25_cache.bm25 is not None:
+                            new_corpus = [doc.lower().split() for doc in batch_documents]
+                            bm25_cache.append_docs(batch_ids, new_corpus, batch_metadatas)
+
+                        # Phase 4.3: Erfolgreich eingefügte IDs + Hashes für Registry sammeln
+                        all_inserted_doc_ids.extend(batch_ids)
+                        all_inserted_hashes.extend(batch_hashes)
+
                         logger.info(f"  💾 Batch committed. Total: {total_chunks}")
 
                     except Exception as e:
@@ -476,6 +549,7 @@ class LocalVectorStore:
                         # IMMER leeren, um Endlos-Retries bei jedem weiteren Chunk zu verhindern!
                         batch_ids, batch_embeddings = [], []
                         batch_documents, batch_metadatas = [], []
+                        batch_hashes = []
                         pending_cache_writes = []
 
         # Finaler Batch (ROBUSTE VERSION)
@@ -498,9 +572,27 @@ class LocalVectorStore:
                     except Exception as cache_err:
                         logger.warning(f"⚠️ Finaler Cache-Commit fehlgeschlagen: {cache_err}")
 
+                # Phase 4.2: BM25 Direct Injection
+                bm25_cache = BM25Cache()
+                if bm25_cache.bm25 is not None:
+                    new_corpus = [doc.lower().split() for doc in batch_documents]
+                    bm25_cache.append_docs(batch_ids, new_corpus, batch_metadatas)
+
+                # Phase 4.3: Finale Batch-IDs + Hashes sammeln
+                all_inserted_doc_ids.extend(batch_ids)
+                all_inserted_hashes.extend(batch_hashes)
+
             except Exception as e:
                 logger.error(f"❌ Finaler ChromaDB Batch-Commit fehlgeschlagen: {e}")
                 logger.error(f"   {len(batch_ids)} Chunks wurden NICHT gespeichert!")
+
+        # Phase 4.3: Chunk Registry synchronisieren + chunk_count aktualisieren
+        if all_inserted_doc_ids:
+            try:
+                register_chunks(chat_id, all_inserted_doc_ids, all_inserted_hashes)
+                update_chunk_count(chat_id)
+            except Exception as e:
+                logger.warning(f"⚠️ Chunk Registry Sync fehlgeschlagen: {e}")
 
         logger.info(
             f"✅ Chat {chat_id}: {total_chunks} Chunks gespeichert, "
@@ -521,7 +613,7 @@ class LocalVectorStore:
     def delete_chat_embeddings(self, chat_id: str):
         """
         Löscht alle Embeddings für einen Chat aus ChromaDB.
-        Identische Semantik zur Vorgänger-Version.
+        Phase 4.3: Synchronisiert auch die Chunk Registry in SQLite.
         """
         try:
             collection = _get_chroma_collection()
@@ -532,10 +624,18 @@ class LocalVectorStore:
         except Exception as e:
             logger.warning(f"⚠️ Fehler beim Löschen der Embeddings: {e}")
 
+        # Phase 4.3: Registry synchronisieren — unabhängig von ChromaDB-Erfolg
+        try:
+            unregister_chat_chunks(chat_id)
+            update_chunk_count(chat_id)
+        except Exception as e:
+            logger.warning(f"⚠️ Chunk Registry Sync beim Löschen fehlgeschlagen: {e}")
+
     def iter_all_chunks(self, limit: int = 0):
         """
         Generator: Gibt alle gespeicherten Chunks einzeln zurück (RAM-schonend).
-        Für Bulk Export/Labeling bei großen Korpora (>20.000 Chunks).
+        Phase 4.3: Nutzt SQLite Registry für stabile Keyset-Pagination
+        statt ChromaDB offset (instabil bei Imports/Deletes).
 
         Args:
             limit: Max. Anzahl Chunks (0 = alle)
@@ -548,25 +648,48 @@ class LocalVectorStore:
         if total == 0:
             return
 
-        FETCH_BATCH = 5000
-        offset = 0
-        fetch_limit = min(limit, total) if limit > 0 else total
+        # Phase 4.3: Lazy Backfill — falls Registry leer (erster Start nach Update)
+        registry_count = get_chunk_registry_count()
+        if registry_count == 0 and total > 0:
+            logger.info("🔄 Chunk Registry leer — starte einmaligen Backfill...")
+            backfill_chunk_registry(collection)
 
-        while offset < fetch_limit:
-            batch_size = min(FETCH_BATCH, fetch_limit - offset)
-            result = collection.get(
-                limit=batch_size, offset=offset, include=["documents", "metadatas"]
+        # Phase 4.3: Keyset-Pagination über SQLite Registry
+        FETCH_BATCH = 50  # ChromaDB get(ids=[...]) ist effizient
+        last_seq = 0
+        yielded = 0
+
+        while True:
+            chunk_ids, last_seq = get_chunk_ids_page(
+                chat_id=None, last_seq=last_seq, limit=FETCH_BATCH
             )
-            for i, doc_id in enumerate(result["ids"]):
-                content = result["documents"][i] if result["documents"] else ""
-                meta = result["metadatas"][i] if result["metadatas"] else {}
+            if not chunk_ids:
+                break
+
+            # ChromaDB liefert nur die Vektoren/Dokumente für die IDs
+            result = collection.get(
+                ids=chunk_ids, include=["documents", "metadatas"]
+            )
+            # ChromaDB gibt Ergebnisse nicht in Request-Reihenfolge zurück!
+            # Index-Map für korrekte Zuordnung bauen
+            id_to_idx = {cid: i for i, cid in enumerate(result["ids"])}
+
+            for doc_id in chunk_ids:
+                idx = id_to_idx.get(doc_id)
+                if idx is None:
+                    logger.warning(f"⚠️ Chunk {doc_id} in Registry aber nicht in ChromaDB (Orphan).")
+                    continue
+                content = result["documents"][idx] if result["documents"] else ""
+                meta = result["metadatas"][idx] if result["metadatas"] else {}
                 yield {
                     "vector_doc_id": doc_id,
                     "content": content,
                     "metadata": meta,
                     "chat_id": meta.get("chat_id", ""),
                 }
-            offset += batch_size
+                yielded += 1
+                if limit > 0 and yielded >= limit:
+                    return
 
     def get_all_chunks(self, limit: int = 0) -> list:
         """
@@ -626,8 +749,8 @@ class LocalVectorStore:
     def _ensure_bm25_index(self):
         """
         Baut BM25-Index auf, falls noch nicht vorhanden (Lazy Loading).
-        Datenquelle: ChromaDB.
-        Logik vollständig identisch zur v50.7.
+        Phase 4.3: Nutzt SQLite Registry für stabile Pagination
+        statt ChromaDB offset.
         """
         cache = BM25Cache()
         index, doc_map = cache.get_index()
@@ -649,20 +772,35 @@ class LocalVectorStore:
             logger.warning("⚠️ Keine Dokumente für BM25-Index gefunden.")
             return
 
-        # Alle Dokumente aus ChromaDB laden (in Batches für große Korpora)
+        # Phase 4.3: Lazy Backfill — falls Registry leer
+        registry_count = get_chunk_registry_count()
+        if registry_count == 0 and total > 0:
+            logger.info("🔄 Chunk Registry leer — starte einmaligen Backfill für BM25...")
+            backfill_chunk_registry(collection)
+
+        # Phase 4.3: Pagination über Registry, ChromaDB liefert Dokumente
         corpus = []
         doc_map = {}
         count = 0
-        FETCH_BATCH = 5000
+        FETCH_BATCH = 500
+        last_seq = 0
 
-        offset = 0
-        while offset < total:
-            result = collection.get(
-                limit=FETCH_BATCH, offset=offset, include=["documents", "metadatas"]
+        while True:
+            chunk_ids, last_seq = get_chunk_ids_page(
+                chat_id=None, last_seq=last_seq, limit=FETCH_BATCH
             )
-            for i, doc_id in enumerate(result["ids"]):
-                content = result["documents"][i] if result["documents"] else ""
-                meta = result["metadatas"][i] if result["metadatas"] else {}
+            if not chunk_ids:
+                break
+
+            result = collection.get(ids=chunk_ids, include=["documents", "metadatas"])
+            id_to_idx = {cid: i for i, cid in enumerate(result["ids"])}
+
+            for doc_id in chunk_ids:
+                idx = id_to_idx.get(doc_id)
+                if idx is None:
+                    continue
+                content = result["documents"][idx] if result["documents"] else ""
+                meta = result["metadatas"][idx] if result["metadatas"] else {}
                 d = {
                     "vector_doc_id": doc_id,
                     "content": content,
@@ -672,7 +810,6 @@ class LocalVectorStore:
                 corpus.append(content.lower().split())
                 doc_map[count] = d
                 count += 1
-            offset += FETCH_BATCH
 
         if corpus:
             bm25_index = BM25Okapi(corpus)
@@ -776,6 +913,7 @@ class LocalVectorStore:
                     "metadata": meta,
                     "chat_id": meta.get("chat_id", ""),
                     "score": float(score),
+                    "embedding": vec,
                 }
 
                 cid = meta.get("chat_id", "")
@@ -815,9 +953,9 @@ class LocalVectorStore:
             )
             return fair_candidates[: limit * 2], query_vector
 
-        # ======================================================================
+        # =======================================================================
         # GLOBALE SUCHE (Standard-Modus)
-        # ======================================================================
+        # =======================================================================
         where_filter = None
         if allowed_chat_ids:
             where_filter = {"chat_id": {"$in": allowed_chat_ids}}
@@ -869,6 +1007,7 @@ class LocalVectorStore:
                 "content": results["documents"][0][i] if results["documents"] else "",
                 "metadata": meta,
                 "chat_id": meta.get("chat_id", ""),
+                "embedding": embedding,
                 # ChromaDB Cosine Distance → Score (1 - distance)
                 "score": float(1.0 - distance),
             }

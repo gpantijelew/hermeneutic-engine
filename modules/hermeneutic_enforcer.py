@@ -14,10 +14,19 @@ Unterscheidet zwischen zwei orthogonalen Dimensionen der Validierung:
 
 import hashlib
 import logging
+import random
+import uuid
 from collections import OrderedDict
-from typing import Dict
+from typing import Dict, Optional
 
-from modules.config import get_model_for_task
+from modules.config import (
+    get_model_for_task,
+    DOMAIN_ANALYSIS,
+    ENFORCER_SAMPLING_RATE_HIGH,
+    ENFORCER_SAMPLING_RATE_LOW,
+    ENFORCER_CALIBRATION_TARGET,
+    ENFORCER_VERSION,
+)
 from modules.llm_wrapper import llm_call_json
 from modules.prompt_manager import PromptManager
 
@@ -69,7 +78,7 @@ class HermeneuticEnforcer:
             content_str += src.get("content", "").strip()
         return hashlib.md5(content_str.encode("utf-8")).hexdigest()
 
-    def validate_claim(self, claim: str, sources: list, mode: str = "hermeneutic") -> Dict:
+    def validate_claim(self, claim: str, sources: list, mode: str = "hermeneutic", domain: Optional[str] = None) -> Dict:
         cache_key = self._generate_cache_key(claim, sources)
         if self._cache_get(cache_key) is not None:
             logger.debug(f"⚡ [CACHE HIT] Enforcer: {claim[:50]}...")
@@ -100,9 +109,10 @@ class HermeneuticEnforcer:
         result_json = llm_call_json(
             prompt=prompt,
             task="enforcer",
-            temperature=0.0,  
-            max_tokens=4096,  
+            temperature=0.0,
+            max_tokens=4096,
             fallback=dict(_ERROR_RESULT),
+            domain=DOMAIN_ANALYSIS,
         )
 
         # Typ-Sicherheit (GLMs exzellenter Beitrag)
@@ -128,7 +138,66 @@ class HermeneuticEnforcer:
             f"(confidence: {result['confidence']:.2f})"
         )
 
+        # --- A.7: HUMAN-IN-THE-LOOP SAMPLING ---
+        if domain == DOMAIN_ANALYSIS and sources:
+            self._maybe_sample_for_review(claim, sources, result)
+        # --- /A.7 ---
+
         return result
+
+    def _maybe_sample_for_review(self, claim: str, sources: list, result: Dict) -> None:
+        """A.7: Samplet Claims für Human-in-the-Loop Review (non-blocking)."""
+        try:
+            # 1. Claim-Hash (claim + source_id)
+            first_src = sources[0]
+            source_id = first_src.get("source_id", "") or first_src.get("metadata", {}).get("chat_id", "")
+            claim_hash = hashlib.sha256(
+                (claim.strip().lower() + str(source_id)).encode()
+            ).hexdigest()[:16]
+
+            # 2. Deduplizierung: Prüfe ob Hash für aktuelle Version existiert
+            from modules.database import get_db_connection
+            db = get_db_connection()
+            if db is None:
+                return
+            existing = db.execute(
+                "SELECT 1 FROM enforcer_reviews WHERE claim_hash = ? AND enforcer_version = ? LIMIT 1",
+                (claim_hash, ENFORCER_VERSION),
+            ).fetchone()
+            if existing:
+                return  # Bereits gesampelt für diese Version
+
+            # 3. Rate ermitteln
+            from modules.database import get_human_review_count
+            reviewed = get_human_review_count()
+            rate = ENFORCER_SAMPLING_RATE_HIGH if reviewed < ENFORCER_CALIBRATION_TARGET else ENFORCER_SAMPLING_RATE_LOW
+
+            # 4. Würfeln
+            if random.randint(1, rate) != 1:
+                return
+
+            # 5. Source-Content + Hash
+            source_content = first_src.get("content", "")
+            source_content_hash = hashlib.sha256(source_content.encode()).hexdigest()
+
+            # 6. Insert
+            from modules.database import insert_enforcer_review
+            review_id = str(uuid.uuid4())[:8]
+            insert_enforcer_review(
+                id=review_id,
+                claim_hash=claim_hash,
+                claim_text=claim,
+                source_id=str(source_id) or "unknown",
+                source_content=source_content,
+                source_content_hash=source_content_hash,
+                enforcer_version=ENFORCER_VERSION,
+                enforcer_valid=result.get("valid", False),
+                enforcer_reason=result.get("reason", ""),
+                enforcer_confidence=result.get("confidence", None),
+            )
+            logger.info(f"🔬 A.7: Claim gesampelt für Human-Review (rate=1/{rate}, id={review_id})")
+        except Exception as e:
+            logger.warning(f"⚠️ A.7 Sampling fehlgeschlagen (non-critical): {e}")
 
     def validate_claim_legacy(self, claim: str, sources: list, mode: str = "hermeneutic") -> tuple:
         result = self.validate_claim(claim, sources, mode)
@@ -162,18 +231,20 @@ class HermeneuticEnforcer:
 
         prompt = prompt_template.format(claim=claim, sources_text=sources_text)
 
+        from modules.config import DOMAIN_ANALYSIS
         result_json = llm_call_json(
             prompt=prompt,
             task="enforcer",
             temperature=0.0,
-            max_tokens=4096,  
+            max_tokens=4096,
             fallback={
-                "valid": False,  
+                "valid": False,
                 "hermeneutic_type": "error",
                 "validity_category": "unavailable",
                 "reason": "ENFORCER UNAVAILABLE — Zitat nicht validiert",
                 "confidence": 0.0,
             },
+            domain=DOMAIN_ANALYSIS,
         )
 
         if isinstance(result_json, list) and len(result_json) > 0:

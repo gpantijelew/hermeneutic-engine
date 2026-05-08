@@ -32,7 +32,7 @@ def render_import_tab() -> None:
             "Anleitung: Chat-Text markieren (Strg+A), kopieren (Strg+C) und hier einfügen."
         )
         chat_text_input = st.text_area(
-            "Chat-Text hier einfügen:", height=300, key="chat_paste_area"
+            "Chat-Text hier einfügen:", height=300, key="gemini_paste_area"
         )
 
         if st.button(

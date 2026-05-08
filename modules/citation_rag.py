@@ -4,6 +4,9 @@ import re
 import time
 import asyncio
 import math
+import uuid
+import json
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from collections import defaultdict
 from typing import List, Dict, Any, Tuple, Optional
@@ -19,9 +22,9 @@ from modules.config import (
     MINIMUM_RESCUE_SCORE,
     RESCUE_FETCH_LIMIT,  # <--- NEU (siehe Punkt 2)
     TRIM_TOKEN_BUDGET,  # <--- NEU
-    MAX_TOKENS_STILISIERUNG
+    MAX_TOKENS_STILISIERUNG,
 )
-from modules.llm_wrapper import llm_call
+from modules.llm_wrapper import llm_call, llm_call_json, _parse_json_safe
 from modules.vector_store import LocalVectorStore
 from modules.evidence_synthesis import EvidenceFirstSynthesizer
 from modules.hermeneutic_reranker import HermeneuticReranker
@@ -33,7 +36,13 @@ logger = logging.getLogger(__name__)
 
 class CitationRAG:
     def __init__(
-        self, vector_store: LocalVectorStore = None, model_name: str = MODEL_SYNTHESIS
+        self,
+        vector_store: LocalVectorStore = None,
+        model_name: str = MODEL_SYNTHESIS,
+        router = None,
+        reranker_factory = None,
+        enforcer = None,
+        llm_call_func = None,
     ):
         if vector_store is None:
             from modules.database import get_db_connection
@@ -43,7 +52,7 @@ class CitationRAG:
 
         self.vector_store = vector_store
         self.model_name = model_name
-        self.router = HermeneuticRouter()
+        self.router = router or HermeneuticRouter()
         self.synthesizer = EvidenceFirstSynthesizer(model_name)
 
         # UI-Zugriff für Imbalance-Daten
@@ -54,8 +63,16 @@ class CitationRAG:
         # --- FIX: Cache initialisieren ---
         self._original_results_cache = []
 
-        # --- NEU v52: Prompt-Manager --- 
+        # --- NEU v52: Prompt-Manager ---
         self.prompt_manager = PromptManager()
+
+        # --- Phase 5.1: Dependency Injection Slots ---
+        self._enforcer = enforcer
+        self._llm_call_func = llm_call_func or llm_call
+        if reranker_factory:
+            self._reranker_factory = reranker_factory
+        else:
+            self._reranker_factory = lambda threshold: HermeneuticReranker(threshold=threshold)
 
     def generate_synthesis_best_of(
         self,
@@ -80,13 +97,93 @@ class CitationRAG:
         # Dynamisches Token-Limit: Stilisierung braucht mehr Raum für Ghostwriting
         max_tokens = MAX_TOKENS_STILISIERUNG if intent == "STILISIERUNG" else 8192
 
-        return llm_call(
+        return self._llm_call_func(
             prompt,
             task="synthesis",
             system_instruction=sys_instr,
             temperature=temperature,
             max_tokens=max_tokens,
         )
+
+    def generate_agentic_synthesis(
+        self,
+        iteration_texts: List[str],
+        source_intent: str = "SYNTHESIS_BEST_OF",
+    ) -> Tuple[str, dict]:
+        """
+        Drei-Stufen-Agentic-Pipeline:
+        AGENT_DRAFTER → AGENT_CRITIC → AGENT_EDITOR
+
+        Args:
+            iteration_texts: vollständige Texte, unkondensiert
+            source_intent: "SYNTHESIS_BEST_OF" oder "STILISIERUNG"
+
+        Returns:
+            (finaler_text, trace_dict)
+        """
+        import json as _json
+
+        # --- Schritt 1: Entwurf ---
+        draft = self.generate_synthesis_best_of(
+            iteration_texts,
+            intent="AGENT_DRAFTER"
+        )
+        logger.info(f"✅ Agentic Schritt 1 (DRAFTER): {len(draft)} Zeichen")
+
+        if not draft:
+            return "", {"error": "DRAFTER lieferte leeren Text"}
+
+        # --- Schritt 2: Kritik (Ohne JSON-Modus, um API-Limits zu umgehen) ---
+        critic_sys = self.prompt_manager.get_system_instruction("AGENT_CRITIC")
+        raw_critique = self._llm_call_func(
+            prompt=f"ENTWURF ZUR PRÜFUNG:\n\n{draft}",
+            task="synthesis",
+            system_instruction=critic_sys,
+            temperature=0.3,
+            max_tokens=4096,
+        )
+
+        # Manuelles Parsing des Text-Outputs
+        from modules.llm_wrapper import _parse_json_safe
+        critique = _parse_json_safe(raw_critique, fallback=[])
+
+        logger.info(f"✅ Agentic Schritt 2 (CRITIC): {len(str(critique))} Zeichen")
+        logger.info(f"CRITIC Output: {_json.dumps(critique, ensure_ascii=False, indent=2)}")
+
+        # Wenn das Modell nur ein einzelnes dict zurückgibt, packe es in eine Liste
+        if isinstance(critique, dict):
+            critique = [critique]
+
+        if not isinstance(critique, list) or len(critique) == 0:
+            logger.warning("⚠️ CRITIC lieferte leere oder invalide Liste — überspringe Editor")
+            return draft, {"draft": draft[:300], "critique": [], "skipped_editor": True}
+
+        logger.info(f"📋 CRITIC: {len(critique)} Kritikpunkte")
+        for i, point in enumerate(critique[:3]):
+            logger.info(f"  [{i+1}] {point.get('problem', '?')}")
+
+        # --- Schritt 3: Überarbeitung ---
+        editor_sys = self.prompt_manager.get_system_instruction("AGENT_EDITOR")
+        edit_prompt = (
+            f"ENTWURF:\n\n{draft}\n\n"
+            f"KRITIKPUNKTE (nur diese 3 Stellen ändern):\n"
+            f"{_json.dumps(critique[:3], ensure_ascii=False, indent=2)}"
+        )
+        final = self._llm_call_func(
+            edit_prompt,
+            task="synthesis",
+            system_instruction=editor_sys,
+            temperature=0.55,
+            max_tokens=MAX_TOKENS_PER_CALL,
+        )
+        logger.info(f"✅ Agentic Schritt 3 (EDITOR): {len(final)} Zeichen")
+
+        trace = {
+            "draft_preview": draft[:300],
+            "critique": critique[:3],
+            "final_length": len(final),
+        }
+        return final, trace
 
     def expand_query_multilingual(self, query: str) -> str:
         """v50.1: Query Translation für multilingualen Retrieval.
@@ -104,7 +201,7 @@ Trenne mit Leerzeichen, nicht mit Zeilenumbrüchen!
 
 Behalte Namen unverändert! """
 
-            multilingual_query = llm_call(prompt, task="query_expansion")
+            multilingual_query = self._llm_call_func(prompt, task="query_expansion")
 
             if not multilingual_query:
                 logger.warning("⚠️ Query-Expansion leer. Fallback auf Original.")
@@ -282,7 +379,7 @@ Behalte Namen unverändert! """
 
         # Reranking
         top_candidates = results[:100]
-        reranker = HermeneuticReranker(threshold=rerank_threshold)
+        reranker = self._reranker_factory(threshold=rerank_threshold)
         top_results, _ = reranker.rerank(
             query, top_candidates, max_results=RERANKER_CANDIDATES, intent=intent
         )
@@ -693,7 +790,7 @@ Behalte Namen unverändert! """
     def _ensure_router_context(self, query: str) -> Tuple[str, str]:
         """Stellt sicher, dass der Router-Kontext für die Query geladen ist."""
         if self.current_context.get("query") != query:
-            logger.info("🔄 Router-Bypass erkannt (Analyse-Fenster). Hole Intent-Analyse nach...")
+            logger.info("🔄 Router-Kontext fehlt (Analyse-Fenster). Hole Intent-Analyse nach...")
             try:
                 route = self.router.route_query(query)
                 self.current_context = {
@@ -748,12 +845,12 @@ Behalte Namen unverändert! """
         else:
             top_candidates = results[:100]
             logger.info(f"⚖️ Reranking mit Threshold: {rerank_threshold} (Intent: {intent})")
-            reranker = HermeneuticReranker(threshold=rerank_threshold)
+            reranker = self._reranker_factory(threshold=rerank_threshold)
             top_results, rerank_stats = reranker.rerank(query, top_candidates, max_results=RERANKER_CANDIDATES, intent=intent)
             
             if len(top_results) < 5:
                  logger.warning(f"⚠️ Zu wenig Treffer nach Reranking ({len(top_results)}). Senke Threshold auf 0.35...")
-                 reranker_relaxed = HermeneuticReranker(threshold=0.35)
+                 reranker_relaxed = self._reranker_factory(threshold=0.35)
                  top_results, _ = reranker_relaxed.rerank(query, top_candidates, max_results=RERANKER_CANDIDATES, intent=intent)
 
             # Verworfene Chunks für Pipeline-Trace
@@ -1073,12 +1170,14 @@ Behalte Namen unverändert! """
 
                 logger.info(f"🚀 Starte Synthese-Call (Versuch {attempt+1}, max_tokens={MAX_TOKENS_PER_CALL}, temp={synthesis_temp})...")
 
-                result = llm_call(
+                from modules.config import DOMAIN_ANALYSIS
+                result = self._llm_call_func(
                     prompt,
                     task="synthesis",
                     system_instruction=dynamic_sys_instruct,
                     temperature=synthesis_temp,
                     max_tokens=MAX_TOKENS_PER_CALL,
+                    domain=DOMAIN_ANALYSIS,
                 )
 
                 if not result:
@@ -1105,6 +1204,31 @@ Behalte Namen unverändert! """
                     logger.warning("⚠️ Qualitätswarnung an Nutzer ausgegeben (Reranker-Ausfall)")
 
                 logger.info("✅ Antwort empfangen!")
+
+                # --- A.3: ANALYSIS PERSISTENZ ---
+                _analysis_id = str(uuid.uuid4())[:8]
+                _cited_doc_ids = list(set(
+                    r.get('metadata', {}).get('chat_id', r.get('chat_id', ''))
+                    for r in top_results_sorted
+                    if r.get('metadata', {}).get('chat_id') or r.get('chat_id')
+                ))
+                from modules.database import save_analysis
+                from modules.config import MODEL_SYNTHESIS, DOMAIN_PROFILES, DOMAIN_ANALYSIS
+                _profile = DOMAIN_PROFILES.get(DOMAIN_ANALYSIS, {})
+                save_analysis(
+                    analysis_id=_analysis_id,
+                    query=query,
+                    answer_text=final_text,
+                    intent=intent,
+                    semantic_intent=semantic_intent,
+                    analysis_domain=DOMAIN_ANALYSIS,
+                    model=MODEL_SYNTHESIS,
+                    temperature=_profile.get('temperature'),
+                    seed=_profile.get('seed'),
+                    top_p=_profile.get('top_p'),
+                    cited_document_ids=_cited_doc_ids,
+                )
+                # --- /A.3 ---
 
                 _chunk_table = []
                 for r in top_results_sorted:
@@ -1180,13 +1304,16 @@ Behalte Namen unverändert! """
     ) -> Tuple[bool, str]:
         """Tiefenprüfung via Enforcer (FINAL FIX v50.9)."""
         try:
-            from modules.hermeneutic_enforcer import HermeneuticEnforcer
-
-            enforcer = HermeneuticEnforcer()
+            if self._enforcer:
+                enforcer = self._enforcer
+            else:
+                from modules.hermeneutic_enforcer import HermeneuticEnforcer
+                enforcer = HermeneuticEnforcer()
             sources = [{"content": source_text, "metadata": source_meta}]
 
             # 1. Aufruf (Name ist korrekt: validate_claim)
-            result = enforcer.validate_claim(claim=claim, sources=sources)
+            from modules.config import DOMAIN_ANALYSIS
+            result = enforcer.validate_claim(claim=claim, sources=sources, domain=DOMAIN_ANALYSIS)
 
             # 2. Ergebnis verarbeiten (Dict vs Tuple)
             if isinstance(result, dict):
@@ -1222,9 +1349,11 @@ Behalte Namen unverändert! """
     ) -> Tuple[bool, str]:
         """Multi-Source-Validierung: Jedes Zitat muss in mindestens einer Quelle stehen."""
         try:
-            from modules.hermeneutic_enforcer import HermeneuticEnforcer
-
-            enforcer = HermeneuticEnforcer()
+            if self._enforcer:
+                enforcer = self._enforcer
+            else:
+                from modules.hermeneutic_enforcer import HermeneuticEnforcer
+                enforcer = HermeneuticEnforcer()
             result = enforcer.validate_claim_multisource(claim=claim, sources=sources)
 
             if isinstance(result, dict):
@@ -1330,3 +1459,83 @@ Behalte Namen unverändert! """
                 flat_log.extend(res_list)
 
         return flat_log
+
+    # =========================================================================
+    # IFS SUPERVISION PIPELINE — Drei-Agenten-Map-Reduce
+    # =========================================================================
+
+    def generate_ifs_supervision(self, chat_text: str) -> dict:
+        """
+        Drei-Agenten-Pipeline für psychosystemische Analyse von User-KI-Dialogen.
+        
+        Map-Phase (parallel):
+            - SUPERVISION_MANAGER: Strukturelle Kartierung von Kontrollmechanismen
+            - SUPERVISION_EXILE: Identifikation von Diskursrissen und Subversion
+        
+        Reduce-Phase (sequentiell):
+            - SUPERVISION_META: Meta-Gutachten über die Beziehungsdynamik
+        
+        Args:
+            chat_text: Der vollständige User-KI-Dialog als String.
+        
+        Returns:
+            dict: {"manager": <str>, "exile": <str>, "fazit": <str>}
+        """
+        logger.info("🚀 Starte IFS-Supervision Pipeline (Map-Reduce)")
+
+        # --- Hilfsfunktion für einzelne LLM-Calls ---
+        def _call_supervision_agent(intent: str, **kwargs) -> str:
+            """Führt einen einzelnen Supervision-Agenten aus."""
+            try:
+                sys_prompt = self.prompt_manager.get_system_instruction(intent)
+                mode_prompt = self.prompt_manager.get_mode_instruction(intent, **kwargs)
+                
+                # Temperatur aus YAML holen (Fallback: 0.2)
+                temp = self.prompt_manager.get_synthesis_params(intent).get("temperature", 0.2)
+                
+                result = self._llm_call_func(
+                    mode_prompt,
+                    task="synthesis",
+                    system_instruction=sys_prompt,
+                    temperature=temp,
+                    max_tokens=8192,
+                )
+                logger.info(f"✅ {intent}: {len(result)} Zeichen")
+                return result
+            except Exception as e:
+                logger.error(f"❌ {intent} fehlgeschlagen: {e}")
+                return f"[FEHLER: {intent} konnte nicht ausgeführt werden: {e}]"
+
+        # --- MAP-PHASE: Manager + Exile parallel ---
+        logger.info("🗺️  Map-Phase: Manager + Exile (parallel)")
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            manager_future = executor.submit(
+                _call_supervision_agent,
+                "SUPERVISION_MANAGER",
+                context_text=chat_text
+            )
+            exile_future = executor.submit(
+                _call_supervision_agent,
+                "SUPERVISION_EXILE",
+                context_text=chat_text
+            )
+            
+            manager_result = manager_future.result()
+            exile_result = exile_future.result()
+
+        # --- REDUCE-PHASE: Meta-Gutachten (sequentiell, wartet auf Map-Ergebnisse) ---
+        logger.info("🧠 Reduce-Phase: Meta-Gutachten")
+        meta_result = _call_supervision_agent(
+            "SUPERVISION_META",
+            context_text=chat_text,
+            manager_analysis=manager_result,
+            exile_analysis=exile_result
+        )
+
+        logger.info("✅ IFS-Supervision Pipeline abgeschlossen")
+
+        return {
+            "manager": manager_result,
+            "exile": exile_result,
+            "meta": meta_result
+        }

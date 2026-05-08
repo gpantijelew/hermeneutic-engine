@@ -67,6 +67,9 @@ class QueryIntent(Enum):
     META_ANALYTICAL = "meta_analytical"
     SYNTHESIS_BEST_OF = "synthesis_best_of"
     STILISIERUNG = "stilisierung"
+    IFS_CONTROL = "ifs_control"
+    IFS_FIGHT = "ifs_fight"
+    IFS_FEAR = "ifs_fear"
 
 class HermeneuticRouter:
     """

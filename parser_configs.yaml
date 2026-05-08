@@ -1,0 +1,109 @@
+# ==============================================================================
+# Parser-Konfigurationen für HTML-Chat-Importer
+#
+# Pfad: parser_configs.yaml (Root-Verzeichnis)
+# Lade-Modus: Lazy-Load via get_parser_configs() in modules/importers/base.py
+#
+# Jede Plattform definiert:
+#   - name:                Anzeigename
+#   - message_block_selector:  CSS-Selektor für Nachrichten-Blöcke
+#   - role_detection:      Strategie zur Erkennung von User vs. Model
+#     * attribute_based:   HTML-Attribut (z.B. data-message-author-role)
+#     * class_based:       CSS-Klassen-Namen
+#     * tag_based:         HTML-Tag-Name
+#   - content_selectors:   CSS-Selektoren für Nachrichten-Inhalte (user/model)
+#   - model_name_selector: Optional, für Modell-Namen-Extraktion
+#   - sidebar_selector:    Optional, für Sidebar-Inhalte
+# ==============================================================================
+
+chatgpt:
+  name: "ChatGPT (OpenAI)"
+  sidebar_selector: "#stage-slideover-sidebar"
+  message_block_selector: 'article[data-testid^="conversation-turn-"]'
+  role_detection:
+    attribute_based:
+      element_selector: "div[data-message-author-role]"
+      attribute: "data-message-author-role"
+      user_value: "user"
+      model_value: "assistant"
+  content_selectors:
+    user: ".whitespace-pre-wrap"
+    model: ".markdown.prose"
+  model_name_selector: "div[data-model-name]"
+
+kimi:
+  name: "Kimi Chat (Moonshot)"
+  message_block_selector: "div.chat-content-item"
+  role_detection:
+    class_based:
+      user: "chat-content-item-user"
+      model: "chat-content-item-assistant"
+  content_selectors:
+    user: "div.user-content"
+    model: "div.markdown"
+
+claude:
+  name: "Claude (Anthropic)"
+  message_block_selector: "div[data-test-render-count]"
+  role_detection:
+    class_based:
+      user: "font-user-message"
+      model: "font-claude-message"
+  content_selectors:
+    user: "div.whitespace-pre-wrap"
+    model: "div.whitespace-pre-wrap"
+
+gemini:
+  name: "Gemini (Google)"
+  message_block_selector: "div.message-box"
+  role_detection:
+    class_based:
+      user: "message-box--user"
+      model: "model-response"
+  content_selectors:
+    user: "span.prompt-response-text-area"
+    model: "span.ai-markdown-artifact-renderer"
+
+hotbot:
+  name: "HotBot"
+  message_block_selector: "div.tyn-qa-item"
+  role_detection:
+    class_based:
+      user: "tyn-qa-item-usr"
+      model: "tyn-qa-item-bot"
+  content_selectors:
+    user: "div.tyn-qa-message"
+    model: "div.tyn-qa-message"
+
+perplexity:
+  name: "Perplexity AI"
+  message_block_selector: "div.perplexity-message"
+  role_detection:
+    class_based:
+      user: "user-message"
+      model: "assistant-message"
+  content_selectors:
+    user: "div.content"
+    model: "div.content"
+
+grok:
+  name: "Grok (xAI)"
+  message_block_selector: "div.grok-response"
+  role_detection:
+    class_based:
+      user: "user-row"
+      model: "model-row"
+  content_selectors:
+    user: "div.text-content"
+    model: "div.text-content"
+
+glm:
+  name: "GLM-4 (Zhipu)"
+  message_block_selector: "div.glm-chat-item"
+  role_detection:
+    class_based:
+      user: "user-msg"
+      model: "assistant-msg"
+  content_selectors:
+    user: "div.msg-content"
+    model: "div.msg-content"
