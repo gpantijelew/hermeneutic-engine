@@ -28,13 +28,17 @@ import json
 import logging
 import re
 import time
-import time as _time  # Alias um Konflikte zu vermeiden
 import threading
 from queue import Queue, Empty
 from typing import Optional, Any
-import streamlit as st
 
-from streamlit.runtime.scriptrunner import get_script_run_ctx
+# Streamlit optional — llm_wrapper funktioniert auch ohne laufende ST-Session
+try:
+    import streamlit as st
+    from streamlit.runtime.scriptrunner import get_script_run_ctx
+    _STREAMLIT_AVAILABLE = True
+except ImportError:
+    _STREAMLIT_AVAILABLE = False
 
 from modules.config import (
     LLM_BACKEND,
@@ -51,8 +55,8 @@ _JSON_PARSE_FAILED = object()
 def _get_backend_type() -> str:
     """Ermittelt das aktive Backend robust."""
     from modules.config import LLM_BACKEND
-    if LLM_BACKEND == "lm_studio":
-        return "lm_studio"
+    if LLM_BACKEND == "lmstudio":
+        return "lmstudio"
     elif LLM_BACKEND == "openai":
         return "openai"
     return "vertex"
@@ -94,16 +98,17 @@ def _get_thread_local_stats() -> list:
 def _enqueue_stat(stat_entry: dict) -> None:
     """Schreibt einen Statistik-Eintrag absolut thread-sicher ohne Streamlit-Warnungen."""
     # 1. Prüfen, ob wir im Streamlit-Haupt-Thread sind (verhindert die rote Warnung!)
-    ctx = get_script_run_ctx()
+    if _STREAMLIT_AVAILABLE:
+        ctx = get_script_run_ctx()
 
-    if ctx is not None:
-        # Wir sind im Haupt-Thread -> Direkter Schreibzugriff
-        try:
-            if "call_stats" in st.session_state:
-                st.session_state.call_stats.append(stat_entry)
-                return
-        except Exception:
-            pass
+        if ctx is not None:
+            # Wir sind im Haupt-Thread -> Direkter Schreibzugriff
+            try:
+                if "call_stats" in st.session_state:
+                    st.session_state.call_stats.append(stat_entry)
+                    return
+            except Exception:
+                pass
 
     # 2. Wir sind in einem Neben-Thread -> Ab in die Queue
     try:
@@ -116,6 +121,16 @@ def _enqueue_stat(stat_entry: dict) -> None:
 
 def drain_stats_to_session_state() -> int:
     count = 0
+    if not _STREAMLIT_AVAILABLE:
+        # Streamlit nicht verfügbar -> Queue leeren ohne session_state
+        while True:
+            try:
+                _stats_queue.get(block=False)
+                count += 1
+            except Empty:
+                break
+        return count
+    
     try:
         if "call_stats" not in st.session_state:
             st.session_state.call_stats = []
@@ -132,6 +147,8 @@ def drain_stats_to_session_state() -> int:
 
 def get_session_stats() -> list:
     drain_stats_to_session_state()
+    if not _STREAMLIT_AVAILABLE:
+        return []
     try:
         return st.session_state.get("call_stats", [])
     except Exception:
@@ -139,6 +156,10 @@ def get_session_stats() -> list:
 
 def print_session_summary():
     """Druckt eine lesbare Zusammenfassung in die Konsole."""
+    if not _STREAMLIT_AVAILABLE:
+        print("⚠️ Streamlit nicht verfügbar - keine Session-Statistik.")
+        return
+    
     if not st.session_state.call_stats:
         print("Keine Calls in dieser Session.")
         return
@@ -197,7 +218,7 @@ def _vertex_call_with_retry(call_fn, max_retries: int = 3):
                     f"⚠️ Vertex leere Antwort (Versuch {attempt+1}/{max_retries}). "
                     f"Warte {wait:.1f}s..."
                 )
-                _time.sleep(wait)
+                time.sleep(wait)
                 continue
             return result
         except Exception as e:
@@ -207,7 +228,7 @@ def _vertex_call_with_retry(call_fn, max_retries: int = 3):
                 f"⚠️ Vertex-Fehler (Versuch {attempt+1}/{max_retries}): {e}. "
                 f"Warte {wait:.1f}s..."
             )
-            _time.sleep(wait)
+            time.sleep(wait)
     
     if last_exception:
         raise last_exception
@@ -228,9 +249,6 @@ def _vertex_call(
         GenerateContentConfig,
         Content,
         Part,
-        HarmCategory,
-        HarmBlockThreshold,
-        SafetySetting,
         AutomaticFunctionCallingConfig,
     )
 
@@ -240,26 +258,6 @@ def _vertex_call(
             continue  # System-Instruction geht in config, nicht contents
         role = "user" if msg["role"] == "user" else "model"
         contents.append(Content(role=role, parts=[Part(text=msg["content"])]))
-
-    # Safety settings für Vertex AI
-    safety_settings = [
-        SafetySetting(
-            category=HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-            threshold=HarmBlockThreshold.BLOCK_LOW,
-        ),
-        SafetySetting(
-            category=HarmCategory.HARM_CATEGORY_HARASSMENT,
-            threshold=HarmBlockThreshold.BLOCK_LOW,
-        ),
-        SafetySetting(
-            category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-            threshold=HarmBlockThreshold.BLOCK_LOW,
-        ),
-        SafetySetting(
-            category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-            threshold=HarmBlockThreshold.BLOCK_LOW,
-        ),
-    ]
 
     # --- TICKET 11: Prompt-Monitoring (Claudes sichere Version) ---
     total_chars = sum(
@@ -278,7 +276,6 @@ def _vertex_call(
         temperature=temperature,
         top_p=top_p,
         max_output_tokens=max_tokens,
-        safety_settings=safety_settings,
         automatic_function_calling=AutomaticFunctionCallingConfig(disable=True),
     )
     if seed is not None:
@@ -331,9 +328,6 @@ def _vertex_call_streaming(
         GenerateContentConfig,
         Content,
         Part,
-        HarmCategory,
-        HarmBlockThreshold,
-        SafetySetting,
         Tool,  # <--- NEU
         GoogleSearch,  # <--- NEU
     )
@@ -345,34 +339,13 @@ def _vertex_call_streaming(
         role = "user" if msg["role"] == "user" else "model"
         contents.append(Content(role=role, parts=[Part(text=msg["content"])]))
 
-    # Safety settings für Vertex AI
-    safety_settings = [
-        SafetySetting(
-            category=HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-            threshold=HarmBlockThreshold.BLOCK_LOW,
-        ),
-        SafetySetting(
-            category=HarmCategory.HARM_CATEGORY_HARASSMENT,
-            threshold=HarmBlockThreshold.BLOCK_LOW,
-        ),
-        SafetySetting(
-            category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-            threshold=HarmBlockThreshold.BLOCK_LOW,
-        ),
-        SafetySetting(
-            category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-            threshold=HarmBlockThreshold.BLOCK_LOW,
-        ),
-    ]
-
-    # --- NEU: Google Search Grounding ---
+    # --- Google Search Grounding ---
     tools = [Tool(google_search=GoogleSearch())] if use_search else None
     config_kwargs = dict(
         system_instruction=sys_msg,
         temperature=temperature,
         top_p=top_p,
         max_output_tokens=max_tokens,
-        safety_settings=safety_settings,
     )
     if tools:
         config_kwargs["tools"] = tools
@@ -594,7 +567,7 @@ def llm_call_json(
         except Exception:
             if attempt < _MAX_JSON_RETRIES:
                 logger.warning(f"JSON Cutoff erkannt, starte Retry {attempt}/{_MAX_JSON_RETRIES}...")
-                _time.sleep(0.5 * attempt)  # Lokaler Backoff: 0.5s, 1.0s
+                time.sleep(0.5 * attempt)  # Lokaler Backoff: 0.5s, 1.0s
             else:
                 logger.error(f"JSON-Parsing nach {_MAX_JSON_RETRIES} Versuchen fehlgeschlagen")
 
@@ -890,9 +863,6 @@ def llm_call_json_structured(
     try:
         from google.genai.types import (
             GenerateContentConfig,
-            HarmCategory,
-            HarmBlockThreshold,
-            SafetySetting,
             AutomaticFunctionCallingConfig
         )
 
@@ -907,34 +877,13 @@ def llm_call_json_structured(
         top_p = call_params.get("top_p", top_p)
         seed = call_params.get("seed", seed)
 
-        # Safety settings für Vertex AI JSON-Mode
-        safety_settings = [
-            SafetySetting(
-                category=HarmCategory.HARM_CATEGORY_HATE_SPEECH,
-                threshold=HarmBlockThreshold.BLOCK_LOW,
-            ),
-            SafetySetting(
-                category=HarmCategory.HARM_CATEGORY_HARASSMENT,
-                threshold=HarmBlockThreshold.BLOCK_LOW,
-            ),
-            SafetySetting(
-                category=HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
-                threshold=HarmBlockThreshold.BLOCK_LOW,
-            ),
-            SafetySetting(
-                category=HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-                threshold=HarmBlockThreshold.BLOCK_LOW,
-            ),
-        ]
-
         config_kwargs = dict(
             system_instruction=system_instruction,
             temperature=temperature,
             top_p=top_p,
-            max_output_tokens=4096,
+            max_output_tokens=8192,
             response_mime_type="application/json",
             response_schema=response_schema,
-            safety_settings=safety_settings,
             automatic_function_calling=AutomaticFunctionCallingConfig(disable=True),
         )
         if seed is not None:
@@ -975,10 +924,12 @@ def llm_call_json_structured(
             try:
                 return json.loads(response.text)
             except json.JSONDecodeError:
-                logger.error(f"❌ Structured Output lieferte ungültiges JSON: {response.text[:100]}")
+                logger.error(f"❌ Structured Output lieferte ungültiges JSON: {response.text[:200]}")
                 return {}
         else:
-            logger.error("❌ Structured Output lieferte leere Antwort.")
+            # Leere Antwort - logge den kompletten Response-Status
+            logger.error(f"❌ Structured Output lieferte leere Antwort. Response: {response}")
+            logger.error(f"❌ Prompt (erste 200 Zeichen): {prompt[:200]}")
             return {}
 
     except Exception as e:

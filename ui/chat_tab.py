@@ -384,12 +384,25 @@ def _handle_rag(
                 intent = "UNKNOWN"
             else:
                 status.write("📝 Synthetisiere Antwort...")
-                final_text, sources, intent = rag.generate_answer(prompt, results)
+                final_text, sources, intent = rag.generate_answer(prompt, results, selected_doc_ids=selected_rag_ids)
                 status.update(
                     label=f"✅ Fertig ({intent})", state="complete", expanded=False
                 )
 
             state.set_rag_result(sources, prompt, intent)
+
+            # Quellen-Block an Text anhängen (für UI und Export)
+            if sources:
+                sources_md = "\n\n---\n**📚 Quellen:**\n\n"
+                for i, res in enumerate(sources, 1):
+                    # Fallbacks für verschiedene Dictionary-Strukturen
+                    meta = res.get("metadata", {})
+                    title = meta.get("chat_title", res.get("chat_id", "Unbekannt"))
+                    score = res.get("confidence_score", res.get("score", 0.0))
+                    content = res.get("content", "").replace("\n", " ")
+                    
+                    sources_md += f"**[{i}] *{title}*** (Relevanz: {score:.1f}%)\n> {content}\n\n"
+                final_text += sources_md
 
         st.markdown(final_text)
 

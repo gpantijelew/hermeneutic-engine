@@ -6,6 +6,9 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+# Füge diese Konstante am Anfang der Datei oder der Klasse hinzu
+MULTI_SOURCE_MODES = {"ANALYTICAL_FORENSIC", "ANALYTICAL", "META_ANALYTICAL", "LITERARY", "STILISTIC", "STILISTIC_DEEPENING"}
+
 class PromptManager:
     """Lädt und formatiert hermeneutische Prompts aus der hermeneutic_protocol.yaml."""
     
@@ -35,11 +38,51 @@ class PromptManager:
         """Holt System-Instruction und injiziert automatisch die shared QUELLENREGEL."""
         instructions = self._data.get("system_instructions", {})
         text = instructions.get(semantic_intent, instructions.get("DEFAULT", ""))
-        
+
+        # Schicht 1: Globale source_rule (bestehende Logik)
         source_rule = self._data.get("shared_rules", {}).get("source_rule", "")
         if text and source_rule:
             text = text.rstrip() + "\n\n" + source_rule
-                
+
+        # Schicht 2: Familien-Regelwerk (NEUE LOGIK)
+        if semantic_intent in MULTI_SOURCE_MODES:
+            family = self._data.get("family_rules", {}).get("multi_source", {})
+
+            # WICHTIG: Die Reihenfolge der Injektion ist entscheidend!
+            # Erst die Regeln, dann der spezifische Prompt.
+
+            citation = family.get("citation_rules", "")
+            chronology = family.get("chronology_rules", "")
+            synthesis = family.get("global_synthesis", "") # Globale Synthese auch laden
+
+            # Baue den Prompt von oben nach unten auf
+            rule_block = ""
+            if citation:
+                rule_block += citation.rstrip() + "\n\n"
+            if chronology:
+                rule_block += chronology.rstrip() + "\n\n"
+
+            # Füge die Regeln VOR dem spezifischen Modus-Text ein
+            text = rule_block + text
+
+            # Hänge die globale Synthese-Anweisung an das ENDE an
+            # STILISTIC bekommt eine eigene Synthese-Struktur
+            if semantic_intent == "STILISTIC":
+                stilistic_synthesis = family.get("global_synthesis_stilistic", "")
+                if stilistic_synthesis:
+                    text = text.rstrip() + "\n\n" + stilistic_synthesis
+                elif synthesis:
+                    text = text.rstrip() + "\n\n" + synthesis
+            elif synthesis:
+                text = text.rstrip() + "\n\n" + synthesis
+
+            # ── Komparativer Modus: GRUPPENVERGLEICH-Instruktion (Test 16+) ──
+            from modules.config import COMPARATIVE_MODE
+            if COMPARATIVE_MODE:
+                comparative = family.get("comparative_rules", "")
+                if comparative:
+                    text = text.rstrip() + "\n\n" + comparative
+
         return text
 
     def get_mode_instruction(self, intent: str, semantic_intent: Optional[str] = None, **kwargs) -> str:
@@ -54,10 +97,9 @@ class PromptManager:
             base_text = mode_data.get("base", "")
         
         # Forensic-Appendix bedingt anhängen (nur bei ESSENCE_PARITY + FORENSIC)
-        if (intent == "ESSENCE_PARITY" 
-            and semantic_intent == "ANALYTICAL_FORENSIC"
-            and isinstance(mode_data, dict)
-            and "forensic_appendix" in mode_data):
+        if (semantic_intent == "ANALYTICAL_FORENSIC"
+    and isinstance(mode_data, dict)
+    and "forensic_appendix" in mode_data):
             base_text = base_text.rstrip() + "\n\n" + mode_data["forensic_appendix"]
         
         # Platzhalter sicher formatieren (ignoriert fehlende Keys)
@@ -142,3 +184,109 @@ class PromptManager:
     def get_multisource_enforcer_prompt(self) -> str:
         """Lädt den Multi-Source-Enforcer-Prompt."""
         return self._data.get("enforcer_protocol", {}).get("multisource_prompt", "")
+
+    def get_stilistic_lab_etappe_2_3(
+        self,
+        source_id: str,
+        python_stats: str,
+        vergleichstabelle: str,
+        text_excerpt: str,
+    ) -> dict:
+        """
+        Liest stilistic_lab_etappe_2_3 aus YAML und formatiert das Template.
+
+        Args:
+            source_id:       Label der Quelle (z.B. "QUELLE 1: Herzen")
+            python_stats:    Formatierte Etappe-1-Statistiken
+            vergleichstabelle: Formatierte Vergleichstabelle
+            text_excerpt:    Auszug aus dem Originaltext
+
+        Returns:
+            Dict mit 'system_instruction', 'prompt', 'compact_instruction'.
+            Leeres Dict wenn YAML-Key fehlt.
+        """
+        key = "stilistic_lab_etappe_2_3"
+        data = self._data.get(key, {})
+
+        if not data:
+            logger.warning(f"YAML-Key '{key}' nicht gefunden. Fallback auf hardcoded Prompts.")
+            return {}
+
+        system_instruction = data.get("system_instruction", "")
+        template = data.get("structure_template", "")
+        compact = data.get("compact_instruction", "")
+
+        # Platzhalter sicher formatieren (SafeDict ignoriert fehlende Keys)
+        class SafeDict(dict):
+            def __missing__(self, key):
+                return "{" + key + "}"
+
+        if template:
+            try:
+                prompt = template.format_map(SafeDict(
+                    source_id=source_id,
+                    python_stats=python_stats,
+                    vergleichstabelle=vergleichstabelle,
+                    text_excerpt=text_excerpt,
+                ))
+            except Exception as e:
+                logger.error(f"Fehler bei Etappe-2-3-Template-Formatierung: {e}")
+                prompt = template
+        else:
+            prompt = ""
+
+        return {
+            "system_instruction": system_instruction,
+            "prompt": prompt,
+            "compact_instruction": compact,
+        }
+
+    def get_stilistic_lab_synthese(
+        self,
+        vergleichstabelle: str,
+        einzelanalysen: str,
+    ) -> dict:
+        """
+        Liest stilistic_lab_synthese aus YAML und formatiert das Template.
+
+        Args:
+            vergleichstabelle: Formatierte Vergleichstabelle
+            einzelanalysen:   Alle Etappe-2+3-Ergebnisse als Text
+
+        Returns:
+            Dict mit 'system_instruction', 'prompt', 'compact_instruction'.
+            Leeres Dict wenn YAML-Key fehlt.
+        """
+        key = "stilistic_lab_synthese"
+        data = self._data.get(key, {})
+
+        if not data:
+            logger.warning(f"YAML-Key '{key}' nicht gefunden. Fallback auf hardcoded Prompts.")
+            return {}
+
+        system_instruction = data.get("system_instruction", "")
+        template = data.get("structure_template", "")
+        compact = data.get("compact_instruction", "")
+
+        # Platzhalter sicher formatieren
+        class SafeDict(dict):
+            def __missing__(self, key):
+                return "{" + key + "}"
+
+        if template:
+            try:
+                prompt = template.format_map(SafeDict(
+                    vergleichstabelle=vergleichstabelle,
+                    einzelanalysen=einzelanalysen,
+                ))
+            except Exception as e:
+                logger.error(f"Fehler bei Synthese-Template-Formatierung: {e}")
+                prompt = template
+        else:
+            prompt = ""
+
+        return {
+            "system_instruction": system_instruction,
+            "prompt": prompt,
+            "compact_instruction": compact,
+        }

@@ -171,9 +171,9 @@ BEWERTUNGS-SKALA (präzise folgen!):
     → Beispiel: Frage "Was ist Dasein?", Chunk definiert "Dasein als In-der-Welt-sein..."
 
 STRENGE REGEL:
-- Antworte NUR mit der Zahl (z.B. 0.7)
-- Keine Erklärung, keine Begründung, keine zusätzlichen Worte
-- Nur die nackte Zahl als Output
+- Antworte im JSON-Format mit dem Schema, das vom System vorgegeben wird
+- Keine Erklärung, keine Begründung, keine zusätzlichen Worte außerhalb des JSON
+- Das Schema erzwingt die korrekte Struktur
 
 WICHTIG:
 Sei streng! Nur wenn der Chunk die Frage WIRKLICH beantwortet → ≥ 0.7

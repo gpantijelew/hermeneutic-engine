@@ -1,4 +1,5 @@
 import streamlit as st
+import ui.state as state
 from modules.database import get_chat_list, load_chat_history
 from modules.citation_rag import CitationRAG
 
@@ -50,8 +51,7 @@ def render_supervision_tab():
                 status.update(label="Supervision erfolgreich abgeschlossen!", state="complete", expanded=False)
 
                 # Ergebnisse im State speichern, damit sie beim Tab-Wechsel bleiben
-                st.session_state.last_supervision = results
-                st.session_state.last_supervision_chat = chat_options[selected_chat_id]
+                state.set_supervision_result(results, chat_options[selected_chat_id])
             except Exception as e:
                 status.update(label="Fehler bei der Supervision", state="error")
                 st.error(f"Pipeline-Fehler: {e}")
@@ -60,9 +60,8 @@ def render_supervision_tab():
                 return
 
     # Ergebnisse anzeigen
-    if "last_supervision" in st.session_state:
-        res = st.session_state.last_supervision
-
+    res, chat_title = state.get_supervision_result()
+    if res:
         st.subheader("📋 Meta-Gutachten (System-Dynamik)")
         st.info(res["meta"])
 

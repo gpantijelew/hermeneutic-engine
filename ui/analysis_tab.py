@@ -70,7 +70,13 @@ def _render_results_block(chat_map: dict) -> None:
     """Zeigt die Analyse-Ergebnisse an."""
 
     if st.button("🔄 Neue Analyse starten", type="secondary", width="stretch"):
-        state.reset_analysis_search()  # v51: via ui/state.py
+        # FIX: Datei-Auswahl sichern BEVOR Reset
+        # rag_saved_titles überlebt den Reset (wird nicht mehr gelöscht),
+        # aber wir müssen den aktuellen Stand aus dem Widget holen
+        current_selection = st.session_state.get("analyse_source_select", [])
+        if current_selection:
+            st.session_state["rag_saved_titles"] = current_selection
+        state.reset_analysis_search()  # v51: via ui/state.py — rag_saved_titles bleibt!
         st.rerun()
 
     results = st.session_state.rag_results
@@ -91,9 +97,15 @@ def _render_results_block(chat_map: dict) -> None:
     # Enforcer Protokoll
     rag_engine = CitationRAG()
     with st.expander("🛡️ Enforcer Protokoll (Validierung)", expanded=False):
-        warnings = rag_engine.validate_citations(answer, len(results))
+        # Berechne Anzahl der einzigartigen Dokumente (nicht Chunks)
+        unique_docs = set()
+        for result in results:
+            title = result.get('metadata', {}).get('title', 'Unbekanntes Dokument')
+            unique_docs.add(title)
+        
+        warnings = rag_engine.validate_citations(answer, len(unique_docs))
 
-        st.session_state.verification_log["structure_check"] = warnings
+        state.set_verification_log_entry("structure_check", warnings)
 
         if warnings:
             for w in warnings:
@@ -110,6 +122,12 @@ def _render_results_block(chat_map: dict) -> None:
             async def run_deep_check():
                 sentences = re.split(r"(?<=[.!?])\s+", answer)
                 sentences = [s for s in sentences if s.strip()]
+                
+                # Vor der Validierung: Struktur-Marker herausfiltern
+                from modules.hermeneutic_enforcer import HermeneuticEnforcer
+                enforcer = HermeneuticEnforcer()
+                sentences = [s for s in sentences if not enforcer._is_structural_marker(s)]
+                
                 if not sentences:
                     return []
                 return await rag_engine.verify_facts_parallel(
@@ -118,7 +136,7 @@ def _render_results_block(chat_map: dict) -> None:
 
             with st.spinner("Der Enforcer prüft parallel (v49.1 Speedup)..."):
                 deep_check_log = asyncio.run(run_deep_check())
-                st.session_state.verification_log["deep_check"] = deep_check_log
+                state.set_verification_log_entry("deep_check", deep_check_log)
 
                 issues_found = 0
                 checked_count = len(deep_check_log)
@@ -371,7 +389,8 @@ def _run_analysis_pipeline(
             # ANTWORT GENERIEREN (JETZT AUSSERHALB DER ELIF!)
             with st.spinner("3. Generiere Antwort mit Zitationen..."):
                 raw_answer, used_sources, mode_name = rag_engine.generate_answer(
-                    search_query, results, pre_reranked=imbalance_info
+                    search_query, results, pre_reranked=imbalance_info,
+                    selected_doc_ids=selected_chat_ids
                 )
                 valid_indices = list(range(1, len(used_sources) + 1))
 
@@ -379,6 +398,10 @@ def _run_analysis_pipeline(
                     answer = post_process_synthesis(raw_answer, valid_indices)
 
             trace = getattr(rag_engine, "last_pipeline_trace", None)
+            # FIX: Datei-Auswahl in rag_saved_titles sichern
+            # damit sie beim nächsten Rendern als Default verwendet wird
+            st.session_state["rag_saved_titles"] = st.session_state.get("analyse_source_select", [])
+            
             state.set_analysis_result(  # v51: via ui/state.py
                 results=used_sources,
                 answer=answer,

@@ -154,7 +154,7 @@ AUFGABE: Bewerte die Relevanz JEDES Chunks für die FRAGE."""
                 response_schema=RerankerBatchResult,
                 system_instruction=RERANKER_INSTRUCTION,
                 temperature=reranker_temp,
-                task="reranker"
+                task="reranker",
             )
 
             if not result_dict or "evaluations" not in result_dict:

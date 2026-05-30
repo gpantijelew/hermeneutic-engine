@@ -61,64 +61,10 @@ def post_process_synthesis(synthesis_text: str, used_source_ids: List[int]) -> s
 
         line_validated = re.sub(r"\[(\d+)\]", validate_match, stripped_line)
 
-        # Fragment-Check (Länge ohne Citations)
+        # Fragment-Check deaktiviert - alle Zeilen werden behalten
+        # Die toxische Selbstzensur wurde entfernt (Mai 2026)
         text_only = re.sub(r"\[\d+\]", "", line_validated).strip()
         text_only_clean = re.sub(r"^[\-\*\d\.]+\s*", "", text_only)
-
-        if len(text_only_clean.split()) < 7:
-            # WHITELIST 1: Speaker-Header (markdown bold: **Name**)
-            is_speaker_header = (
-                stripped_line.startswith("**")
-                and stripped_line.endswith("**")
-                and len(stripped_line.strip("*").strip()) < 50
-            )
-
-            # WHITELIST 2: Überschriften mit Doppelpunkt
-            is_heading = text_only_clean.endswith(":")
-
-            # WHITELIST 3: Markdown-Überschriften (### Name)
-            is_markdown_heading = stripped_line.startswith("###")
-
-            # WHITELIST 4: Ranking/Struktur-Zeilen
-            clean_start = stripped_line.replace("*", "").strip().lower()
-            is_ranking = (
-                clean_start.startswith("platz")
-                or clean_start.startswith("rang")
-                or clean_start.startswith("rank")
-                or clean_start.startswith("text")
-                or clean_start.startswith("quelle")
-            )
-
-            if is_speaker_header:
-                temp_lines.append(stripped_line)
-                continue
-            if is_heading:
-                temp_lines.append(line_validated)
-                continue
-            if is_markdown_heading:
-                temp_lines.append(stripped_line)
-                continue
-            if is_ranking:
-                temp_lines.append(stripped_line)
-                continue
-
-            # WHITELIST 5: Forensische Struktur-Header (ANALYTICAL_FORENSIC)
-            _FORENSIC_HEADERS = {
-                "befund",
-                "rhetorische strategie",
-                "funktionales motiv",
-                "diskursive konsequenz",
-                "fazit",
-            }
-            is_forensic_header = text_only_clean.lower() in _FORENSIC_HEADERS
-
-            if is_forensic_header:
-                temp_lines.append(stripped_line)
-                continue
-
-            # Sonst: Fragment entfernen
-            logger.warning(f"Fragment entfernt: '{text_only_clean}'")
-            continue
 
         # Frage-Check
         if text_only.endswith("?"):

@@ -30,11 +30,17 @@ from modules.evidence_synthesis import EvidenceFirstSynthesizer
 from modules.hermeneutic_reranker import HermeneuticReranker
 from modules.hermeneutic_router import HermeneuticRouter
 from modules.prompt_manager import PromptManager
+from modules.synthesis_validator import run_three_phase_synthesis
 
 logger = logging.getLogger(__name__)
 
 
 class CitationRAG:
+    # ── v58: Deklaratives Set von Intents mit eigenen mode_instructions ──
+    # Diese Intents nutzen ihr EIGENES YAML-Template statt ESSENCE_PARITY.
+    # Neue Intents mit eigenem Template: hier hinzufügen. Fertig.
+    STRUCTURE_OVERRIDES = {"STILISTIC", "STILISTIC_DEEPENING", "META_ANALYTICAL"}
+
     def __init__(
         self,
         vector_store: LocalVectorStore = None,
@@ -59,6 +65,7 @@ class CitationRAG:
         self.last_imbalance_info = None
         self.last_pipeline_trace = None
         self.current_context = {"intent": "FACTUAL", "threshold": 0.65}
+        self._extraction_failures = []  # v57: Trackt Quellen mit fehlgeschlagener Zitat-Extraktion
 
         # --- FIX: Cache initialisieren ---
         self._original_results_cache = []
@@ -74,22 +81,271 @@ class CitationRAG:
         else:
             self._reranker_factory = lambda threshold: HermeneuticReranker(threshold=threshold)
 
+    def _extract_number_from_title(self, title: str) -> int:
+        """Extrahiert die erste Zahl aus einem Titel für die Sortierung."""
+        match = re.search(r'\d+', str(title))
+        return int(match.group()) if match else 999
+
+    def _parse_extraction_result(self, result: str) -> list:
+        """Parst das LLM-Ergebnis der Zitat-Extraktion.
+        
+        Mehrstufige Strategie:
+        1. Code-Fence-Stripping
+        2. _parse_json_safe (4-Pass)
+        3. Partial-JSON-Rettung (truncated arrays)
+        4. Dict→List Normalisierung
+        
+        Returns:
+            Liste von Dicts oder leere Liste bei Fehlschlag
+        """
+        if not result:
+            return []
+        
+        # Code-Fences strippen (Modelle liefern oft ```json ... ```)
+        cleaned = result.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.split("\n")
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            cleaned = "\n".join(lines)
+        
+        from modules.llm_wrapper import _parse_json_safe
+        quotes = _parse_json_safe(cleaned, fallback=[])
+
+        # ── Fix H.5: Partial-JSON-Rettung ──
+        if not quotes and cleaned.strip().startswith("["):
+            import re
+            last_obj = cleaned.rfind("}")
+            if last_obj > 0:
+                partial = cleaned[:last_obj + 1] + "]"
+                logger.info(f"🔧 Partial-JSON-Rettung: Versuche Repair nach Position {last_obj}")
+                try:
+                    quotes = _parse_json_safe(partial, fallback=[])
+                    if quotes and isinstance(quotes, list):
+                        logger.info(f"✅ Partial-JSON-Rettung: {len(quotes)} Zitate gerettet")
+                except Exception:
+                    logger.warning("⚠️ Partial-JSON-Rettung fehlgeschlagen")
+
+        # Robustheit: Einzelnes Dict → Liste packen
+        if isinstance(quotes, dict):
+            quotes = [quotes]
+        
+        if not isinstance(quotes, list):
+            logger.warning(f"⚠️ Quote-Extraktion: Unerwartetes Format ({type(quotes)}). Fallback.")
+            return []
+        
+        # Basis-Validierung: Jedes Zitat muss "quelle" und "text" haben
+        valid_quotes = []
+        for q in quotes:
+            if isinstance(q, dict) and "quelle" in q and "text" in q:
+                valid_quotes.append(q)
+            else:
+                logger.debug(f"⚠️ Überspringe invalides Zitat: {q}")
+        
+        return valid_quotes
+    
+    def extract_quotes(self, query: str, context_text: str) -> list:
+        """Phase 1: Extrahiert verlässliche Zitate aus dem Kontext.
+    
+        Separater LLM-Call mit einfacher Aufgabe: erkennen + kopieren.
+        Reduziert False-Quotes, weil das Modell nicht gleichzeitig
+        synthetisieren UND zitieren muss.
+        
+        v57-Fix: 1-facher Retry bei JSON-Parse-Fehlschlag.
+        Das Modell produziert gelegentlich malformed JSON (insb. bei
+        kyrillischen Zitaten mit unescapten Anführungszeichen).
+        Ein zweiter Call mit identischem Prompt liefert in >80% der
+        Fälle valides JSON — die Fehler sind nicht-deterministisch.
+    
+        Returns:
+        Liste von Dicts: [{"quelle": int, "text": str, "relevanz": str}]
+        """
+        try:
+            # Prompt aus YAML holen
+            sys_instr = self.prompt_manager.get_system_instruction("EXTRACTION")
+            task_prompt = self.prompt_manager.get_mode_instruction(
+                "EXTRACTION", query=query, context_text=context_text
+            )
+            
+            # ── Erster Versuch ──
+            result = self._llm_call_func(
+                task_prompt,
+                task="extraction",
+                system_instruction=sys_instr,
+                temperature=0.15,   # Sehr niedrig — wir wollen Kopieren, nicht Kreativität
+                max_tokens=8192,   # Fix H.4: 4096 reicht nicht für 18-30 Zitate
+            )
+            
+            if not result:
+                logger.warning("⚠️ Quote-Extraktion leer. Fallback: keine vorgefilterten Zitate.")
+                return []
+            
+            valid_quotes = self._parse_extraction_result(result)
+            
+            # ── v57-Fix: Retry bei Totalausfall ──
+            # Wenn der erste Call 0 Zitate liefert (JSON-Parse-Fehler),
+            # probieren wir einmal mit leicht erhöhter Temperatur.
+            # Grund: Die Fehler sind nicht-deterministisch — ein zweiter
+            # Call mit identischem Prompt liefert meist valides JSON.
+            if not valid_quotes:
+                logger.warning(
+                    "🔄 Extraction-Retry: Erster Call lieferte 0 Zitate "
+                    "(wahrscheinlich JSON-Parse-Fehler). Zweiter Versuch..."
+                )
+                import time
+                time.sleep(0.5)  # Kurze Pause um API-Rate-Limits zu respektieren
+                
+                result = self._llm_call_func(
+                    task_prompt,
+                    task="extraction",
+                    system_instruction=sys_instr,
+                    temperature=0.2,   # Leicht erhöht — bricht eventuelle "festsitzende" Token-Sequenzen auf
+                    max_tokens=8192,
+                )
+                
+                if result:
+                    valid_quotes = self._parse_extraction_result(result)
+                    if valid_quotes:
+                        logger.info(f"✅ Extraction-Retry erfolgreich: {len(valid_quotes)} Zitate gerettet")
+                    else:
+                        logger.warning("❌ Extraction-Retry fehlgeschlagen — auch 2. Call ohne parsebares JSON")
+            
+            logger.info(f"📌 Quote-Extraktion: {len(valid_quotes)} Zitate aus {len(context_text)//4} Token")
+            return valid_quotes
+        
+        except Exception as e:
+            logger.error(f"❌ Quote-Extraktion fehlgeschlagen: {e}")
+            return []
+
+    # =========================================================================
+    # N.1: PRO-QUELLE-EXTRAKTION (Claude-R3, Architektur-Entscheidung)
+    # =========================================================================
+
+    def extract_quotes_per_document(
+        self,
+        query: str,
+        doc_texts: dict,
+    ) -> list:
+        """Pro-Dokument-Extraktion statt eines 28K-Monolith-Calls.
+        
+        Architektur-Entscheidung (Claude-R3, 2026-05-16):
+        Bei 28K Prompt-Tokens verliert das Modell den Überblick und
+        stoppt nach ~323 Completion-Tokens (3 Zitate). Die Ursache
+        ist Attention-Verlust, nicht Ungehorsam.
+        
+        Lösung: 6 kurze Calls à ~5K statt 1 Monolith-Call à 28K.
+        Jeder Call hat volle Attention auf ein Dokument.
+        Die "Min 2 pro Quelle"-Regel wird tatsächlich erzwingbar.
+        6 × 5K Flash-Calls sind billiger als 1 × 28K Flash-Call.
+        Latenz steigt um ~3-5 Sekunden — akzeptabel.
+        
+        Args:
+            query: Die Analyse-Frage
+            doc_texts: Dict von {doc_id: context_text}
+                       doc_id ist die QUELLE-Nummer (1, 2, 3, ...)
+        
+        Returns:
+            Liste von Dicts: [{"quelle": int, "text": str, "relevanz": str}]
+        """
+        all_quotes = []
+        extraction_failures = []  # v57: Quellen mit fehlgeschlagener Extraktion tracken
+        
+        for doc_id, text in doc_texts.items():
+            if not text or len(text.strip()) < 50:
+                logger.debug(f"⏭️ Pro-Quelle: Überspringe Quelle [{doc_id}] (zu kurz)")
+                extraction_failures.append({
+                    "source_id": doc_id,
+                    "reason": "too_short",
+                    "context_chars": len(text) if text else 0,
+                })
+                continue
+            
+            # Kürze auf ~4000 Zeichen pro Dokument (Attention-Window optimieren)
+            short_context = text[:4000] if len(text) > 4000 else text
+            
+            # Einzelner Extraktions-Call pro Dokument
+            quotes = self.extract_quotes(query, short_context)
+            
+            # QUELLE-ID sicherstellen — Modell könnte falsche IDs liefern
+            for q in quotes:
+                q["quelle"] = doc_id  # Erzwinge korrekte Quelle-ID
+            
+            # Warnung wenn zu wenig Zitate pro Dokument
+            if len(quotes) < 2:
+                logger.warning(
+                    f"⚠️ Pro-Quelle: Nur {len(quotes)} Zitat(e) aus Quelle [{doc_id}] "
+                    f"(Ziel: ≥2). Kontext-Länge: {len(short_context)} Zeichen"
+                )
+                # v57: Extraktions-Fehler tracken
+                if len(quotes) == 0:
+                    extraction_failures.append({
+                        "source_id": doc_id,
+                        "reason": "json_parse_failed",
+                        "context_chars": len(short_context),
+                    })
+            else:
+                logger.info(f"✅ Pro-Quelle: {len(quotes)} Zitate aus Quelle [{doc_id}]")
+            
+            all_quotes.extend(quotes)
+        
+        # Deduplication: Identische Zitate aus verschiedenen Calls entfernen
+        seen = set()
+        deduped = []
+        for q in all_quotes:
+            key = (q.get("quelle", 0), q.get("text", "")[:100])  # (Quelle, erste 100 Zeichen)
+            if key not in seen:
+                seen.add(key)
+                deduped.append(q)
+        
+        if len(deduped) < len(all_quotes):
+            logger.info(
+                f"🔄 Pro-Quelle Dedup: {len(all_quotes)} → {len(deduped)} "
+                f"({len(all_quotes) - len(deduped)} Duplikate entfernt)"
+            )
+        
+        logger.info(
+            f"📌 Pro-Quelle-Extraktion: {len(deduped)} Zitate aus "
+            f"{len(doc_texts)} Dokumenten"
+        )
+        
+        # v57: Extraktions-Fehler im Instanz-Attribut speichern
+        # (wird von der Pipeline für Synthese-Warnung + Trace verwendet)
+        self._extraction_failures = extraction_failures
+        if extraction_failures:
+            failed_ids = [f"[{f['source_id']}]" for f in extraction_failures]
+            logger.warning(
+                f"🚨 Extraktions-Fehler: {len(extraction_failures)} Quelle(n) ohne Zitate: "
+                f"{', '.join(failed_ids)}"
+            )
+        
+        return deduped
+
     def generate_synthesis_best_of(
         self,
         iteration_texts: List[str],
         intent: str = "SYNTHESIS_BEST_OF",
         temperature: float = 0.55,
+        mode_labels: Optional[Dict[int, str]] = None,
     ) -> str:
         """
         Direkte Full-Context-Synthese ohne RAG-Pipeline.
         Kein Chunking, kein Retrieval, kein Trimming.
         Alle Iterationen werden als Ganzes in den Kontext geladen.
+
+        Args:
+            iteration_texts: Liste der vollständigen Iterationstexte
+            intent: Intent-Name (SYNTHESIS_BEST_OF oder SYNTHESIS_BEST_OF_STILISTIC)
+            temperature: LLM-Temperatur
+            mode_labels: Optional Dict {1: "STILISTIC", 2: "META_ANALYTICAL", ...}
+                        Wenn gesetzt, werden Modus-Tags in die Iterations-Header injiziert.
         """
         sys_instr = self.prompt_manager.get_system_instruction(intent)
         mode_instr = self.prompt_manager.get_mode_instruction(intent)
 
         context = "\n\n".join(
-            f"=== ITERATION {i} ===\n{text}"
+            f"=== ITERATION {i} [{mode_labels.get(i, '')}] ===\n{text}" if mode_labels and mode_labels.get(i) else f"=== ITERATION {i} ===\n{text}"
             for i, text in enumerate(iteration_texts, 1)
         )
         prompt = f"{mode_instr}\n\nITERATIONEN:\n{context}\n\nMEISTERTEXT:"
@@ -667,49 +923,102 @@ Behalte Namen unverändert! """
     # 1. ÖFFENTLICHE HAUPTMETHODE (Der Dirigent)
     # =========================================================================
 
-    def generate_answer(self, query: str, results: List[Dict], dry_run: bool = False, pre_reranked=None) -> Tuple[str, List[Dict], str]:
+    # =========================================================================
+    # SMALL-CORPUS-THRESHOLD: Ab dieser Chunk-Anzahl wird der
+    # Small-Corpus-Guard aktiviert (Reranker-Skip, Essence-Parity-Skip)
+    # =========================================================================
+    SMALL_CORPUS_THRESHOLD = 8  # ≤8 Chunks total = Small Corpus
+
+    def generate_answer(self, query: str, results: List[Dict], dry_run: bool = False, pre_reranked=None, selected_doc_ids: List[str] = None) -> Tuple[str, List[Dict], str]:
         """ v50.9: ESSENCE PARITY - Intelligente Essenz-Extraktion. v51: Refactored for clarity."""
         if not results:
             return "Ich habe keine relevanten Informationen in den Dokumenten gefunden.", [], "unknown"
+
+        # ── v57.1: Pipeline-Timer ──
+        _pipeline_start = time.time()
+        logger.info(
+            f"⏱️ PIPELINE-START: {datetime.now().strftime('%H:%M:%S')} "
+            f"| Query: {query[:80]}{'...' if len(query) > 80 else ''}"
+        )
 
         # --- Schritt 1: Kontext & Intent sicherstellen ---
         intent, semantic_intent = self._ensure_router_context(query)
 
         # --- Schritt 2: Chat IDs extrahieren ---
-        chat_id = self._extract_chat_ids(results)
+        # Fix C: Wenn UI die ausgewählten IDs liefert, diese verwenden
+        # (andernfalls fallen Dokumente mit 0 Retrieval-Chunks durchs Raster)
+        if selected_doc_ids and len(selected_doc_ids) <= 10:
+            chat_id = selected_doc_ids
+            logger.info(f"📋 Fix C: {len(chat_id)} Doc-IDs aus UI-Selection (überschreibt _extract_chat_ids)")
+        else:
+            chat_id = self._extract_chat_ids(results)
+
+        # ── SMALL-CORPUS-GUARD ──
+        # Bei sehr wenigen Chunks (z.B. 2 kurze Texte à 1 Chunk) sind
+        # Reranker, Essence Parity und Rescue Mission kontraproduktiv:
+        # - Reranker: 2/2 Chunks zu filtern ist trivial, verschwendet LLM-Call
+        # - Essence Parity: Budget 60 für 2 Chunks → 97% ungenutzt, Rescue rennt ins Leere
+        # - Phase 3: 86 Token Output für 11 Fehler → Korrektur verhungert
+        # Lösung: Small-Corpus-Pfad umgeht alle Filter und gibt ALLES in den Kontext.
+        is_small_corpus = len(results) <= self.SMALL_CORPUS_THRESHOLD
+        if is_small_corpus:
+            logger.info(
+                f"🧊 SMALL-CORPUS-GUARD aktiv: {len(results)} Chunks ≤ {self.SMALL_CORPUS_THRESHOLD} "
+                f"→ Reranker + Essence Parity übersprungen, alle Chunks direkt in Synthese"
+            )
 
         # --- Schritt 3: Scoring & Reranking (MIT CRASH-CATCHER) ---
-        try:
-            top_results, top_candidates, rerank_stats, rejected_chunks = self._score_and_rerank(
-                query, results, pre_reranked, intent
-            )
-            logger.info("🏁 DEBUG BAKE 0: Reranker Rückgabe erfolgreich entpackt!")
-        except Exception as e:
-            logger.error(f"❌❌❌ CRASH NACH RERANKER: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-
-            logger.warning(
-                "⚠️  UNGEPRÜFTE ERGEBNISSE: Der HermeneuticReranker ist "
-                "ausgefallen. Es werden die Top-20 Roh-Treffer verwendet, "
-                "OHNE hermeneutische Qualitätsprüfung. "
-                "Dies kann zu irrelevanten Chunks und Halluzinationen führen."
-            )
-
-            # Fallback, damit die App nicht steht
-            raw_results = sorted(results, key=lambda x: x.get('score', 0), reverse=True)
-            top_results = raw_results[:20]
-            top_candidates = raw_results[:100]
+        # SMALL-CORPUS: Reranker überspringen — bei ≤8 Chunks nicht nötig
+        if is_small_corpus:
+            # Direkte Übernahme aller Chunks ohne Reranking
+            for res in results:
+                if '_final_score' not in res:
+                    res['_final_score'] = res.get('score', 0.0) + res.get('_keyword_boost', 0.0)
+            top_results = sorted(results, key=lambda x: x.get('_final_score', 0), reverse=True)
+            top_candidates = results
             rerank_stats = {
-                "total": len(results), 
-                "passed": len(top_results), 
-                "rejected": 0, 
-                "avg_score": 0, 
-                "query_type": "fallback_unranked",
-                "reranker_failed": True,      # <--- NEU: Das Flag für den Wrapper
-                "reranker_error": str(e)      # <--- NEU: Der Fehler für die Diagnose
+                "total": len(results),
+                "passed": len(top_results),
+                "rejected": 0,
+                "avg_score": sum(r.get('_final_score', 0) for r in top_results) / len(top_results) if top_results else 0,
+                "query_type": "small_corpus_skip",
+                "reranker_failed": False,
+                "reranker_error": "",
             }
             rejected_chunks = []
+            logger.info(f"🧊 Small-Corpus: {len(top_results)} Chunks direkt übernommen (Reranker übersprungen)")
+        else:
+            try:
+                top_results, top_candidates, rerank_stats, rejected_chunks = self._score_and_rerank(
+                    query, results, pre_reranked, intent
+                )
+                logger.info("🏁 DEBUG BAKE 0: Reranker Rückgabe erfolgreich entpackt!")
+            except Exception as e:
+                logger.error(f"❌❌❌ CRASH NACH RERANKER: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+
+                logger.warning(
+                    "⚠️  UNGEPRÜFTE ERGEBNISSE: Der HermeneuticReranker ist "
+                    "ausgefallen. Es werden die Top-20 Roh-Treffer verwendet, "
+                    "OHNE hermeneutische Qualitätsprüfung. "
+                    "Dies kann zu irrelevanten Chunks und Halluzinationen führen."
+                )
+
+                # Fallback, damit die App nicht steht
+                raw_results = sorted(results, key=lambda x: x.get('score', 0), reverse=True)
+                top_results = raw_results[:20]
+                top_candidates = raw_results[:100]
+                rerank_stats = {
+                    "total": len(results), 
+                    "passed": len(top_results), 
+                    "rejected": 0, 
+                    "avg_score": 0, 
+                    "query_type": "fallback_unranked",
+                    "reranker_failed": True,      # <--- NEU: Das Flag für den Wrapper
+                    "reranker_error": str(e)      # <--- NEU: Der Fehler für die Diagnose
+                }
+                rejected_chunks = []
 
         # --- Schritt 4: Imbalance-Daten berechnen ---
         self._calculate_imbalance(top_results)
@@ -721,10 +1030,62 @@ Behalte Namen unverändert! """
         # ========================
         
         # --- Schritt 5: Essence Parity & Rescue Mission ---
+        # SMALL-CORPUS: Essence Parity überspringen — alle Chunks direkt nutzen
         doc_metadata = []
         is_essence_parity = False
-        if chat_id and isinstance(chat_id, list) and len(chat_id) <= 10:
-            print(">>> BAKE 2: Betrete Essence Parity...", flush=True)
+        if is_small_corpus and chat_id and isinstance(chat_id, list):
+            # Small-Corpus-Pfad: Alle Chunks direkt, kein Budget-Management
+            # doc_metadata manuell aufbauen (wird sonst von _apply_essence_parity geliefert)
+            doc_groups = defaultdict(list)
+            for res in top_results:
+                cid = res.get('chat_id', 'unknown')
+                doc_groups[cid].append(res)
+            
+            for cid in chat_id:
+                chunks = doc_groups.get(cid, [])
+                if chunks:
+                    doc_title = chunks[0].get('metadata', {}).get('chat_title') or self._get_chat_title(cid)
+                    dates = [self.extract_date_from_metadata(c) for c in chunks]
+                    valid_dates = [d for d in dates if d != datetime.min]
+                    rep_date = min(valid_dates) if valid_dates else datetime.min
+                    doc_metadata.append({
+                        'title': doc_title, 'chat_id': cid,
+                        'chunks_available': len(chunks),
+                        'chunks_selected': len(chunks),
+                        'date': rep_date
+                    })
+                    # source_id zuweisen (für _build_context_text)
+                    doc_idx = chat_id.index(cid) + 1 if cid in chat_id else 0
+                    for chunk in chunks:
+                        chunk['source_id'] = doc_idx
+            
+            # v57.8: STILISTIC_DEEPENING-Ausnahme
+            if self._semantic_intent in self.STRUCTURE_OVERRIDES:
+                intent = self._semantic_intent
+                logger.info(f"🧊 Small-Corpus + {self._semantic_intent}: intent bleibt {self._semantic_intent}")
+            else:
+                intent = "ESSENCE_PARITY"  # Synthese-Prompt bleibt gleich
+            is_essence_parity = True
+            # FIX v57.3: doc_metadata konsistent sortieren — nach Score,
+            # damit [1] in doc_metadata = [1] in context_text (sorted_doc_ids)
+            if doc_metadata and top_results:
+                # Build score-based ordering from top_results
+                cid_score_order = {}
+                for res in top_results:
+                    cid = res.get('chat_id', '')
+                    if cid not in cid_score_order:
+                        score = res.get('_final_score', res.get('hermeneutic_score', 0))
+                        cid_score_order[cid] = score
+                # Sort doc_metadata by score (descending = same as top_results_sorted)
+                doc_metadata.sort(key=lambda d: cid_score_order.get(d.get('chat_id', ''), 0), reverse=True)
+
+            # Log: Quellen-Zuordnung dokumentieren
+            for idx, d in enumerate(doc_metadata, 1):
+                logger.info(f"  📋 [{idx}] = {d.get('title', 'Unbekannt')}")
+
+            logger.info(f"🧊 Small-Corpus: {len(doc_metadata)} Docs direkt in Synthese (Essence Parity übersprungen)")
+        elif chat_id and isinstance(chat_id, list) and len(chat_id) <= 10:
+            logger.debug(">>> BAKE 2: Betrete Essence Parity...")
             top_results, doc_metadata, intent = self._apply_essence_parity(
                 query, top_results, results, chat_id, intent
             )
@@ -734,43 +1095,104 @@ Behalte Namen unverändert! """
         if not top_results:
             return "Ich habe in den ausgewählten Dokumenten keine passenden Textstellen gefunden.", [], "NO_DATA"
 
-        # --- Schritt 6: Chronologische Sortierung & Token Trimming ---
+        # --- Schritt 6: Token Trimming ---
         logger.info("🏁 DEBUG BAKE 3: Vor Token-Trimming") # NEU
         top_results_sorted = self._trim_to_token_budget(
-               sorted(top_results, key=self.extract_date_from_metadata),
+               top_results,
                max_tokens=TRIM_TOKEN_BUDGET
         )
-        logger.info(f"📅 Chunks chronologisch sortiert: {len(top_results_sorted)} Stücke")
+        logger.info(f"📅 Chunks für Token-Trimming: {len(top_results_sorted)} Stücke")
 
         # Debug-Log: Zeige Datums-Reihenfolge
         for i, res in enumerate(top_results_sorted[:5]):
             date = self.extract_date_from_metadata(res)
-            title = res.get('metadata', {}).get('chat_title', 'Unknown')
+            title = res.get('metadata', {}).get('title', 'Unknown')
             logger.debug(f"  #{i+1}: {title} → {date.strftime('%d.%m.%Y') if date != datetime.min else 'o.D.'}")
-
-        # v50.8 FIX: CHRONOLOGISCHE SORTIERUNG DER DOKUMENT-STRUKTUR
-        if doc_metadata:
-            doc_metadata.sort(key=lambda x: x['date'])
-            logger.info("📅 Dokument-Reihenfolge für Prompt chronologisch korrigiert.")
 
         # --- Schritt 7: Context Text aufbauen ---
         context_text = self._build_context_text(top_results_sorted)
+        
+        # --- Schritt 7.5 NEU: Pro-Quelle-Extraktion (N.1) + Verify-Gate (N.2) ---
+        logger.info("🔍 Starte Phase 1: Pro-Quelle Zitat-Extraktion...")
+        
+        # N.1: Dokumententexte pro QUELLE-Nummer sammeln
+        doc_texts_for_extraction = {}
+        for res in top_results_sorted:
+            sid = res.get('source_id', 0)
+            if sid:
+                if sid not in doc_texts_for_extraction:
+                    doc_texts_for_extraction[sid] = ""
+                doc_texts_for_extraction[sid] += res.get('content', '') + "\n"
+        
+        # Pro-Quelle-Extraktion statt Monolith-Call
+        extracted_quotes = self.extract_quotes_per_document(query, doc_texts_for_extraction)
+        
+        # N.2: Substring-Verify-Gate — nur Zitate behalten, die im Quelltext existieren
+        # (Claude-R3: "C2/C3-Check vor Synthese = 5-Zeilen-Filter")
+        verified_quotes = []
+        for q in extracted_quotes:
+            qtext = q.get("text", "")
+            qsrc = q.get("quelle", 0)
+            src_text = doc_texts_for_extraction.get(qsrc, "")
+            if qtext and src_text and qtext in src_text:
+                verified_quotes.append(q)
+            else:
+                logger.info(
+                    f"🚫 Verify-Gate: Zitat aus [{qsrc}] NICHT im Quelltext gefunden → verworfen: "
+                    f"\"{qtext[:60]}...\""
+                )
+        
+        if len(verified_quotes) < len(extracted_quotes):
+            logger.info(
+                f"🔐 Verify-Gate: {len(extracted_quotes)} → {len(verified_quotes)} Zitate "
+                f"({len(extracted_quotes) - len(verified_quotes)} fabrizierte/ungenau entfernt)"
+            )
+        
+        extracted_quotes = verified_quotes
+        
+        # --- Schritt 7.5: STILISTIC Mode — Stil-Distillation (Phase 0.5) ---
+        stil_profiles = None
+        if semantic_intent in ("STILISTIC", "STILISTIC_DEEPENING"):
+            # Dokument-Texte für Pro-Quelle-Distillation zusammenstellen
+            doc_texts_for_distillation = {}
+            for i, doc in enumerate(doc_metadata, 1):
+                # Alle Chunks dieses Dokuments zusammenführen
+                doc_content = "\n\n".join(
+                    chunk.get('content', '') 
+                    for chunk in top_results_sorted 
+                    if chunk.get('chat_id') == doc.get('chat_id', '')
+                )
+                if doc_content:
+                    doc_texts_for_distillation[i] = doc_content
+            
+            if doc_texts_for_distillation:
+                logger.info(f"🎭 STILISTIC: Starte Stil-Distillation für {len(doc_texts_for_distillation)} Dokumente...")
+                stil_profiles = self._distill_style_per_document(query, doc_texts_for_distillation)
+            else:
+                logger.warning("⚠️ STILISTIC: Keine Dokument-Texte für Distillation verfügbar")
+        
+        # --- Schritt 8: Prompt bauen ---
+        prompt, mode_display, dynamic_sys_instruct = self._build_synthesis_prompt(
+            query, doc_metadata, intent, semantic_intent, context_text, extracted_quotes,
+            stil_profiles=stil_profiles
+        )
 
         # --- Finale Diagnostik ---
         final_doc_distribution = defaultdict(int)
-        for res in top_results:
-            chat_title = res.get('metadata', {}).get('chat_title', 'Unknown')
-            final_doc_distribution[chat_title] += 1
+        for res in top_results_sorted:
+            title = res.get('metadata', {}).get('title', 'Unknown')
+            final_doc_distribution[title] += 1
 
-        logger.info(f"📊 Finale Kontext-Verteilung ({len(top_results)} Chunks total):")
-        for doc_title, count in sorted(final_doc_distribution.items(), key=lambda x: x[1], reverse=True):
-            percentage = (count / len(top_results)) * 100
+        logger.info(f"📊 Finale Kontext-Verteilung ({len(top_results_sorted)} Chunks total):")
+        # Sortiere nach Dokument-Nummer für korrekte Chronologie-Anzeige
+        for doc_title, count in sorted(final_doc_distribution.items(), key=lambda x: self._extract_number_from_title(x[0])):
+            percentage = (count / len(top_results_sorted)) * 100
             logger.info(f"  📄 {doc_title}: {count} Chunks ({percentage:.1f}%)")
 
-        # --- Schritt 8: Prompt bauen ---
-        prompt, mode_display, dynamic_sys_instruct = self._build_synthesis_prompt(
-            query, doc_metadata, intent, semantic_intent, context_text
-        )
+        
+        # --- NEU: Phase 2 - Synthese mit extrahierten Zitaten ---
+        # extracted_quotes wird in _execute_llm_call gesetzt und später hier verwendet
+        # Dieser Block wird nach dem LLM-Call in _execute_llm_call ausgeführt
 
         # --- 🔴 NEU: DRY RUN CHECK ---
         if dry_run:
@@ -778,14 +1200,149 @@ Behalte Namen unverändert! """
             return "", top_results_sorted, intent
 
         # --- Schritt 9: LLM Generierung & Pipeline Trace ---
-        return self._execute_llm_call(
+        final_text, top_results_sorted, intent, extracted_quotes = self._execute_llm_call(
             query, prompt, dynamic_sys_instruct, intent, semantic_intent, 
-            top_results, top_results_sorted, rerank_stats, rejected_chunks
+            top_results, top_results_sorted, rerank_stats, rejected_chunks,
+            extracted_quotes, is_small_corpus=is_small_corpus
         )
+        
+        # --- NEU: extracted_quotes in Metadaten speichern ---
+        for chunk in top_results_sorted:
+            chunk['extracted_quotes'] = extracted_quotes
+
+        # ── DREI-PHASEN-SYNTHESE: Phase 2 (Check) + Phase 3 (Korrektur) ──
+        # Prüft ZITAT-Tags VOR der User-sichtbaren Umwandlung,
+        # da die Checks die <ZITAT>-Tags als Struktur-Marker brauchen.
+        if semantic_intent in ("ANALYTICAL_FORENSIC", "ANALYTICAL", "META_ANALYTICAL", "LITERARY", "STILISTIC", "STILISTIC_DEEPENING"):
+            final_text = self._run_phase2_phase3(
+                final_text, top_results_sorted, doc_metadata, extracted_quotes,
+                is_small_corpus=is_small_corpus
+            )
+
+        # Mache die Zitat-Tags für den User lesbar
+        import re
+        final_text = re.sub(
+            r'<ZITAT quelle="(\d+)">(.*?)</ZITAT>', 
+            r'*„\2"* [\1]', 
+            final_text, 
+            flags=re.DOTALL
+        )
+        # WARNUNG-Tags für User sichtbar machen
+        final_text = re.sub(
+            r'<WARNUNG typ="([^"]+)" grund="([^"]+)">(.*?)</WARNUNG>',
+            r'⚠️ *\3* (\2)',
+            final_text,
+            flags=re.DOTALL
+        )
+
+        # ── v57.1: Pipeline-Timer — Ende ──
+        _pipeline_elapsed = time.time() - _pipeline_start
+        _mins, _secs = divmod(_pipeline_elapsed, 60)
+        logger.info(
+            f"⏱️ PIPELINE-ENDE: {datetime.now().strftime('%H:%M:%S')} "
+            f"| Dauer: {int(_mins)}:{_secs:05.2f} ({_pipeline_elapsed:.1f}s) "
+            f"| Intent: {intent}"
+        )
+
+        return final_text, top_results_sorted, intent
 
     # =========================================================================
     # 2. PRIVATE HILFSMETHODEN (Die Musiker)
     # =========================================================================
+
+    def _run_phase2_phase3(
+        self,
+        draft: str,
+        top_results_sorted: List[Dict],
+        doc_metadata: List[Dict],
+        extracted_quotes: list,
+        is_small_corpus: bool = False,
+    ) -> str:
+        """
+        Drei-Phasen-Synthese: Phase 2 (Mechanischer Check) + Phase 3 (Korrektur).
+        
+        Architektur-Entscheidung (Gemini-Freigabe, 2026-05-16):
+        - Phase 2: Deterministischer Check (kein LLM, nur Code)
+        - Phase 3: Gezielte Korrektur (kurzer Prompt, temp=0.0, flash)
+        - 1 Runde, nicht verhandelbar
+        - <WARNUNG>-Tags für unkorrigierbare Abschnitte
+        - Skip-Optimierung bei 0 Fehlern
+        """
+        try:
+            # Quelltexte pro source_id zusammenstellen
+            source_texts = {}
+            for res in top_results_sorted:
+                sid = res.get('source_id', 0)
+                if sid:
+                    if sid not in source_texts:
+                        source_texts[sid] = ""
+                    source_texts[sid] += res.get('content', '') + "\n"
+            
+            num_sources = len(source_texts)
+            
+            if num_sources == 0:
+                logger.warning("⚠️ Phase 2: Keine Quelltexte → Validierung übersprungen")
+                return draft
+            
+            # doc_metadata um source_id anreichern
+            # doc_metadata kommt aus _apply_essence_parity und hat title/chat_id,
+            # aber evtl. keine source_id. Wir ordnen über chat_id → source_id Mapping.
+            chat_to_source = {}
+            for res in top_results_sorted:
+                cid = res.get('chat_id', '')
+                sid = res.get('source_id', 0)
+                if cid and sid:
+                    chat_to_source[cid] = sid
+            
+            enriched_metadata = []
+            for doc in doc_metadata:
+                enriched_doc = dict(doc)
+                # source_id aus chat_id ableiten
+                doc_chat_id = doc.get('chat_id', '')
+                if 'source_id' not in enriched_doc and doc_chat_id in chat_to_source:
+                    enriched_doc['source_id'] = chat_to_source[doc_chat_id]
+                enriched_metadata.append(enriched_doc)
+            
+            # FIX v57: is_small_corpus-Parameter robust übergeben
+            # Ältere synthesis_validator-Versionen akzeptieren diesen Parameter nicht.
+            try:
+                final_text, phase_report = run_three_phase_synthesis(
+                    draft=draft,
+                    num_sources=num_sources,
+                    source_texts=source_texts,
+                    doc_metadata=enriched_metadata,
+                    extracted_quotes=extracted_quotes,
+                    llm_call_func=self._llm_call_func,
+                    is_small_corpus=is_small_corpus,
+                )
+            except TypeError as e:
+                if "is_small_corpus" in str(e):
+                    logger.warning(
+                        "⚠️ synthesis_validator.py veraltet — is_small_corpus nicht unterstützt. "
+                        "Fallback ohne Parameter. Bitte synthesis_validator.py aktualisieren!"
+                    )
+                    final_text, phase_report = run_three_phase_synthesis(
+                        draft=draft,
+                        num_sources=num_sources,
+                        source_texts=source_texts,
+                        doc_metadata=enriched_metadata,
+                        extracted_quotes=extracted_quotes,
+                        llm_call_func=self._llm_call_func,
+                    )
+                else:
+                    raise
+            
+            # Phase-Report in Pipeline-Trace speichern
+            if hasattr(self, 'last_pipeline_trace') and self.last_pipeline_trace:
+                self.last_pipeline_trace["phase2_errors"] = phase_report["phase2_errors"]
+                self.last_pipeline_trace["phase2_warnings"] = phase_report["phase2_warnings"]
+                self.last_pipeline_trace["phase3_applied"] = phase_report["phase3_applied"]
+            
+            return final_text
+            
+        except Exception as e:
+            logger.error(f"❌ Drei-Phasen-Synthese fehlgeschlagen: {e} → Original beibehalten")
+            return draft
 
     def _ensure_router_context(self, query: str) -> Tuple[str, str]:
         """Stellt sicher, dass der Router-Kontext für die Query geladen ist."""
@@ -804,6 +1361,9 @@ Behalte Namen unverändert! """
 
         intent = self.current_context.get("intent", "FACTUAL")
         semantic_intent = intent  # Wird durch Essence Parity NICHT überschrieben
+        # v58: _router_intent entfernt — STRUCTURE_OVERRIDES + self._semantic_intent steuern die Logik
+        self._semantic_intent = semantic_intent
+
         return intent, semantic_intent
 
     def _extract_chat_ids(self, results: List[Dict]) -> Optional[List[str]]:
@@ -930,7 +1490,47 @@ Behalte Namen unverändert! """
             cid = res.get('chat_id')
             docs_map[cid].append(res)
 
-        total_budget = ESSENCE_TOTAL_BUDGET
+        # ── Phase 0: Proaktive Rescue — fehlende Dokumente aus DB holen ──
+        # Wenn ein Dokument 0 Chunks im Reranking-Ergebnis hat, 
+        # suchen wir gezielt in der Vektor-DB danach (wie Mechanismus 1).
+        missing_docs = [cid for cid in chat_id if cid not in docs_map]
+        if missing_docs:
+            logger.warning(
+                f"🚨 {len(missing_docs)} Dokument(e) fehlen komplett im Reranking-Ergebnis. "
+                f"Starte proaktive Rescue..."
+            )
+            for missing_cid in missing_docs:
+                rescue_results, _ = self.vector_store.hybrid_search(
+                    query=query,
+                    limit=RESCUE_FETCH_LIMIT,
+                    allowed_chat_ids=[missing_cid],
+                )
+                if rescue_results:
+                    for res in rescue_results:
+                        res["_is_rescued"] = True
+                        res["_keyword_boost"] = res.get("_keyword_boost", 0) + 0.2
+                    docs_map[missing_cid] = rescue_results
+                    top_results.extend(rescue_results)
+                    logger.info(
+                        f"  🚑 Proaktive Rescue: {len(rescue_results)} Chunks aus DB "
+                        f"für Dokument {missing_cid[-8:]}"
+                    )
+                else:
+                    logger.error(
+                        f"  ❌ Proaktive Rescue fehlgeschlagen: "
+                        f"Keine Chunks in DB für Dokument {missing_cid[-8:]} — "
+                        f"Dokument wird in der Synthese fehlen!"
+                    )
+
+        # Logarithmische Skalierung: Mehr Docs → mehr Budget, aber degressiv
+        # 5 Docs → 60 (unverändert), 10 Docs → 90, 15 Docs → 104
+        if len(chat_id) <= 5:
+            total_budget = ESSENCE_TOTAL_BUDGET
+        else:
+            total_budget = int(
+                ESSENCE_TOTAL_BUDGET * (1 + 0.5 * math.log2(len(chat_id) / 5))
+            )
+        logger.info(f"⚖️ Logarithmisches Budget: {total_budget} Chunks für {len(chat_id)} Dokumente")
         doc_minimums = {}
 
         # Schritt 1: Ermittle ORIGINAL-Chunk-Anzahl (vor Reranking)
@@ -950,6 +1550,24 @@ Behalte Namen unverändert! """
             
         total_guaranteed = sum(doc_minimums.values())
         remaining_budget = max(0, total_budget - total_guaranteed)
+
+        # ── Logarithmische Budget-Verteilung (wie in _trim_to_token_budget) ──
+        log_weights = {}
+        for cid in chat_id:
+            available = len(docs_map.get(cid, []))
+            log_weights[cid] = math.log2(available + 1)
+
+        total_log_weight = sum(log_weights.values()) if log_weights else 1.0
+
+        doc_allocations = {}
+        for cid in chat_id:
+            fair_share = int(total_budget * (log_weights[cid] / total_log_weight))
+            doc_allocations[cid] = max(fair_share, doc_minimums.get(cid, 2))
+            logger.info(
+                f"  📊 {cid[-8:]}: log_weight={log_weights[cid]:.2f} "
+                f"→ fair_share={fair_share} → allocation={doc_allocations[cid]} "
+                f"(available: {len(docs_map.get(cid, []))})"
+            )
 
         logger.info(
             f"⚖️ Logarithmische Essenz-Extraktion (Bio-inspired):\n"
@@ -996,15 +1614,47 @@ Behalte Namen unverändert! """
                 else:
                     logger.error(f"  ❌ Rescue fehlgeschlagen: Keine Pre-Reranking Chunks verfügbar!")
 
-            # Wenn IMMER NOCH leer: Fehler
+            # Wenn IMMER NOCH leer: Direkte ChromaDB-Rettung (Fix B)
             if not doc_chunks:
-                logger.error(f"  ❌ Dokument {cid[-8:]} hat KEINE Chunks!")
-                doc_title = self._get_chat_title(cid)
-                doc_metadata.append({
-                    'title': doc_title, 'chunks_available': 0,
-                    'chunks_selected': 0, 'date': datetime.min
-                })
-                continue
+                logger.warning(
+                    f"  🚨 Dokument {cid[-8:]} hat 0 Chunks in Pipeline! "
+                    f"Starte direkte ChromaDB-Rettung..."
+                )
+                try:
+                    rescue_results, _ = self.vector_store.hybrid_search(
+                        query=query,
+                        limit=RESCUE_FETCH_LIMIT,
+                        allowed_chat_ids=[cid],
+                    )
+                    if rescue_results:
+                        rescue_results.sort(
+                            key=lambda x: x.get('score', 0), reverse=True
+                        )
+                        doc_chunks = rescue_results[:3]  # Mindestrepräsentation
+                        for res in doc_chunks:
+                            res['_is_rescued'] = True
+                            res['_keyword_boost'] = res.get('_keyword_boost', 0) + 0.2
+                        logger.info(
+                            f"  🚑 ChromaDB-Rettung erfolgreich: "
+                            f"{len(doc_chunks)} Chunks für {cid[-8:]}"
+                        )
+                    else:
+                        logger.error(
+                            f"  ❌ Dokument {cid[-8:]} existiert NICHT in ChromaDB!"
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"  ❌ ChromaDB-Rettung fehlgeschlagen für {cid[-8:]}: {e}"
+                    )
+
+                # Endgültiger Fallback: Wenn selbst ChromaDB nichts liefert
+                if not doc_chunks:
+                    doc_title = self._get_chat_title(cid)
+                    doc_metadata.append({
+                        'title': doc_title, 'chat_id': cid, 'chunks_available': 0,
+                        'chunks_selected': 0, 'date': datetime.min
+                    })
+                    continue
 
             # Sammle Chunks für Quality-Verteilung
             for chunk in doc_chunks:
@@ -1039,10 +1689,21 @@ Behalte Namen unverändert! """
             final_selection[candidate['chat_id']].append(candidate['chunk'])
             used_chunk_ids.add(id(candidate['chunk']))
 
-        # Phase 5: Sammle Ergebnisse
+        # Phase 5: Sammle Ergebnisse mit logarithmischer Allokation
         essence_results = []
         for cid in chat_id:
             selected = final_selection[cid]
+            
+            # Logarithmische Allokation als Obergrenze verwenden
+            max_allowed = doc_allocations.get(cid, 6)
+            if len(selected) > max_allowed:
+                logger.warning(
+                    f"  ✂️ Dokument {cid[-8:]}: {len(selected)} → "
+                    f"{max_allowed} Chunks (logarithmische Allokation)"
+                )
+                selected = selected[:max_allowed]
+                final_selection[cid] = selected
+            
             if selected:
                 essence_results.extend(selected)
                 doc_title = selected[0].get('metadata', {}).get('chat_title') or self._get_chat_title(cid)
@@ -1054,73 +1715,372 @@ Behalte Namen unverändert! """
                 rep_date = min(valid_dates) if valid_dates else datetime.min
 
                 doc_metadata.append({
-                    'title': doc_title, 'chunks_available': len(docs_map.get(cid, [])),
+                    'title': doc_title, 'chat_id': cid, 'chunks_available': len(docs_map.get(cid, [])),
                     'chunks_selected': len(selected), 'date': rep_date
                 })
             else:
                 doc_title = self._get_chat_title(cid)
                 logger.error(f"  ❌ {doc_title}: 0 Chunks!")
                 doc_metadata.append({
-                    'title': doc_title, 'chunks_available': 0,
+                    'title': doc_title, 'chat_id': cid, 'chunks_available': 0,
                     'chunks_selected': 0, 'date': datetime.min
                 })
 
-        new_intent = "ESSENCE_PARITY"
-        logger.info(f"✅ Essenz-Extraktion: {len(essence_results)} Chunks aus {len(chat_id)} Dokumenten")
+        # v57.8: STILISTIC_DEEPENING bekommt eigene mode_instructions,
+        # nicht ESSENCE_PARITY. Die Essenz-Extraktion läuft normal,
+        # aber die Ausgabestruktur kommt von STILISTIC_DEEPENING.
+        if self._semantic_intent in self.STRUCTURE_OVERRIDES:
+            new_intent = self._semantic_intent
+            logger.info(f"✅ Essenz-Extraktion: {len(essence_results)} Chunks aus {len(chat_id)} Dokumenten ({self._semantic_intent}: intent bleibt {self._semantic_intent})")
+        else:
+            new_intent = "ESSENCE_PARITY"
+            logger.info(f"✅ Essenz-Extraktion: {len(essence_results)} Chunks aus {len(chat_id)} Dokumenten")
         return essence_results, doc_metadata, new_intent
 
     def _build_context_text(self, top_results_sorted: List[Dict]) -> str:
-        """Baut den Kontext-String für den LLM Prompt zusammen."""
-        # Stelle sicher, dass Metadaten vorhanden sind
-        for i, res in enumerate(top_results_sorted):
-            meta = res.get('metadata')
-            if not meta:
-                meta = {}
-                res['metadata'] = meta
+        from collections import defaultdict
+        
+        # ── DOKUMENTEN-GRUPPIERUNG statt Chunk-Nummerierung ──
+        # Chunks nach chat_id gruppieren → Dokument-Nummer zuweisen
+        doc_groups = defaultdict(list)
+        for res in top_results_sorted:
+            cid = res.get('chat_id', 'unknown')
+            doc_groups[cid].append(res)
 
-            speaker = meta.get('model_name') or meta.get('speaker') or meta.get('author') or 'Quelle'
+        # Deterministische Reihenfolge: nach erstem Chunk sortiert
+        sorted_doc_ids = sorted(
+            doc_groups.keys(),
+            key=lambda cid: top_results_sorted.index(next(r for r in top_results_sorted if r.get('chat_id') == cid))
+        )
 
-            # Phase 6.5 Fix: Sicherstellen, dass NIEMALS "Unknown" im Prompt landet
-            if not meta.get('chat_title') or meta['chat_title'] == 'Unknown':
-                chat_id_single = res.get('chat_id')
-                if chat_id_single:
-                    raw_title = self._get_chat_title(chat_id_single)
-                    clean_title = raw_title
-                    for prefix in ['ChatGPT:', 'PDF:', 'Gemini:', 'DeepSeek:', 'Claude:']:
-                        if clean_title.startswith(prefix):
-                            clean_title = clean_title[len(prefix):].strip()
-                    meta['chat_title'] = clean_title or f"Dokument {chat_id_single[-8:]}"
-                else:
-                    meta['chat_title'] = 'Unbekanntes Dokument'
-
+        # Jedem Chunk die DOKUMENT-Nummer als source_id zuweisen
         context_text = ""
-        for i, res in enumerate(top_results_sorted):
-            sid = i + 1
-            res['source_id'] = sid
-            meta = res.get('metadata', {})
-            title = meta.get('chat_title', 'Dokument')
-            speaker = meta.get('model_name') or meta.get('speaker') or meta.get('author') or 'Quelle'
-            date_obj = self.extract_date_from_metadata(res)
+        for doc_idx, cid in enumerate(sorted_doc_ids, 1):
+            chunks = doc_groups[cid]
+            # Header nur einmal pro Dokument
+            first_meta = chunks[0].get('metadata', {})
+            title = first_meta.get('chat_title', 'Dokument')
+            speaker = first_meta.get('model_name') or first_meta.get('speaker') or first_meta.get('author') or 'Quelle'
+            date_obj = self.extract_date_from_metadata(chunks[0])
             date_str = date_obj.strftime("%d.%m.%Y") if date_obj != datetime.min else "o.D."
-            context_text += f"QUELLE [{sid}] ({speaker} | {title} | Datum: {date_str}):\n{res.get('content')}\n\n"
-            
+
+            # ── Fix F: Doc-Type-Annotation im QUELLE-Header ──
+            # Default: ANALYSE (die meisten Dokumente in der DB sind Sekundäranalysen)
+            # Nur bei Primärquellen-Schlüsselwörtern wird PRIMÄRQUELLE gesetzt
+            _primary_keywords = ["brief", "tagebuch", "tagebuchnotiz", "notiz", "protokoll",
+                                 "aufzeichnung", "manuskript", "vorlesung", "briefwechsel",
+                                 "korrespondenz", "stundennotiz", "sitzungsprotokoll"]
+            _title_lower = title.lower()
+            # Dokumente, die "Analyse", "Gutachten" etc. im Titel haben → offensichtlich ANALYSE
+            # Dokumente mit Primärquellen-Schlüsselwörtern → PRIMÄRQUELLE
+            # Alles andere → ANALYSE (safe default)
+            _analysis_keywords = ["analyse", "gutachten", "supervision", "handoff",
+                                  "fallstudie", "interpretation", "kommentar", "kritik"]
+            if any(kw in _title_lower for kw in _analysis_keywords):
+                doc_type_label = "ANALYSE"
+            elif any(kw in _title_lower for kw in _primary_keywords):
+                doc_type_label = "PRIMÄRQUELLE"
+            else:
+                doc_type_label = "ANALYSE"  # ← SAFE DEFAULT: Lieber fälschlich als ANALYSE
+                                            # labeln als als Primärquelle, weil das Frame-Flip
+                                            # von ANALYSE→PRIMÄRQUELLE katastrophal ist,
+                                            # umgekehrt aber harmlos.
+
+            context_text += f"QUELLE [{doc_idx}] — {doc_type_label}: \"{title}\"\n({speaker} | Datum: {date_str}):\n"
+
+            for chunk in chunks:
+                chunk['source_id'] = doc_idx  # ← DOKUMENT-Nummer, nicht Chunk-Nummer!
+                context_text += f"{chunk.get('content', '')}\n\n"
+
         return context_text
 
+    def _build_zitat_pool(self, extracted_quotes: list) -> str:
+        """Baut den ZITAT-POOL mit nummerierten Einträgen."""
+        if not extracted_quotes:
+            return "Keine Zitate extrahiert."
+        
+        lines = []
+        for i, q in enumerate(extracted_quotes, 1):
+            src = q.get("quelle", "?")
+            text = q.get("text", "")
+            lines.append(f"[Z{i}] Quelle [{src}]: \"{text}\"")
+        
+        return "\n".join(lines)
+
+    # =========================================================================
+    # STILISTIC MODE: Stil-Distillation (Phase 0.5)
+    # =========================================================================
+
+    def _distill_style_per_document(self, query: str, doc_texts: dict) -> dict:
+        """Zweistufige Stil-Analyse — Phase 0.5: Stil-Distillation pro Dokument.
+        
+        Architektur-Entscheidung (Claude-R3 + User-Konsultation, 2026-05-20):
+        Stilistische Beobachtung ist holistisch, Vergleich ist selektiv.
+        In einem Pass gewinnt immer der thematische Frame (kognitiver Modus-Konflikt).
+        
+        Lösung: Separater LLM-Call pro Dokument mit moderater Temperatur (0.6),
+        der ein strukturiertes Stil-Profil mit 6 Kategorien erzeugt.
+        Die Profile werden dann in den Synthese-Prompt injiziert,
+        BEVOR der ZITAT-POOL kommt (stilistischer Frame vor Zitat-Evidence).
+        
+        Args:
+            query: Die Analyse-Frage
+            doc_texts: Dict von {doc_id: context_text}
+                       doc_id ist die QUELLE-Nummer (1, 2, 3, ...)
+        
+        Returns:
+            Dict von {doc_id: stil_profile_text}
+        """
+        stil_profiles = {}
+        
+        for doc_id, text in doc_texts.items():
+            if not text or len(text.strip()) < 50:
+                logger.debug(f"⏭️ Stil-Distillation: Überspringe Quelle [{doc_id}] (zu kurz)")
+                continue
+            
+            # Kürze auf ~4000 Zeichen (Attention-Window)
+            short_text = text[:4000] if len(text) > 4000 else text
+            
+            # Distillation-Prompt (5 Kategorien à 40-60 Wörter = 200-300 Wörter)
+            # FIX v57.1: v57 sagte "240-360 Wörter" — das Modell lieferte ~50 Wörter.
+            # Ursachen: (a) "max" vs. "min" Ambiguität, (b) Flash-Modelle komprimieren
+            # aggressiv, (c) keine MINDEST-Länge pro Kategorie erzwungen.
+            # FIX: (a) "MINDESTENS" statt "maximal", (b) Wortzahl pro Kategorie
+            # verdoppelt, (c) Beispiel-Output zeigt die erwartete Länge, (d) max_tokens
+            # von 2048 → 4096, (e) System-Instruction wiederholt Längenpflicht.
+            distillation_prompt = (
+                f"FRAGE: {query}\n\n"
+                f"QUELLE [{doc_id}]:\n{short_text}\n\n"
+                f"Erstelle ein STIL-PROFIL für Quelle [{doc_id}] mit exakt 5 Kategorien.\n\n"
+                f"LÄNGEN-VORGABE (ZWINGEND):\n"
+                f"- Jede Kategorie: BEFUND (1-2 Sätze, 25-40 Woerter) + BELEG (1 Zitat, 10-20 Woerter)\n"
+                f"- Halte dich exakt an das BEFUND/BELEG-Format. Keine Abweichung.\n"
+                f"- STIMME, ADRESSAT, TRADITION: nur im STIL-FAZIT (1-2 Saetze), nicht als eigene Kategorie.\n\n"
+                f"BEISPIEL (alle 5 Kategorien im Soll-Format):\n1. SYNTAX UND PERIODENBAU:\nBEFUND: Parataktische Reihung, selten Subordination — erzeugt Stoßkraft.\nBELEG: \"Er kam, sah und siegte — ohne jeden Nebensatz.\"\n2. LEXIK UND WORTFELDER:\nBEFUND: Abstrakta dominieren, lateinische Lehnwoerter — verleiht akademische Autoritaet.\nBELEG: \"Die Konstitution des transzendenten Subjekts\"\n3. TEXTUROBERFLÄCHE UND MATERIALITÄT:\nBEFUND: Ausrufezeichen als rhythmische Eingriffe (3× pro Absatz) — durchbrechen den Fluss.\nBELEG: \"Aber – das ist das Entscheidende!\"\n4. RHYTHMUS UND KADENZ:\nBEFUND: Beschleunigung durch Aneinanderreihung, Verzoegerung durch Einschub — erzeugt Spannungsbogen.\nBELEG: \"nicht nur... sondern auch... und zugleich\"\n5. FIGUREN ALS SYNTAXPHÄNOMENE:\nBEFUND: Anapher als dominantestes Mittel — steigert zur Beschwörung.\nBELEG: \"Die einen... Die anderen...\"\n\n"
+                f"Figuren in Kategorie 5: Benennen, zitieren, Funktion beschreiben.\n\n"
+                f"Format:\n"
+                f"### STIL-PROFIL QUELLE [{doc_id}]\n\n"
+                f"1. SYNTAX UND PERIODENBAU\n"
+                f"Was ist der häufigste Satztyp? Zähle Hauptsätze vs. Nebensätze.\n"
+                f"Beschreibe Satzlängenvariation. Wie enden die Sätze — Vollschluss oder Offenheit?\n"
+                f"Hypotaxe oder Parataxe? Satzbögen oder abgebrochene Sätze?\n"
+                f"BEFUND: [Beobachtung] — [Funktion]\nBELEG: \"\"\n\n"
+                f"2. LEXIK UND WORTFELDER\n"
+                f"Welche Wortebene dominiert: Abstrakta oder Konkreta? Latinismen oder Germanismen?\n"
+                f"Fachvokabular oder Allgemeinsprache? Nenne drei Schlüsselwörter. Welche semantischen Felder?\n"
+                f"BEFUND: [Beobachtung] — [Funktion]\nBELEG: \"\"\n\n"
+                f"3. TEXTUROBERFLÄCHE UND MATERIALITÄT\n"
+                f"Welche Satzzeichen dominieren? Klammern, Gedankenstriche, Ausrufezeichen — zähle, benenne, zitiere.\n"
+                f"Wie sieht der Text aus? Absatzstruktur: Steigerung? Brüche? Registerwechsel?\n"
+                f"Satzmelodie: Wo klingt der Satz? Rhythmus der Betonung? Vokalwechsel, Alliteration?\n"
+                f"BEFUND: [Beobachtung] — [Funktion]\nBELEG: \"\"\n\n"
+                f"4. RHYTHMUS UND KADENZ\n"
+                f"Wo beschleunigt der Text? Wo verlangsamt er? Beschreibe die Bewegung.\n"
+                f"Wie schließen die Sätze — hart oder weich? Rhythmusmuster, das durchbrochen wird?\n"
+                f"BEFUND: [Beobachtung] — [Funktion]\nBELEG: \"\"\n\n"
+                f"5. FIGUREN ALS SYNTAXPHÄNOMENE\n"
+                f"Finde eine Anapher, Ellipse, Antithese, Parallelismus oder Chiasmus.\n"
+                f"Nenne den Namen, zitiere die Stelle. Welche Funktion erfüllt sie im Argument?\n"
+                f"BEFUND: [Name der Figur] — [Funktion]\nBELEG: \"\"\n\n"
+                f"FREIER RAUM: Wenn du eine Beobachtung machst, die in keine der 5 Kategorien passt —\n"
+                f"notiere sie hier. Überraschungen sind wertvoller als Ordnung.\n\n"
+                f"STIL-FAZIT: [Sprachliches Merkmal] — daher/weshalb [Wirkung].\n"f"Beispiel: \"Kurze Hauptsatzdominanz mit Imperativ — daher wirkt der Stil wie ein Befehl.\"\n"f"1-2 Saetze. Abgeleitet aus den Beobachtungen oben. Synthese aus den Beobachtungen oben.\n"
+                f"\nWICHTIG: Schreibe ALLE 5 Kategorien aus. Halte nicht nach 1-2 Kategorien an.\n"
+                f"Jede Kategorie braucht BEFUND + BELEG. Das sind mindestens 200 Woerter insgesamt.\n"
+            )
+            
+            try:
+                # Separater Call mit moderater Temperatur für ausführliche Beobachtung
+                profile_text = self._llm_call_func(
+                    distillation_prompt,
+                    task="stilistic_distillation",  # Nutzt konfiguriertes Distillation-Modell (Flash-Tier)
+                    system_instruction=(
+                        "Du bist ein Annotator. Beobachte zuerst, deute dann. "
+                        "Jeder BEFUND beginnt mit einer Beobachtung (was im Text STEHT), "
+                        "dann darf die Funktion folgen (was es BEWIRKT). "
+                        "Beobachtung zuerst, Funktion danach — das ist die Regel.\n"
+                        "Beobachte konkret und ausfuehrlich, belege praezise. Ein BEFUND-Satz, ein BELEG-Zitat pro Kategorie.\n"
+                        "LÄNGEN-PFLICHT: Du MUSS alle 5 Kategorien AUSFUEHRLICH bearbeiten. Stoppe NICHT vor Kategorie 5. "
+                        "Gesamt MINDESTENS 40 Woerter pro Kategorie, gerne mehr."
+                    ),
+                    temperature=0.6,  # v58: Flash braucht mehr Waerme fuer Ausfuehrlichkeit (0.4 -> Komprimierung)
+                    max_tokens=2048,  # v58: 1536 -> 2048 Sicherheitsmarge
+                )
+                
+                if profile_text and len(profile_text.strip()) > 50:
+                    stil_profiles[doc_id] = profile_text.strip()
+                    word_count = len(profile_text.split())
+                    logger.info(
+                        f"✅ Stil-Distillation: Profil für Quelle [{doc_id}] erstellt "
+                        f"({len(profile_text)} Zeichen, ~{word_count} Wörter)"
+                    )
+                    # FIX v57.1: Warnung bei zu kurzem Profil
+                    if word_count < 80:
+                        logger.warning(
+                            f"⚠️ Stil-Distillation: Quelle [{doc_id}] Profil zu kurz "
+                            f"(~{word_count} Wörter, Ziel: >=150). "
+                            f"Synthese wird möglicherweise dünn."
+                        )
+                else:
+                    logger.warning(f"⚠️ Stil-Distillation: Quelle [{doc_id}] lieferte leeres/profil")
+                    
+            except Exception as e:
+                logger.error(f"❌ Stil-Distillation fehlgeschlagen für Quelle [{doc_id}]: {e}")
+        
+        logger.info(f"🎭 Stil-Distillation: {len(stil_profiles)}/{len(doc_texts)} Profile erstellt")
+        return stil_profiles
+
+    def _build_stil_profile_block(self, stil_profiles: dict, doc_metadata: list) -> str:
+        """Formatiert die Stil-Profile für die Injektion in den Synthese-Prompt.
+        
+        Die Profile werden VOR dem ZITAT-POOL injiziert, damit der stilistische
+        Frame bereits etabliert ist, bevor das Modell die Zitate sieht.
+        """
+        if not stil_profiles:
+            return ""
+        
+        # Titel-Mapping für die Profil-Header
+        title_map = {}
+        if doc_metadata:
+            for i, doc in enumerate(doc_metadata, 1):
+                title_map[i] = doc.get('title', f'Dokument {i}')
+        
+        lines = [
+            f"\n\n"
+            f"============================================================\n"
+            f"STIL-PROFILE ({len(stil_profiles)} Dokumente) — VORAB-BEOBACHTUNGEN\n"
+            f"============================================================\n"
+            f"ACHTUNG: Diese Profile sind VORSCHAUEN, keine Primärquellen!\n"
+            f"Analysiere und zitiere NUR die ORIGINALQUELLEN unten.\n"
+            f"Beschreibe den Stil des ORIGINALTEXTES, nicht den der Profile.\n"
+            f"============================================================\n",
+        ]
+
+        for doc_id in sorted(stil_profiles.keys()):
+            title = title_map.get(doc_id, f'Dokument {doc_id}')
+            lines.append(f"\n------------------------------------------------------------")
+            lines.append(f"VORAB-BEOBACHTUNG Profil [{doc_id}] — {title} — NICHT zitieren!")
+            lines.append("Dies ist eine VORSCHAU, keine Primärquelle.")
+            lines.append("Analysiere und zitiere NUR den ORIGINALTEXT unten.")
+            lines.append("------------------------------------------------------------")
+            lines.append(stil_profiles[doc_id])
+            lines.append("------------------------------------------------------------\n")
+
+        lines.append("\n============================================================\n")
+        lines.append("AB HIER: ORIGINALQUELLEN — Deine Analyse-Grundlage\n")
+        lines.append("Zitiere NUR aus diesen Texten, NIEMALS aus Profilen.\n")
+        lines.append("============================================================\n")
+
+        return "\n".join(lines)
+
+    def _group_sources_by_document(self, results: list) -> list:
+        """Gruppiert Chunks nach Dokument (title) für den Enforcer.
+        Verwendet dieselbe Dokument-Nummerierung wie _build_context_text."""
+        from collections import OrderedDict
+        
+        # Nach title gruppieren, Reihenfolge bewahren
+        doc_groups = OrderedDict()
+        for chunk in results:
+            meta = chunk.get('metadata', {})
+            title = meta.get('chat_title', meta.get('title', 'Unbekannt'))
+            if title not in doc_groups:
+                doc_groups[title] = []
+            doc_groups[title].append(chunk)
+        
+        # Pro Dokument: einen Eintrag mit konkateniertem Inhalt
+        grouped = []
+        for doc_num, (title, chunks) in enumerate(doc_groups.items(), 1):
+            # Alle Chunk-Inhalte zusammenfügen
+            combined_content = "\n\n".join(
+                chunk.get('content', '') for chunk in chunks
+            )
+            # Metadaten vom ersten Chunk übernehmen
+            first_meta = chunks[0].get('metadata', {})
+            
+            grouped.append({
+                'content': combined_content,
+                'source_id': str(doc_num),  # Dokument-Nummer, nicht Chunk-Nummer!
+                'metadata': first_meta
+            })
+        
+        logger.info(f"📊 Enforcer-Quellen: {len(results)} Chunks → {len(grouped)} Dokumente gruppiert")
+        return grouped
+
     def _build_synthesis_prompt(
-        self, query: str, doc_metadata: List[Dict], intent: str, semantic_intent: str, context_text: str
+        self, query: str, doc_metadata: List[Dict], intent: str, semantic_intent: str, context_text: str,
+        extracted_quotes: list = None,   # <-- NEU, Default=None für Abwärtskompatibilität
+        stil_profiles: dict = None      # <-- NEU v57+STILISTIC: Stil-Profile aus Phase 0.5
     ) -> Tuple[str, str, str]:
         """Baut den finalen Synthese-Prompt und die System-Instruction zusammen (v52: YAML-basiert)."""
         
-        # 1. Struktur-Template für ESSENCE_PARITY dynamisch aufbauen (Architekten-Vorgabe!)
+        # 1. Formatierungs-Variablen sammeln (VOR structure_template!)
+        doc_count = len(doc_metadata) if doc_metadata else 1
+
+        # ── Compact-Mode: Drei Stufen (Claude-Option D) ──
+        if doc_count <= 5:
+            compact_mode = False
+            max_words_per_doc = 150
+        elif doc_count <= 8:
+            compact_mode = "partial"
+            max_words_per_doc = 100
+        else:
+            compact_mode = "full"
+            max_words_per_doc = 70
+
+        # 2. Struktur-Template dynamisch aufbauen
+        # FIX v57: STILISTIC bekommt sein EIGENES Template — nicht das FORENSIC-Template!
         structure_template = ""
         if doc_metadata:
             for i, doc_info in enumerate(doc_metadata):
-                structure_template += f"\n### {i+1}. {doc_info['title']}\n"
-                structure_template += f"[4-6 Sätze mit 3-4 Zitaten]\n"
+                structure_template += f"\n### QUELLE [{i+1}]: {doc_info['title']}\n"
+                # ── STILISTIC-Template: Eigene Struktur, unabhängig von compact_mode ──
+                if semantic_intent == "STILISTIC":
+                    structure_template += (
+                        f"1. SYNTAX UND PERIODENBAU:\n"
+                        f"   BEFUND: [Beobachtung] — [Funktion]\n"
+                        f"   BELEG: \"[Zitat, max. 20 Wörter]\"\n"
+                        f"2. LEXIK UND WORTFELDER:\n"
+                        f"   BEFUND: [Beobachtung] — [Funktion]\n"
+                        f"   BELEG: \"[Zitat, max. 20 Wörter]\"\n"
+                        f"3. TEXTUROBERFLÄCHE UND MATERIALITÄT:\n"
+                        f"   BEFUND: [Beobachtung] — [Funktion]\n"
+                        f"   BELEG: \"[Zitat, max. 20 Wörter]\"\n"
+                        f"4. RHYTHMUS UND KADENZ:\n"
+                        f"   BEFUND: [Beobachtung] — [Funktion]\n"
+                        f"   BELEG: \"[Zitat, max. 20 Wörter]\"\n"
+                        f"5. FIGUREN ALS SYNTAXPHÄNOMENE:\n"
+                        f"   BEFUND: [Beobachtung] — [Funktion]\n"
+                        f"   BELEG: \"[Zitat, max. 20 Wörter]\"\n"
+                        f"   FREIER RAUM: [Überraschende Beobachtung]\n"
+                        f"STIL-FAZIT: [Sprachliches Merkmal] — daher/weshalb [Wirkung]. 1-2 Sätze.\n"f"Aus den Beobachtungen abgeleitet.\n"
+                    )
+                elif semantic_intent == "STILISTIC_DEEPENING":
+                    structure_template += (
+                        f"AUSGANGSBEFUND: [1-2 zentrale Stil-Befunde, max. 40 Wörter]\n"
+                        f"\n"
+                        f"FUNKTIONALE INTERPRETATION:\n"
+                        f"1. FUNKTION IM KONTEXT:\n"
+                        f"   Schreibe 2-3 Sätze als fließenden Text. Erkläre die Wirkung, die der Befund im Text erzeugt.\n"
+                        f"2. STRATEGIE DER MITTELWAHL:\n"
+                        f"   Schreibe 1-2 Sätze als fließenden Text. Deute die Wahl als bewusste Strategie.\n"
+                        f"3. TRADITION UND BRUCH:\n"
+                        f"   Nenne die Tradition, an die der Befund anschließt. Beschreibe, wo sie durchbrochen wird.\n"
+                        f"   Erkläre den funktionalen Gewinn des Bruchs. 2-3 Sätze.\n"
+                        f"\n"
+                        f"OPERATIVES URTEIL:\n"
+                        f"1 Satz: ‹Merkmal› funktioniert als ‹Funktion›, weil ‹Grund›.\n"
+                    )
+                elif compact_mode == "full":
+                    structure_template += f"1. BEFUND [{max_words_per_doc} Wörter]\n2. FAZIT [{max_words_per_doc} Wörter]\n"
+                elif compact_mode == "partial":
+                    structure_template += f"0. DOKUMENTTYP [1 Satz]\n1. BEFUND [{max_words_per_doc} Wörter]\n2. MOTIV [{max_words_per_doc} Wörter]\n3. KONSEQUENZ [{max_words_per_doc} Wörter]\n4. FAZIT [{max_words_per_doc} Wörter]\n"
+                else:
+                    structure_template += f"[4-6 Sätze mit 3-4 Zitaten]\n"
 
-        # 2. Formatierungs-Variablen sammeln
         format_kwargs = {
-            "structure_template": structure_template
+            "structure_template": structure_template,
+            "compact_mode": bool(compact_mode),
+            "max_words_per_doc": max_words_per_doc,
         }
         
         # Essence Parity benötigt min/max Chunks für den Prompt
@@ -1142,10 +2102,188 @@ Behalte Namen unverändert! """
 
         logger.info(f"🧠 RAG Modus: {mode_display}")
 
-        # 5. Finalen Task-Prompt zusammenbauen
+        # NEU: ZITAT-POOL mit Whitelist-Regel
+        quote_block = ""
+        if extracted_quotes:
+            zitat_pool = self._build_zitat_pool(extracted_quotes)
+            quote_block = (
+                f"\n\n=== ZITAT-POOL ({doc_count} Quellen: [1]–[{doc_count}]) ===\n"
+                f"WICHTIG: Es gibt exakt {doc_count} Quellen [1]–[{doc_count}]. "
+                f"Zahlen wie [22] oder [26] im Quelltext sind INTERNE Referenzen "
+                f"des Originaldokuments — KEINE Zitationsmarker!\n\n"
+                f"{zitat_pool}\n\n"
+                "ZITAT-POOL-REGEL:\n"
+                "• <ZITAT quelle=\"X\">-Tags dürfen AUSSCHLIEßLICH Text enthalten, der WÖRTLICH oben im Pool steht.\n"
+                "• Zitate dürfen NUR Quellen [1]–[N] referenzieren. Andere Zahlen sind INTERNE Referenzen!\n"
+                "• ATTRIBUTIONS-ZWANG: Wenn ein Phrase im Pool als quelle=2 markiert ist, "
+                "MUSS sie in deiner Synthese als [2] erscheinen — niemals als [4] oder [6]. "
+                "Die Quelle-Zuweisung im ZITAT-POOL ist verbindlich.\n"
+                "• Wenn du paraphrasierst: schreibe OHNE <ZITAT>-Tags: ...wie in Quelle [X] beschrieben.\n"
+                "• FALSCH: <ZITAT quelle=\"1\">Sicherheitsarchitektur</ZITAT> — dieser Begriff steht nicht im Pool.\n"
+                "• RICHTIG: <ZITAT quelle=\"1\">Der Begriff Zensur wird durch Sicherheitsarchitektur ersetzt</ZITAT> — falls dieser Text im Pool steht.\n"
+                "• Ein Verweis OHNE Zitat ist immer besser als ein erfundenes Zitat.\n"
+                "=== ENDE ZITAT-POOL ===\n"
+            )
+        
+        # v57: Extraktions-Fehler-Warnung in den Prompt injizieren
+        # Wenn Quellen im Zitat-Pool fehlen, warnt das Modell,
+        # dass es für diese Quellen keine verifizierten Zitate verwenden soll
+        extraction_failures = getattr(self, '_extraction_failures', [])
+        if extraction_failures:
+            failed_ids = [str(f['source_id']) for f in extraction_failures if f['reason'] == 'json_parse_failed']
+            if failed_ids:
+                failed_str = ", ".join(f"[{sid}]" for sid in failed_ids)
+                extraction_warning = (
+                    f"\n\n⚠️ EXTRAKTIONSWARNUNG: Für Quelle(n) {failed_str} "
+                    f"konnten keine verifizierten Zitate extrahiert werden "
+                    f"(JSON-Parsing-Fehler im Extraktions-Call). "
+                    f"Der Quelltext IST im Kontext vorhanden, aber du DARFST für "
+                    f"diese Quelle(n) KEINE <ZITAT>-Tags verwenden — nur Paraphrasen "
+                    f"ohne Zitat-Tag. Schreibe stattdessen z.B.: "
+                    f"„Wie in Quelle [{failed_ids[0]}] dargelegt...\" "
+                    f"ohne <ZITAT>-Markup.\n"
+                )
+                quote_block += extraction_warning
+        
+        # Bestehenden Prompt um den Zitat-Block erweitern
         prompt = self.prompt_manager.build_task_prompt(
             query, mode_display, base_instruction, context_text
         )
+        
+        # Zitat-Block VOR dem eigentlichen Task in den Prompt einfügen
+        if quote_block:
+            # Finde die Stelle nach den Quellen, vor der Aufgabenstellung
+            prompt = quote_block + prompt
+
+        # ── STILISTIC: Stil-Profile VOR dem ZITAT-POOL injizieren ──
+        # Stilistischer Frame muss etabliert sein, bevor das Modell
+        # die Zitate sieht — sonst gewinnt der thematische Frame.
+        if stil_profiles and semantic_intent == "STILISTIC":
+            stil_block = self._build_stil_profile_block(stil_profiles, doc_metadata)
+            if stil_block:
+                # STIL-PROFILE ganz am Anfang des Prompts (vor allem anderen)
+                prompt = stil_block + prompt
+                logger.info(f"🎭 Stil-Profile injiziert: {len(stil_profiles)} Profile VOR Zitat-Pool")
+
+        # ── Fix J.2: Titel-Mapping-Injektion (unabhängig vom ZITAT-POOL) ──
+        # Explizite Titel-Tabelle direkt vor der AUFGABE — das Modell sieht
+        # die Mapping-Tabelle, bevor es zu schreiben beginnt.
+        # Löst: Dokumentnamen [4]-[6] werden als "Dokument" statt korrektem Titel
+        if doc_metadata:
+            title_map = "\n\nQUELLEN-VERZEICHNIS (verbindlich):\n"
+            for i, doc in enumerate(doc_metadata, 1):
+                title_map += f"[{i}] = \"{doc['title']}\"\n"
+            title_map += "Verwende diese Titel EXAKT in deinen Überschriften.\n"
+            # VOR der AUFGABE einfügen (Recency-Bias)
+            task_marker = "\nAUFGABE:"
+            if task_marker in prompt:
+                prompt = prompt.replace(task_marker, title_map + task_marker, 1)
+            else:
+                prompt = title_map + prompt
+
+        # ── Compact-Mode: Stufen-spezifische Instruktion ──
+        # FIX v57.1: STILISTIC bekommt seine EIGENE compact_instruction!
+        # Vorher: compact_mode=partial erzwang FORENSIC-Format (DOKUMENTTYP/BEFUND/MOTIV)
+        # auch bei STILISTIC → Modell sah zwei widersprüchliche Struktur-Anweisungen.
+        # FIX v57.3: STILISTIC-compact_instruction verwendet BEFUND/BELEG (5 Kategorien)
+        # ARCHITEKTUR/MIKRO-STIL/STIL-FAZIT — konsistent mit dem structure_template.
+        if semantic_intent == "STILISTIC":
+            # STILISTIC-eigene Compact-Anweisung (konsistent mit structure_template)
+            if compact_mode == "partial":
+                compact_instruction = (
+                    f"\n\n⚠️ COMPACT-MODE PARTIAL — STILISTISCH ({doc_count} Dokumente).\n"
+                    f"Für JEDES Dokument:\n"
+                    f"### QUELLE [N]: [Titel]\n"
+                    f"1. SYNTAX UND PERIODENBAU: BEFUND + BELEG\n"
+                    f"2. LEXIK UND WORTFELDER: BEFUND + BELEG\n"
+                    f"3. TEXTUROBERFLÄCHE UND MATERIALITÄT: BEFUND + BELEG\n"
+                    f"4. RHYTHMUS UND KADENZ: BEFUND + BELEG\n"
+                    f"5. FIGUREN ALS SYNTAXPHÄNOMENE: BEFUND + BELEG\n"
+                    f"FREIER RAUM: Überraschende Beobachtung.\n"
+                    f"STIL-FAZIT: [Sprachliches Merkmal] — daher/weshalb [Wirkung]. 1-2 Sätze.\n"f"Aus Beobachtungen abgeleitet.\n"
+                    f"Beobachte SPRACHE, nicht Rhetorik. BEFUND = 1 Satz Beobachtung. BELEG = 1 Zitat. "
+                    f"Analysiere die ORIGINALQUELLEN, NICHT die obigen Profile. "
+                    f"GLOBALE SYNTHESE: STILISTISCHE KONVERGENZEN / "
+                    f"STILISTISCHE DIVERZENZEN / SPRACHLICHE WAHLVERWANDTSCHAFT / STRUKTURELLES FAZIT."
+                )
+                prompt = prompt + compact_instruction
+            elif compact_mode == "full":
+                compact_instruction = (
+                    f"\n\n⚠️ COMPACT-MODE FULL — STILISTISCH ({doc_count} Dokumente).\n"
+                    f"Für JEDES Dokument:\n"
+                    f"### QUELLE [N]: [Titel]\n"
+                    f"1. SYNTAX UND PERIODENBAU: BEFUND + BELEG\n"
+                    f"2. LEXIK UND WORTFELDER: BEFUND + BELEG\n"
+                    f"3. TEXTUROBERFLÄCHE UND MATERIALITÄT: BEFUND + BELEG\n"
+                    f"4. RHYTHMUS UND KADENZ: BEFUND + BELEG\n"
+                    f"5. FIGUREN ALS SYNTAXPHÄNOMENE: BEFUND + BELEG\n"
+                    f"FREIER RAUM: Überraschende Beobachtung.\n"
+                    f"STIL-FAZIT: [Sprachliches Merkmal] — daher/weshalb [Wirkung]. 1-2 Sätze.\n"f"Aus Beobachtungen abgeleitet.\n"
+                    f"Beobachte SPRACHE, nicht Rhetorik. BEFUND = 1 Satz. BELEG = 1 Zitat. "
+                    f"Analysiere ORIGINALQUELLEN, NICHT obige Profile. "
+                    f"GLOBALE SYNTHESE wie oben."
+                )
+                prompt = prompt + compact_instruction
+        elif semantic_intent == "STILISTIC_DEEPENING":
+            # STILISTIC_DEEPENING-eigene Compact-Anweisung (konsistent mit structure_template)
+            if compact_mode == "partial":
+                compact_instruction = (
+                    f"\n\n⚠️ COMPACT-MODE PARTIAL — STILISTIC DEEPENING ({doc_count} Dokumente).\n"
+                    f"Für JEDES Dokument:\n"
+                    f"### QUELLE [N]: [Titel]\n"
+                    f"AUSGANGSBEFUND: [1-2 zentrale Stil-Befunde, max. 40 Wörter]\n"
+                    f"\n"
+                    f"FUNKTIONALE INTERPRETATION:\n"
+                    f"1. FUNKTION IM KONTEXT: [2-3 Sätze als fließender Text]\n"
+                    f"2. STRATEGIE DER MITTELWAHL: [1-2 Sätze als fließender Text]\n"
+                    f"3. TRADITION UND BRUCH: [2-3 Sätze]\n"
+                    f"\n"
+                    f"OPERATIVES URTEIL: 1 Satz: ‹Merkmal› funktioniert als ‹Funktion›, weil ‹Grund›.\n"
+                    f"\n"
+                    f"GLOBALE SYNTHESE: FUNKTIONALE KONVERGENZEN / "
+                    f"FUNKTIONALE DIVERZENZEN / WAHLVERWANDTSCHAFT DER FUNKTIONEN / STRUKTURELLES FAZIT."
+                )
+                prompt = prompt + compact_instruction
+            elif compact_mode == "full":
+                compact_instruction = (
+                    f"\n\n⚠️ COMPACT-MODE FULL — STILISTIC DEEPENING ({doc_count} Dokumente).\n"
+                    f"Für JEDES Dokument:\n"
+                    f"### QUELLE [N]: [Titel]\n"
+                    f"AUSGANGSBEFUND: [max. 40 Wörter]\n"
+                    f"FUNKTIONALE INTERPRETATION: [3-5 Sätze]\n"
+                    f"OPERATIVES URTEIL: [1 Satz]\n"
+                    f"\n"
+                    f"GLOBALE SYNTHESE wie oben."
+                )
+                prompt = prompt + compact_instruction
+            # Bei compact_mode=False (≤5 Dokumente): structure_template via YAML reicht
+        else:
+            # FORENSIC/ANALYTICAL-compact_instruction (unverändert)
+            if compact_mode == "partial":
+                compact_instruction = (
+                    f"\n\n⚠️ COMPACT-MODE PARTIAL ({doc_count} Dokumente).\n"
+                    f"Für JEDES Dokument NUR:\n"
+                    f"### QUELLE [N]: [Titel]\n"
+                    f"0. DOKUMENTTYP: [1 Satz]\n"
+                    f"1. BEFUND (max. {max_words_per_doc} Wörter)\n"
+                    f"2. MOTIV (max. {max_words_per_doc} Wörter)\n"
+                    f"3. KONSEQUENZ (max. {max_words_per_doc} Wörter)\n"
+                    f"4. FAZIT (max. {max_words_per_doc} Wörter)\n"
+                    f"WEGLASSEN: RHETORISCHE STRATEGIE.\n"
+                    f"GLOBALE SYNTHESE unverändert."
+                )
+                prompt = prompt + compact_instruction
+            elif compact_mode == "full":
+                compact_instruction = (
+                    f"\n\n⚠️ COMPACT-MODE FULL ({doc_count} Dokumente).\n"
+                    f"Für JEDES Dokument NUR:\n"
+                    f"### QUELLE [N]: [Titel]\n"
+                    f"1. BEFUND (max. {max_words_per_doc} Wörter)\n"
+                    f"2. FAZIT (max. {max_words_per_doc} Wörter)\n"
+                    f"KEIN: DOKUMENTTYP, RHETORISCHE STRATEGIE, FUNKTIONALES MOTIV, DISKURSIVE KONSEQUENZ.\n"
+                    f"GLOBALE SYNTHESE unverändert."
+                )
+                prompt = prompt + compact_instruction
 
         # 6. System-Instruction aus YAML holen (inkl. injizierter QUELLENREGEL)
         dynamic_sys_instruct = self.prompt_manager.get_system_instruction(semantic_intent)
@@ -1155,28 +2293,52 @@ Behalte Namen unverändert! """
     def _execute_llm_call(
         self, query: str, prompt: str, dynamic_sys_instruct: str, intent: str, 
         semantic_intent: str, top_results: List[Dict], top_results_sorted: List[Dict], 
-        rerank_stats: Dict, rejected_chunks: List[Dict]
-    ) -> Tuple[str, List[Dict], str]:
+        rerank_stats: Dict, rejected_chunks: List[Dict], extracted_quotes: list = None,
+        is_small_corpus: bool = False
+    ) -> Tuple[str, List[Dict], str, List[Dict]]:
         """Führt den LLM Call mit Retries durch und baut den Pipeline Trace."""
         
         logger.info(f"🔢 Token-Audit POST-TRIM: chunks_real= {sum(len(c.get('content','')) // 4 for c in top_results_sorted)} | n_chunks={len(top_results_sorted)}")
+
+        # extracted_quotes wird als Parameter übergeben, nicht intern erzeugt
 
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 synthesis_temp = 0.4 if semantic_intent in (
-                      "ANALYTICAL_FORENSIC", "META_ANALYTICAL"
+                      "ANALYTICAL_FORENSIC", "META_ANALYTICAL", "STILISTIC", "STILISTIC_DEEPENING"
                 ) else 0.7
 
-                logger.info(f"🚀 Starte Synthese-Call (Versuch {attempt+1}, max_tokens={MAX_TOKENS_PER_CALL}, temp={synthesis_temp})...")
+                # Fix D: Dynamisches Token-Limit für ESSENCE_PARITY mit >5 Docs
+                dynamic_max_tokens = MAX_TOKENS_PER_CALL
+                if is_small_corpus:
+                    # SMALL-CORPUS: Bei wenigen Chunks braucht das Modell weniger
+                    # Input, aber genauso viel Output-Space für eine vollständige Analyse
+                    dynamic_max_tokens = MAX_TOKENS_PER_CALL  # 8192 reicht
+                    # ANALYTICAL-Temperatur: 0.4 statt 0.7 für präzisere Vergleiche
+                    if semantic_intent == "ANALYTICAL":
+                        synthesis_temp = 0.4
+                        logger.info(f"🧊 Small-Corpus: temp={synthesis_temp} für präzisen Vergleich")
+                elif intent in ("ESSENCE_PARITY", "STILISTIC_DEEPENING"):
+                    doc_count = len(set(r.get('chat_id') for r in top_results_sorted))
+                    if doc_count > 5:
+                        # Pro zusätzlichem Doc ~1500 Tokens mehr (6→9592, 8→12592, 10→15592)
+                        dynamic_max_tokens = min(
+                            MAX_TOKENS_PER_CALL + (doc_count - 5) * 1500,
+                            16384
+                        )
+                        logger.info(f"📈 Fix D: Token-Limit erhöht auf {dynamic_max_tokens} ({doc_count} Docs)")
 
-                from modules.config import DOMAIN_ANALYSIS
+                logger.info(f"🚀 Starte Synthese-Call (Versuch {attempt+1}, max_tokens={dynamic_max_tokens}, temp={synthesis_temp})...")
+
+                from modules.config import DOMAIN_PROFILES, DOMAIN_ANALYSIS
+                _profile = DOMAIN_PROFILES.get(DOMAIN_ANALYSIS, {})
                 result = self._llm_call_func(
                     prompt,
                     task="synthesis",
                     system_instruction=dynamic_sys_instruct,
                     temperature=synthesis_temp,
-                    max_tokens=MAX_TOKENS_PER_CALL,
+                    max_tokens=dynamic_max_tokens,
                     domain=DOMAIN_ANALYSIS,
                 )
 
@@ -1256,18 +2418,19 @@ Behalte Namen unverändert! """
                     "essence_parity":   (intent == "ESSENCE_PARITY"),
                     "chunk_table":      _chunk_table,
                     "rejected_chunks":  rejected_chunks,
+                    "extraction_failures": getattr(self, '_extraction_failures', []),  # v57
                     "timestamp":        __import__('time').time()
                 }
-                return final_text, top_results_sorted, intent
+                return final_text, top_results_sorted, intent, extracted_quotes
 
             except Exception as e:
                 logger.error(f"⚠️ API Versuch {attempt+1} fehlgeschlagen: {e}")
                 if attempt < max_retries - 1:
                     time.sleep((attempt + 1) * 2)
                     continue
-                return f"❌ Fehler: {e}", top_results_sorted, intent
+                return f"❌ Fehler: {e}", top_results_sorted, intent, []
 
-        return "❌ LLM nicht verfügbar.", top_results_sorted, intent
+        return "❌ LLM nicht verfügbar.", top_results_sorted, intent, []
 
     def split_thought_and_speech(self, text: str) -> Tuple[str, str]:
         """Trennt Thinking-Blocks."""
@@ -1283,24 +2446,35 @@ Behalte Namen unverändert! """
         return "", text
 
     def validate_citations(self, answer: str, num_sources: int) -> List[str]:
-        """Struktureller Citation-Check."""
+        """Struktureller Citation-Check - unterstützt [X] und <ZITAT quelle="X">."""
         warnings = []
 
-        matches = re.findall(r"\[(\d+)\]", answer)
+        # 1. Prüfe klassische [X] Zitate
+        bracket_matches = re.findall(r"\[(\d+)\]", answer)
+        
+        # 2. Prüfe neue <ZITAT quelle="X"> Tags
+        zitat_matches = re.findall(r'<ZITAT quelle="(\d+)">', answer)
+        
+        # 3. Kombiniere alle Zitate
+        all_matches = bracket_matches + zitat_matches
 
-        if not matches:
+        if not all_matches:
             warnings.append("⚠️ Warnung: Keine Zitationen gefunden.")
             return warnings
 
-        for m in matches:
-            idx = int(m)
-            if idx < 1 or idx > num_sources:
-                warnings.append(f"⚠️ Ungültige Zitation: [{idx}]")
+        # 4. Validiere alle Quellennummern
+        for m in all_matches:
+            try:
+                idx = int(m)
+                if idx < 1 or idx > num_sources:
+                    warnings.append(f"⚠️ Ungültige Zitation: [{idx}]")
+            except ValueError:
+                warnings.append(f"⚠️ Ungültiges Zitatformat: {m}")
 
         return warnings
 
     def verify_fact_match(
-        self, claim: str, source_text: str, source_meta: Dict
+        self, claim: str, source_text: str, source_meta: Dict, extracted_quotes: list = None
     ) -> Tuple[bool, str]:
         """Tiefenprüfung via Enforcer (FINAL FIX v50.9)."""
         try:
@@ -1313,7 +2487,7 @@ Behalte Namen unverändert! """
 
             # 1. Aufruf (Name ist korrekt: validate_claim)
             from modules.config import DOMAIN_ANALYSIS
-            result = enforcer.validate_claim(claim=claim, sources=sources, domain=DOMAIN_ANALYSIS)
+            result = enforcer.validate_claim(claim=claim, sources=sources, domain=DOMAIN_ANALYSIS, extracted_quotes=extracted_quotes)
 
             # 2. Ergebnis verarbeiten (Dict vs Tuple)
             if isinstance(result, dict):
@@ -1345,7 +2519,7 @@ Behalte Namen unverändert! """
             return True, f"ENFORCER ERROR (Validation failed): {e}"
 
     def verify_fact_match_multisource(
-        self, claim: str, sources: List[Dict]
+        self, claim: str, sources: List[Dict], extracted_quotes: list = None
     ) -> Tuple[bool, str]:
         """Multi-Source-Validierung: Jedes Zitat muss in mindestens einer Quelle stehen."""
         try:
@@ -1370,7 +2544,7 @@ Behalte Namen unverändert! """
             return True, f"ENFORCER ERROR (Validation failed): {e}"
 
     async def verify_facts_parallel(
-        self, sentences: List[str], results: List[Dict], progress_callback=None
+        self, sentences: List[str], results: List[Dict], progress_callback=None, extracted_quotes: list = None
     ) -> List[Dict]:
         """Parallele Faktenprüfung."""
         sem = asyncio.Semaphore(5)
@@ -1383,68 +2557,77 @@ Behalte Namen unverändert! """
             async with sem:
                 loop = asyncio.get_running_loop()
 
+                # Zitierte Quellen-Nummern extrahieren
                 matches = re.findall(r"\[(\d+)\]", sent)
                 if not matches:
+                    completed += 1
+                    if progress_callback:
+                        progress_callback(completed / total)
                     return None
 
-                results_for_sentence = []
+                results_for_sentence = []  # ← IMMER initialisieren
 
-                # NEU v50.9: Multi-Source-Erkennung
-                if len(matches) > 1:
-                    # Satz zitiert mehrere Quellen → gemeinsam prüfen
-                    all_sources = []
-                    for m in matches:
-                        idx = int(m) - 1
-                        if 0 <= idx < len(results):
-                            all_sources.append(
-                                {
-                                    "content": results[idx].get("content", ""),
-                                    "metadata": results[idx].get("metadata", {}),
-                                    "source_id": m,
-                                }
-                            )
-                    if all_sources:
-                        is_valid, reason = await loop.run_in_executor(
-                            None,
-                            partial(
-                                self.verify_fact_match_multisource, sent, all_sources
-                            ),
+                # ── Structural Marker Filter ──
+                # Überschriften wie "0. DOKUMENTTYP:", "1. BEFUND:" etc.
+                # nicht als Claims validieren — spart LLM-Calls und vermeidet Rauschen
+                if self._enforcer and hasattr(self._enforcer, '_is_structural_marker'):
+                    if self._enforcer._is_structural_marker(sent):
+                        completed += 1
+                        if progress_callback:
+                            progress_callback(completed / total)
+                        return None
+
+                # ── source_id-basierte Lookup ──
+                unique_doc_nums = list(set(int(m) for m in matches))
+
+                # Alle Chunks aus ALLEN zitierten Dokumenten sammeln
+                all_enforcer_sources = []
+                for doc_num in unique_doc_nums:
+                    matching_chunks = [
+                        r for r in results
+                        if r.get('source_id') == doc_num
+                    ]
+                    if not matching_chunks:
+                        logger.warning(
+                            f"⚠️ Keine Chunks mit source_id={doc_num} "
+                            f"gefunden für Zitat [{doc_num}]"
                         )
-                        results_for_sentence.append(
-                            {
-                                "sentence": sent,
-                                "source_id": "+".join(matches),
-                                "valid": is_valid,
-                                "reason": reason,
-                            }
-                        )
-                else:
-                    # Satz zitiert eine Quelle → bisherige Logik
-                    m = matches[0]
-                    idx = int(m) - 1
-                    if 0 <= idx < len(results):
-                        source_content = results[idx].get("content", "")
-                        source_meta = results[idx].get("metadata", {})
-                        is_valid, reason = await loop.run_in_executor(
-                            None,
-                            partial(
-                                self.verify_fact_match,
-                                sent,
-                                source_content,
-                                source_meta,
-                            ),
-                        )
-                        results_for_sentence.append(
-                            {
-                                "sentence": sent,
-                                "source_id": m,
-                                "valid": is_valid,
-                                "reason": reason,
-                            }
-                        )
+                        continue
+
+                    for chunk in matching_chunks:
+                        all_enforcer_sources.append({
+                            "content": chunk.get("content", ""),
+                            "metadata": chunk.get("metadata", {}),
+                            "source_id": str(doc_num),
+                        })
+
+                if not all_enforcer_sources:
+                    completed += 1
+                    if progress_callback:
+                        progress_callback(completed / total)
+                    return None
+
+                # ── EIN einziger Aufruf mit ALLEN Quellen ──
+                # Egal ob 1 oder 5 Dokumente zitiert werden — 
+                # der Enforcer bekommt ALLES auf einmal
+                is_valid, reason = await loop.run_in_executor(
+                    None,
+                    partial(
+                        self.verify_fact_match_multisource,
+                        sent,
+                        all_enforcer_sources
+                    ),
+                )
+                results_for_sentence.append(
+                    {
+                        "sentence": sent,
+                        "source_id": "+".join(str(n) for n in sorted(unique_doc_nums)),
+                        "valid": is_valid,
+                        "reason": reason,
+                    }
+                )
 
                 completed += 1
-
                 if progress_callback:
                     progress_callback(completed / total)
 

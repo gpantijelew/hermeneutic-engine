@@ -200,7 +200,7 @@ CREATE INDEX IF NOT EXISTS idx_chunk_registry_chat_seq
 # SINGLETON-VERBINDUNG (Robust: Streamlit + Skripte + Migrations-Tools)
 # ==============================================================================
 _db_connection: Optional[sqlite3.Connection] = None
-_db_lock = threading.Lock()
+_db_lock = threading.RLock()   # Reentrant: verhindert Deadlock bei verschachtelten @_db_write-Aufrufen
 
 
 def _close_db():
@@ -391,7 +391,7 @@ def create_chat(title: str = "Neuer Chat") -> Optional[str]:
 @_db_write
 def save_message(
     chat_id: str, role: str, content: str, metadata: Optional[Dict] = None
-) -> bool:
+) -> Optional[str]:
     """
     Speichert eine Nachricht.
     Identische Signatur inkl. metadata-Support.
@@ -426,22 +426,20 @@ def save_message(
             pass
         return None
 
-@_db_write
 def delete_chat(chat_id: str) -> bool:
     """
     Löscht Chat + Nachrichten + Embeddings + Registry.
-    v54.1: Defense-in-Depth — SQLite-Registry wird explizit vor ChromaDB gelöscht,
-    damit Geister-Vektoren bei ChromaDB-Fehlschlag nicht zu Inkonsistenzen führen.
+    v54.2: @_db_write ENTFERNT, um Deadlock bei ChromaDB-Calls zu verhindern.
+    DB-Schreibzugriffe werden intern durch 'with _db_lock:' abgesichert.
+    ChromaDB-Aufruf erfolgt AUSSERHALB des Locks (wie generate_and_update_title).
     """
-    # --- SCHRITT 1: SQLite Registry bereinigen (schnell, zuverlässig) ---
-    try:
-        unregister_chat_chunks(chat_id)
-    except Exception as e:
-        logger.warning(f"⚠️ Registry-Löschung für Chat {chat_id[-8:]} fehlgeschlagen: {e}")
+    # --- SCHRITT 1: SQLite Registry + Nachrichten + Chat löschen (INNERHALB Lock) ---
+    with _db_lock:
+        try:
+            unregister_chat_chunks(chat_id)
+        except Exception as e:
+            logger.warning(f"⚠️ Registry-Löschung für Chat {chat_id[-8:]} fehlgeschlagen: {e}")
 
-    # --- SCHRITT 2: SQL Löschung mit Auto-Retry ---
-    max_retries = 2
-    for attempt in range(max_retries):
         db = get_db_connection()
         if db is None:
             return False
@@ -452,23 +450,14 @@ def delete_chat(chat_id: str) -> bool:
             db.execute("DELETE FROM chats WHERE id = ?", (chat_id,))
             db.commit()
             logger.info(f"🗑️ Chat {chat_id[-8:]} inkl. SQL-Daten gelöscht.")
-            break
         except sqlite3.OperationalError as e:
-            logger.warning(f"⚠️ Delete Chat Versuch {attempt+1} fehlgeschlagen (OperationalError): {e}")
+            logger.warning(f"⚠️ Delete Chat fehlgeschlagen (OperationalError): {e}")
             try:
                 db.rollback()
             except Exception:
                 pass
-            global _db_connection
-            if _db_connection:
-                try:
-                    _db_connection.close()
-                except Exception:
-                    pass
-            _db_connection = None
-            if attempt == max_retries - 1:
-                _st_error(f"Fehler beim Löschen des Chats (selbst nach DB-Reset): {e}")
-                return False
+            _st_error(f"Fehler beim Löschen des Chats: {e}")
+            return False
         except Exception as e:
             try:
                 db.rollback()
@@ -477,7 +466,9 @@ def delete_chat(chat_id: str) -> bool:
             _st_error(f"Unerwarteter Fehler beim Löschen des Chats: {e}")
             return False
 
-    # --- SCHRITT 3: ChromaDB bereinigen (best-effort, async-safe) ---
+    # --- SCHRITT 2: ChromaDB bereinigen (AUSSERHALB Lock, best-effort) ---
+    # WICHTIG: delete_chat_embeddings darf KEINE @_db_write-Funktionen
+    # aus database.py aufrufen! Siehe Fix 3 in vector_store.py.
     try:
         from modules.vector_store import LocalVectorStore
         vs = LocalVectorStore()
@@ -485,7 +476,7 @@ def delete_chat(chat_id: str) -> bool:
     except Exception as e:
         logger.warning(
             f"⚠️ ChromaDB-Löschung für Chat {chat_id[-8:]} fehlgeschlagen. "
-            f"Starte App neu oder nutze 'System-Health' zum Aufräumen. Fehler: {e}"
+            f"Fehler: {e}"
         )
 
     return True
@@ -506,8 +497,10 @@ def update_message_content(msg_id: str, new_content: str) -> bool:
         return True
     except Exception as e:
         logger.error(f"❌ Fehler beim Updaten der Nachricht: {e}")
-        try: db.rollback()
-        except: pass
+        try:
+            db.rollback()
+        except Exception as rollback_error:
+            logger.error(f"❌ Rollback fehlgeschlagen: {rollback_error}")
         return False
 
 @_db_write
@@ -522,8 +515,10 @@ def delete_messages_after(chat_id: str, timestamp: str) -> bool:
         return True
     except Exception as e:
         logger.error(f"❌ Fehler bei Zeitreise-Löschung: {e}")
-        try: db.rollback()
-        except: pass
+        try:
+            db.rollback()
+        except Exception as rollback_error:
+            logger.error(f"❌ Rollback fehlgeschlagen: {rollback_error}")
         return False
 
 @_db_write
@@ -538,8 +533,10 @@ def delete_message_by_id(msg_id: str) -> bool:
         return True
     except Exception as e:
         logger.error(f"❌ Fehler beim Löschen der Nachricht: {e}")
-        try: db.rollback()
-        except: pass
+        try:
+            db.rollback()
+        except Exception as rollback_error:
+            logger.error(f"❌ Rollback fehlgeschlagen: {rollback_error}")
         return False
 
 @_db_write
@@ -556,8 +553,10 @@ def delete_messages_by_ids(ids: list) -> bool:
         return True
     except Exception as e:
         logger.error(f"❌ Fehler beim Bulk-Löschen: {e}")
-        try: db.rollback()
-        except: pass
+        try:
+            db.rollback()
+        except Exception as rollback_error:
+            logger.error(f"❌ Rollback fehlgeschlagen: {rollback_error}")
         return False
 
 @_db_write
@@ -1040,7 +1039,6 @@ def mark_reviewed(
     if db is None:
         return False
     try:
-        from datetime import datetime
         before = db.total_changes
         db.execute(
             """UPDATE enforcer_reviews

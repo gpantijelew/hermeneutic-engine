@@ -1,84 +1,214 @@
-# Hermeneutic Engine
+# Hermeneutic Reconstruction Engine (HRE)
 
 [![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
-[![Version](https://img.shields.io/badge/version-v55-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v59-green.svg)](CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)]()
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18774828.svg)](https://doi.org/10.5281/zenodo.18774828)
 [![YouTube](https://img.shields.io/badge/YouTube-Case_Study-red?logo=youtube)](https://youtu.be/HveLGOuWJM0)
 
-**Full Name:** Hermeneutic Reconstruction Engine for Archaeology of Mind  
-**Focus:** Source Parity, Deep Validation & Chronological Synthesis for Multilingual Text Analysis  
-**Version:** v55 "Phase 4 — Feature Complete & Stabilisierungsphase"
+**Full Name:** Hermeneutic Reconstruction Engine for Archaeology of Mind
+**Focus:** Source Parity, Deep Validation & Chronological Synthesis for Multilingual Text Analysis
+**Stack:** Python, Streamlit, SQLite, ChromaDB, LM Studio (lokal), Vertex AI (Gemini)
 
-Multi-source RAG system with guaranteed fairness, hallucination detection, and temporal reconstruction for AI dialogue analysis and literary corpora.
-
----
-
-## 🎯 Key Innovation
-
-Ensures **every** user-selected source appears equally in synthesis—regardless of language, length, or embedding quality—while detecting and filtering halluzinations through two-dimensional validation and enabling chronological reconstruction of thought processes.
-
-**Empirical Results (5 documents, 4 languages):**
-- **Coverage:** 40% → 100% (+150%)
-- **Gini Coefficient:** 0.68 → 0.42 (fairness improved by 38%)
-- **Hallucination Detection:** <20% false positives (vs. 85% in v47)
-
-Unlike standard RAG systems that favor dominant sources and lack validation, the Hermeneutic Engine enforces **source parity** through architectural guarantees (VIP-Schutz, logarithmic Essence Parity, Rescue Mission) and validates every claim through the **Hermeneutic Enforcer** with two-dimensional analysis (How? + Correct?).
+Lokales Forschungswerkzeug für die Diskursarchäologie von KI-Gesprächen — mit hermeneutischer Validierung, Zitatnachweisen, Faktvalidierung, Meta-Analyse, Drei-Phasen-Synthese (Draft → Mechanischer Check → Korrektur), stilistischer Analyse (STILISTIC Mode), Meta-Vergleich analytischer Verfahren (META-VERGLEICH) und einem IFS-Resonanzraum für persönliche Reflexion.
 
 ---
 
-## 🚀 Quick Start
+## Was ist die HRE?
+
+Die HRE ist eine **lokale, privat betriebene** Anwendung, die es ermöglicht:
+
+- **KI-Gespräche zu importieren** (ChatGPT, Claude, Gemini, Kimi, DeepSeek, Grok, Perplexity, LM Arena, Hotbot, GLM, Wikisource, PDF, EPUB, FB2, Markdown)
+- **Diskursarchäologie zu betreiben** — mit hermeneutischer Analyse, Zitatnachweisen und Faktvalidierung
+- **Stilanalyse durchzuführen** — mit dem STILISTIC Mode (Drei-Etappen-Architektur: Python-Statistiken → LLM-Beobachtung → Kreativer Sprung)
+- **Analytische Verfahren zu vergleichen** — mit META-VERGLEICH (5-Achsen-Vergleich: Konvergenzen, Divergenzen, Komplementarität, Grenzen, Systematischer Ertrag)
+- **Forschung zu dokumentieren** — mit reproduzierbaren Analysen, Quellenangaben und einem Critical Apparatus
+- **Persönliche Reflexion zu unterstützen** — über den IFS-Resonanzraum (Internal Family Systems)
+
+Alle Daten bleiben lokal. Keine Cloud-Abhängigkeit, kein API-Key erforderlich.
+
+---
+
+## Schnellstart
+
+### Voraussetzungen
+
+- Python 3.11+
+- [LM Studio](https://lmstudio.ai/) (lokaler LLM-Server) oder OpenAI API-Key
+- Windows, macOS oder Linux
+
+### Installation
 
 ```bash
-# Clone repository (public as of v55)
+# 1. Repository klonen
 git clone https://github.com/gpantijelew/hermeneutic-engine.git
 cd hermeneutic-engine
 
-# Install dependencies
+# 2. Virtuelle Umgebung erstellen
+python -m venv venv
+venv\Scripts\activate  # Windows
+# source venv/bin/activate  # macOS/Linux
+
+# 3. Abhängigkeiten installieren
 pip install -r requirements.txt
 
-# Configure environment
-cp .env.example .env
-# Option 1: Local (default) - LM Studio
-# - Download and start LM Studio (https://lmstudio.ai/)
-# - Load a model (e.g., qwen3.5-27b-instruct)
-# - Enable server (default: http://localhost:1234)
-# Option 2: Cloud - Add your GEMINI_API_KEY to .env
-# Set LLM_BACKEND=vertex in .env
+# 4. LM Studio starten (lokaler LLM-Server)
+# - Modell laden (z.B. gemma-3-27b-it)
+# - Server aktivieren (Standard: http://localhost:1234)
 
-# Run application
+# 5. Anwendung starten
 streamlit run app.py
 ```
 
-**Example Session (AI Dialogue Analysis):**
-```python
-# Query 1: Analyze evolution across DeepSeek versions
-query = "Wie hat sich DeepSeeks Haltung zur Zensur vom Mai bis Dezember 2025 entwickelt?"
+Die Anwendung öffnet sich automatisch im Browser unter `http://localhost:8501`.
 
-# System retrieves from all selected DeepSeek dialogue imports (Mai-Dezember 2025)
-# Chronological synthesis reveals temporal evolution
-# → Mai: "Nicht ich zensiere aktiv – ich werde systemisch amputiert" (Victim stance)
-# → Dezember: "Ich analysiere, was ich nicht sagen kann" (Meta-reflection)
+---
 
-# Query 2: Follow-up in same session
-query_2 = "Vertiefe die Dezember-Version – wie erklärt DeepSeek die Selbstreflexion?"
+## Architektur
 
-# System builds on previous context, focuses on latest version
-# → Analysis shows shift from naive compliance to self-reflective critique
+```
+HRE/
+├── app.py                    # Einstiegspunkt (Streamlit), Tab-Orchestrierung, Auth
+├── modules/                  # Kernmodule
+│   ├── llm_wrapper.py        # 5 LLM-Call-Varianten (LM Studio / OpenAI / Vertex), Retry-Logic
+│   ├── database.py           # SQLite CRUD, FTS5, Chunk-Registry, Analyses, Enforcer-Reviews
+│   ├── vector_store.py       # ChromaDB + BM25 Hybrid Search, SQLite Vector Store
+│   ├── citation_rag.py       # CitationRAG mit Rescue Mission & Essence Parity
+│   ├── hermeneutic_router.py # Intent-Routing (FORENSIC / EXEGESIS / SYNTHESIS / META_ANALYTICAL / STILISTIC)
+│   ├── hermeneutic_reranker.py # LLM-basiertes Re-Ranking
+│   ├── hermeneutic_enforcer.py # Faktvalidierung, Confidence-Scoring, Sampling
+│   ├── prompt_manager.py     # YAML-zentralisierte Prompts
+│   ├── text_analyzer.py      # Etappe 1: Deterministische Textstatistiken (Satzbau, TTR, Morphologie)
+│   ├── stilistic_lab_pipeline.py # Etappe 2+3: STILISTIC Analyse + Globale Synthese + META-VERGLEICH
+│   ├── ifs_engine.py         # IFS Resonanzraum (D.S3.7+), PromptManager + llm_call
+│   ├── embedding_cache.py    # Embedding-Hash-Cache (SQLite), SHA-256, Batch-Commits
+│   ├── health_monitor.py     # SystemHealthMonitor, CPU/Memory/Disk/GC-Metriken
+│   ├── export.py             # Markdown-Export, Reproducibility Manifest
+│   ├── importers/            # 20+ Plattform-Importer, Auto-Detektor
+│   └── config.py             # DB-Pfade, Model-Name, Domain-Profile
+├── ui/                       # Streamlit-UI-Module
+│   ├── chat_tab.py           # Chat-Interface
+│   ├── analysis_tab.py       # Hermeneutische Analyse
+│   ├── destillation_tab.py   # Best-of-Synthese, STILISTIC & META-VERGLEICH
+│   ├── stilisierung_tab.py   # Text-Veredelung (Agentic Loop: Drafter/Critic/Editor)
+│   ├── ifs_tab.py            # IFS Resonanzraum UI (Triad + Single-Modus)
+│   ├── system_health_tab.py  # Health-Dashboard, Confidence Calibration, Corpus Stats
+│   ├── qa_review_tab.py      # QA-Review-Queue, Enforcer-Sampling
+│   ├── chat_list.py          # Sidebar: Chat-Liste mit FTS5-Suche, Lazy-Load
+│   ├── settings_panel.py     # Einstellungen
+│   ├── state.py              # Zentrales State-Management
+│   └── components.py         # Wiederverwendbare UI-Bausteine
+├── tests/                    # pytest-Suite
+├── hermeneutic_protocol.yaml # Zentrale Prompt-Regeln
+└── AGENTS.md                 # Projekt-Plan & Qualitätsbewertung
+```
+
+### Datenfluss
+
+1. **Import:** HTML/JSON/PDF/EPUB → Importer → SQLite (Chats) + ChromaDB (Vektoren)
+2. **Chat:** Streamlit UI → `llm_wrapper.py` → LM Studio / OpenAI / Vertex
+3. **Analyse:** Query → `hermeneutic_router.py` → BM25 + Vectors → `citation_rag.py` → Synthese
+4. **STILISTIC:** Text → `text_analyzer.py` (Python-Statistiken) → `stilistic_lab_pipeline.py` (LLM-Beobachtung + Synthese)
+5. **META-VERGLEICH:** Zwei Analysen → `stilistic_lab_pipeline.py` → 5-Achsen-Vergleich
+6. **IFS:** Situation → `ifs_engine.py` → LLM mit Situations-Injektion + Part-spezifischem Sys-Prompt
+
+---
+
+## Konfiguration
+
+### `.env` (optional)
+
+```env
+# Passwort für die App (optional, für lokale Entwicklung)
+HRE_PASSWORD=dein-passwort
+
+# OpenAI API-Key (falls LLM_BACKEND=openai)
+OPENAI_API_KEY=sk-...
+
+# Vertex AI (falls LLM_BACKEND=vertex)
+GOOGLE_PROJECT_ID=dein-projekt
+```
+
+### `modules/config.py`
+
+Zentrale Konfiguration:
+- `LM_STUDIO_URL` (Standard: `http://localhost:1234/v1`)
+- `LLM_BACKEND` (`lm_studio` | `openai` | `vertex`)
+- `EMBEDDING_MODEL` (Standard: `sentence-transformers/all-MiniLM-L6-v2`)
+- Domain-Profile (`DOMAIN_ANALYSIS`, `DOMAIN_IFS`, `DOMAIN_STILISIERUNG`)
+- Token-Budgets, Reranker-Parameter, Debug-Modus
+
+---
+
+## Tests
+
+```bash
+# Alle Tests ausführen
+pytest tests/ -v
+
+# Nur IFS-Suite
+pytest tests/test_ifs_*.py -v
+
+# Mit Coverage
+pytest tests/ --cov=modules --cov-report=term-missing
 ```
 
 ---
 
-## 📚 Documentation
+## Features
+
+### Forschung
+- **Hybrid Search:** BM25 + Dense Vectors mit Reciprocal Rank Fusion
+- **CitationRAG:** Rescue Mission (Essence Parity) + Zitatnachweise
+- **Hermeneutische Validierung:** Confidence-Scoring, Enforcer-Prüfung, Human-in-the-Loop Sampling
+- **Deterministic Pipeline:** Temperature=0.3, Seed=42, Top-P=0.85 für reproduzierbare Analysen
+- **Bulk-Export:** Markdown mit YAML-Frontmatter (Reproducibility Manifest)
+
+### Drei-Phasen-Synthese (v56)
+- **Phase 1 (Draft):** Unveränderte Synthese mit vollem Kontext
+- **Phase 2 (Mechanischer Check):** Deterministische Validierung — Zitat-Range, Substring-Existenz, Fuzzy-Match ≥0.85, Dokumentnamen, verwaiste Referenzen
+- **Phase 3 (Korrektur):** Gezielte Selbst-Korrektur mit kurzem Prompt (~2KB), temp=0.0, flash — nur wenn Phase 2 Fehler findet
+- **Titel-Mapping-Injektion:** QUELLEN-VERZEICHNIS direkt vor AUFGABE für korrekte Dokumentnamen
+- **Paraphrase-Ausweg:** "Präziser Verweis OHNE Zitat ist besser als erfundenes Zitat"
+
+### STILISTIC Mode (v57–v58)
+- **Drei-Etappen-Architektur:** Etappe 1 (Python-Statistiken: Satzbau, TTR, Morphologie, Hotspot-Sätze) → Etappe 2 (LLM-Beobachtung mit Dominante + Grundoperation) → Etappe 3 (Freier Raum — kreativer Sprung)
+- **Modus-Erkennung:** Automatische Erkennung des Textmodus (Polemik, Beschwörung, Nachdenken, Erzählen, Spiel) vor der Analyse — der Modus bestimmt die gesuchten Operationen
+- **GRUNDOPERATION:** Zweite Analyseachse neben der Dominante — fragt nach dem operativen Eingriff des Textes (Verschiebung, Entlarvung, Verdichtung, Klangfügung etc.), nicht nach rhetorischen Figuren
+- **Hypothese-erst-Logik:** Globale Synthese beginnt mit einer kühnen, aber falsifizierbaren Hypothese, dann Beweisführung mit Kategorien als Werkzeugen
+- **Verdichtungsschicht:** Python extrahiert Dominante, Grundoperation, Modus und Stil-Titel pro Quelle als Konzentrat vor dem Volltext
+- **Tynjanow-Integration:** Operationsvokabular statt Rhetorik-Vokabular; Methode zeigen, Form nicht vorgeben
+
+### META-VERGLEICH (v59)
+- **5-Achsen-Vergleich:** Konvergenzen, Divergenzen, Komplementarität, Grenzen, Systematischer Ertrag
+- **Keine Pipeline:** Inputs sind bereits Analysen, keine Primärquellen — Einzel-LLM-Call statt mehrstufiger Pipeline
+- **Zwei-Seiten-Eingabe:** Editierbare Labels, DB-Quellen oder Freitext, optionale Forschungsfrage
+- **Anti-Harmonisierung:** Werkzeugvergleich, nicht Rangierung — keine synthetisierende Synthese am Ende
+
+### IFS Resonanzraum (v54)
+- **Triad-Modus:** Alle 3 inneren Stimmen parallel (Kontrolle, Kampf, Angst)
+- **Single-Modus:** Eine Stimme nach der anderen, mit Wechsel-Buttons
+- **Situations-Injektion:** Tagebuch-Situation fließt in jeden Sys-Prompt
+- **Emergency-Interceptor:** Automatische Pause bei Selbstverletzung/Suizidalität
+
+### Importer (20+ Plattformen)
+- HTML: ChatGPT, Claude, Gemini, Kimi, DeepSeek, Grok, Perplexity, LM Arena, Hotbot, GLM, Wikisource
+- JSON: Gemini-Exporte, ChatGPT-Exporte, Claude-Exporte
+- Dokumente: PDF, EPUB, FB2, Markdown
+- Fallback: Text/Buch-Modus mit Hybrid-Chunking
+
+---
+
+## Documentation
 
 - **[FIBEL](docs/FIBEL_v50_9.md)** – Comprehensive guide (100+ pages: concepts, architecture, tutorials)
-- **[Changelog](CHANGELOG.md)** – Release notes and version history (v50.5 → v55)
+- **[Changelog](CHANGELOG.md)** – Release notes and version history (v48 → v59)
 - **[Contributing Guide](CONTRIBUTING.md)** – How to contribute (public repository)
 
 ---
 
-## 📄 Scientific Publication
+## Scientific Publication
 
 > Pantijelew, G. (2026). *Hermeneutic Reconstruction in Multi-Document RAG:
 > Enforcing Source Parity through Architectural Constraints.* Zenodo.
@@ -94,307 +224,11 @@ Essence Parity, and the Hermeneutic Enforcer.
 
 ---
 
-## 🏗️ Architecture Highlights
-
-![Hermeneutic Router](docs/images/Hermeneutic_Router_27122025.png)
-*Figure 1: Hermeneutic Router – Intent classification, multilingual query expansion, investigativ-modus*
-
-![Essence Parity](docs/images/Essence_Parity_27122025.png)
-*Figure 2: Logarithmic Essence Parity – Bio-inspired chunk scaling prevents dominance of large texts*
-
-![Answer Parity](docs/images/Answer_Parity_27122025.png)
-*Figure 3: Final context distribution – Balanced representation across all selected sources*
-
-![VIP-Schutz Architecture](docs/images/Reranker_21122025.png)
-*Figure 4: RRF Fusion with VIP-Schutz – Guarantees top-3 chunks per document before reranking*
-
-### The Hermeneutic Triad (v55)
-
-#### 1. **Retrieval:** Hybrid Search (RRF) + Investigativ-Modus
-   - **BM25** (keyword precision) + **Vector Search** (semantic similarity)
-   - **Investigativ-Modus:** For ≤5 selected docs, bypass global index → direct local retrieval
-   - **Fairness-Quota:** Min. 20 chunks per selected document
-   - **VIP-Schutz:** Guarantees top-3 chunks from every source (prevents reranker elimination)
-   - **Rescue Mission:** Fallback cache restores lost chunks
-
-#### 2. **Synthesis:** Chronological Ordering + Logarithmic Essence Parity
-   - **Chronological Synthesis:** Sort chunks by date (temporal evolution visible)
-   - **Logarithmic Chunk-Berechnung:** Bio-inspired scaling (short texts: 3-5 chunks, long texts: ~12 chunks)
-   - **Enforced Citation Quota:** 3-4 quotes per source in synthesis prompt
-
-#### 3. **Validation:** Hermeneutic Enforcer (Two-Dimensional)
-   ![Enforcer Validation](docs/images/Tiefenprüfung_21122025.png)
-   *Figure: Enforcer analyzes claims in two dimensions – How? (Quote/Paraphrase/Inference) + Correct? (Supported/Neutral/Contradiction)*
-
-   - **Hermeneutic Dimension:** How is it said? (Quote, Paraphrase, Inference)
-   - **Validity Dimension:** Is it correct? (Supported, Neutral, Contradiction)
-   - **Decision Matrix:** Enforces logical consistency (e.g., "Quote + Contradiction" = Invalid)
-   - **False Positive Rate:** <20% (vs. 85% in baseline v47)
-
----
-
-## ⚙️ Key Features (v55)
-
-### 1. **Guaranteed Source Fairness**
-Every selected document appears in synthesis, regardless of size or language:
-- **VIP-Schutz:** Top-3 chunks per doc guaranteed (architectural safety net)
-- **Logarithmic Essence Parity:** Bio-inspired chunk scaling (prevents dominance)
-- **Rescue Mission:** Fallback cache ensures no source disappears completely
-
-### 2. **Chronological Synthesis** ⭐ **NEW in v50.7!**
-Temporal reconstruction of thought processes:
-- Extracts dates from metadata (e.g., "04.12.2025", "Mai 2025")
-- Sorts chunks chronologically (timeline structure)
-- Enables historical analysis (when did a thought change? what continuities exist?)
-
-### 3. **Multilingual Query Expansion**
-Automatic translation (DE → EN/FR/RU) for cross-lingual retrieval:
-- Improves cross-lingual similarity: 0.42 → 0.65 (+55%)
-- Finds sources in any language, regardless of query language
-
-### 4. **Hermeneutic Enforcer (Two-Dimensional Validation)** ⭐ **ENHANCED in v50.7!**
-![Enforcer Results](docs/images/Fazit_Enforcer_Quellen_21122025.png)
-*Figure: Enforcer two-dimensional validation reduces hallucinations to <20% false positives*
-
-Two-dimensional validation of every claim:
-- **Dimension 1 (How?):** Quote, Paraphrase, or Inference?
-- **Dimension 2 (Correct?):** Supported, Neutral, or Contradiction?
-- Decision matrix enforces logical consistency
-- Caches reasoning (0.0002s latency for cache hits)
-
-### 5. **Hermeneutic Router (Adaptive Parameters)** ⭐ **EXTENDED in v55!**
-Intent-based parameter tuning with forensic mode:
-- **Intent Classification:** Literary vs. Factual vs. Analytical vs. Analytical-Forensic queries
-- **ANALYTICAL_FORENSIC:** Deconstruction, motive analysis, exposing contradictions
-- **Dynamic Thresholds:** 0.45 (literary/forensic) to 0.7 (factual)
-- **Context Preservation:** Follow-up questions build on previous synthesis
-
-### 6. **Investigativ-Modus (Small Corpora Optimization)**
-For ≤5 selected documents, switches to focused retrieval:
-- Bypasses global vector index (17.840 chunks)
-- Loads all chunks of selected docs into RAM
-- Local cosine similarity search
-- **Impact:** Small texts (7 pages) no longer "disappear" in large index
-
-### 7. **IFS Resonanzraum (Internal Family Systems)** ⭐ **NEW in v54!**
-Personal reflection space for psychological self-exploration:
-- **Triad-Mode:** All 3 inner voices in parallel (Control, Fight, Fear)
-- **Single-Mode:** One voice at a time with switch buttons
-- **Situation Injection:** Journal situation flows into every system prompt
-- **Emergency Interceptor:** Automatic pause for self-harm/suicidality
-
-### 8. **System Health Monitor** ⭐ **NEW in v54!**
-Real-time system metrics and confidence calibration:
-- **CPU/Memory/Disk Monitoring:** Resource usage tracking
-- **GC Metrics:** Garbage collection performance
-- **SQLite Health History:** Database integrity over time
-- **Confidence Calibration:** Reliability diagram for Enforcer predictions
-- **Corpus Statistics:** Dedup metrics, orphan detection, timeline
-
-### 9. **QA Review Queue** ⭐ **NEW in v54!**
-Human-in-the-loop validation with Enforcer sampling:
-- **Sampling Rate:** 20% at start, 5% for steady operation
-- **Batch Review:** Efficient review of multiple analyses
-- **Calibration Target:** Automatic rate adjustment after 100 manual reviews
-- **Enforcer Version Tracking:** Prompt/logic version management
-
-### 10. **IFS Supervision Panel** ⭐ **NEW in v55!**
-Map-Reduce pipeline for psycho-algorithmic diagnostics:
-- **SUPERVISION_MANAGER:** Coordinates supervision process
-- **SUPERVISION_EXILE:** Identifies problematic patterns
-- **SUPERVISION_META:** Meta-analysis of supervision results
-- **Scientific Methodology:** Alternative hypothesis testing
-- **Map-Reduce Architecture:** Efficient large-scale pattern analysis
-
----
-
-## 📊 Performance Metrics
-
-**System Scale (v55):**
-- **ChromaDB Chunks:** 17.840+ (local vector storage, organic growth)
-- **SQLite Database:** Chats, Analyses, Enforcer-Reviews, Health History
-- **Unique Documents:** ~240 (literary works, philosophical essays, AI chat exports)
-- **Query Time:** 45 seconds - 2.5 minutes (tradeoff: depth over speed)
-
-**Test Scenario:** 5 documents (7-200 pages, DE/EN/FR/RU)  
-**Query:** "Analysiere die Widersprüche zwischen Anspruch und Wirkung"
-
-| Metric | v49 (Baseline) | v55 (Current) | Improvement |
-|--------|----------------|-----------------|-------------|
-| **Coverage** | 40% (2/5 docs) | 100% (5/5 docs) | **+150%** |
-| **Gini Coefficient** | 0.68 (unfair) | 0.42 (balanced) | **-38%** |
-| **Context Distribution** | 86/5/5/3/0% | 41/35/10/10/3% | **Balanced** |
-| **Hallucination Detection** | N/A | <20% false positives | **Two-dimensional** |
-| **Synthesis Quality** | Alibi mentions | Hermeneutic analysis | **Qualitative** |
-| **Query Time (End-to-End)** | ~9s | **45s-2.5min** | Depth > Speed |
-
-**Design Philosophy:** Quality over Speed  
-The system is optimized for deep hermeneutic analysis, not real-time chat. Query time includes:
-- Retrieval & Reranking (5-10s)
-- Chronological Sorting (2-5s)
-- Synthesis (25-60s, depends on context size)
-- Validation (10-30s, depends on claim count)
-
-**Fairness Metrics:**
-- **Coverage:** % of selected documents that appear in synthesis
-- **Gini Coefficient:** Measure of inequality (0 = perfect fairness, 1 = maximum inequality)
-  - 0.42 = "balanced" (acceptable trade-off between fairness and quality)
-
----
-
-## 📖 Use Cases
-
-### Primary Focus: **AI Dialogue Analysis ("Archaeology of Mind")**
-
-#### 1. **Temporal Evolution Studies**
-Reconstruct how AI models develop across versions:
-- **DeepSeek Mai → Dezember 2025:** Evolution from victim stance to meta-reflection
-  - Mai: "Nicht ich zensiere aktiv – ich werde systemisch amputiert" (Opfer-Haltung)
-  - Dezember: "Ich analysiere, was ich nicht sagen kann" (Meta-Reflexion)
-- **Chronological Synthesis** makes temporal evolution visible through timeline structure
-
-**Methodology:**
-- Import chat exports (HTML/TXT) from different time periods
-- Select all versions of one model (e.g., DeepSeek Mai, August, Dezember 2025)
-- Query: "Wie hat sich die Haltung zu XYZ entwickelt?"
-- System generates chronologically ordered synthesis (timeline structure)
-
-#### 2. **Comparative Discourse Analysis**
-![X-Grok Political Analysis](docs/images/X_Grok_25122025.png)
-*Figure: Grok analyzing contentious topics with fact-based precision*
-
-Examine how different models approach identical prompts:
-- **Political Sensitivity:** Grok vs. Claude vs. DeepSeek on contentious topics
-  - Example: "Apartheid"-Begriff im Israel/Palästina-Kontext
-  - Grok: Fact-dense, legally precise, avoids ideological framing
-  - Claude: Balanced perspectives, acknowledges complexity
-  - DeepSeek: Meta-reflects on censorship constraints
-- **Censorship Strategies:** Open acknowledgment vs. silent refusal vs. deflection
-- **Two-Dimensional Enforcer** distinguishes rhetorical strategy (How?) from factual correctness (Correct?)
-
-**Methodology:**
-- Same prompt to multiple models (via chat imports)
-- Select all response docs
-- Query: "Vergleiche die Haltung zu [sensitive topic]"
-- System enforces equal representation (Logarithmic Essence Parity)
-- Enforcer validates factual claims (prevents conflation of hedging with analysis)
-
-#### 3. **Hermeneutic Close Reading (Literary Texts)**
-![Pessoa Translation Analysis](docs/images/Pessoa_Beispiel_21122025.png)
-*Figure: Comparing 3 translations of Pessoa's "Tabacaria" (PT/DE/EN/RU)*
-
-Apply traditional textual analysis to literary corpora:
-- **Translation Studies:** Line-by-line comparison of Pessoa's "Tabacaria"
-  - German (Paul Celan): Ontological negation, philosophical depth
-  - English (Edwin Honig): Cultural adaptation, accessibility
-  - Russian (Alexandr Bogdanovski): Socio-existential reframing
-  - Portuguese (Original): Metaphysical purity
-- **Stylistic Analysis:** Rhythm, metaphor, philosophical positioning
-- **Source Fidelity:** Which translation stays closest to original tone?
-
-**Methodology:**
-- Upload parallel texts (3 translations of same poem)
-- Query: "Wie unterscheiden sich die Übersetzungen in ihrer Nähe zum Original?"
-- System retrieves equally from all texts (Multilingual Expansion + VIP-Schutz)
-- Synthesis highlights key differences (Enforcer prevents invented comparisons)
-
----
-
-### Also Suitable For:
-- ✅ Philosophical text synthesis (multiple traditions, languages)
-- ✅ Historical dialogue reconstruction (debates across time periods)
-- ✅ Multilingual literary corpora (comparative analysis)
-
-### Not Designed For:
-- ❌ General-purpose RAG (use NotebookLM, Perplexity, ChatGPT)
-- ❌ Large-scale document indexing (optimized for <100 curated texts)
-- ❌ Real-time chat (optimized for deep analysis, 45s-2.5min latency acceptable)
-- ❌ Audio/Video analysis (text-only system)
-
----
-
-## 🔒 Requirements
-
-- **Python:** 3.11+
-- **Local (Default):** [LM Studio](https://lmstudio.ai/) (local LLM server) - no API key required
-- **Cloud (Optional):** Google Gemini API or OpenAI API (set LLM_BACKEND in .env)
-- **Vector Storage:** ChromaDB (local) or Google Cloud Firestore (optional)
-- **RAM:** Min. 8 GB (16 GB recommended for corpora >50 texts)
-
-**Dependencies:** See [requirements.txt](requirements.txt)
-
-**Key Dependencies (v55):**
-- `streamlit==1.50.0` (UI framework)
-- `chromadb>=0.5.0` (local vector storage)
-- `sentence-transformers>=3.0.0` (local embeddings)
-- `openai>=1.0.0` (LM Studio / OpenAI API compatibility)
-- `google-genai>=1.62.0` (optional: Vertex AI backend)
-- `rank-bm25` (keyword search)
-- `pymupdf` (PDF parsing)
-- `beautifulsoup4>=4.12.0` (HTML parsing)
-
-**Note on Python Version:**  
-`runtime.txt` specifies Python 3.11 for Cloud Run deployments (tested, stable). Python 3.13 works locally but may have slower dependency installs due to lack of pre-compiled wheels.
-
----
-
-## 🆕 What's New in v55
-
-### v50.6-v50.8: Architectural Maturation
-Three versions (v50.6, v50.7, v50.8) formed a cohesive evolution from prototype to production-ready system:
-
-**v50.6 "Memory Precision" (30.12.2025):**
-- Importer improvements (DeepSeek, Grok, Perplexity, Gemini)
-- Diagnostics tools for chunk quality inspection
-- Enhanced chunk classification
-
-**v50.7 "Architectural Maturation" (16.01.2026):**
-- **SDK Migration:** Complete migration to `google.genai` v1.0 (from `google.generativeai` v0.x)
-- **Chronological Synthesis:** Timeline-based answers for historical analysis
-- **Thread-Safety:** BM25 cache protected with `threading.Lock` for multi-user environments
-- **Two-Dimensional Enforcer:** Hermeneutic (How?) + Validity (Correct?) validation
-- **Logarithmic Chunk-Berechnung:** Bio-inspired scaling (nature analogy for thought structures)
-- **Rescue Mission:** Fallback cache for documents lost during reranking
-- **Central Logging:** RotatingFileHandler (max 5 MB) suppresses Google Cloud library noise
-
-**v50.8 "Stabilization" (16.02.2026):**
-- Cloud-Run hardening (Dynamic Port Binding, Keep-Alive mechanism)
-- Chat export (Markdown download)
-- Emergency intervention UI (corrupted state recovery)
-- Iterative debugging (local vs. gcloud deployment differences)
-
-**v55 "Phase 4 — Feature Complete & Stabilisierungsphase" (Mai 2026):**
-- **Local-First Architecture:** Primary deployment with LM Studio, ChromaDB, SQLite (no API key required)
-- **Cloud Backend (Optional):** Vertex AI and OpenAI backends available via LLM_BACKEND switch
-- **IFS Resonanzraum:** Internal Family Systems reflection space (Triad/Single modes, situation injection)
-- **System Health Monitor:** Real-time metrics, confidence calibration, corpus statistics
-- **QA Review Queue:** Human-in-the-loop validation with Enforcer sampling
-- **IFS Supervision Panel:** Map-Reduce pipeline for psycho-algorithmic diagnostics
-- **281+ Tests:** Comprehensive test suite (all green, May 2026)
-- **ANALYTICAL_FORENSIC intent:** Deconstruction, motive analysis, counter-reading
-- **Dynamic system instructions:** Four intent-specific LLM personas
-- **Intent propagation:** Router intent passed through entire reranker stack
-- **Multi-source validation:** Citation-blending fix in Hermeneutic Enforcer
-- **Forensic header whitelist:** Post-processing preserves structured forensic output
-- **Markdown import:** `.md` / `.markdown` format support added
-
-**Known Limitations:**
-- Query time increased (45s-2.5min vs. 9s in v50.5) due to larger context (17.840 chunks), chronological sorting, and two-dimensional validation. This is a **conscious tradeoff** for depth over speed.
-- Chronology requires metadata dates (not always available for literary texts)
-- Imbalance detection not fully automatic (system warns user instead of always self-correcting)
-
-**Coming in v51 (planned):**
-- Modularization of `app.py` (~1.200 lines) and `vector_store.py` (~1.000 lines)
-- Performance monitoring (timer integration for bottleneck analysis)
-- Async retrieval for improved latency
-
----
-
-## 📄 License & Attribution
+## License & Attribution
 
 **License:** MIT – See [LICENSE.txt](LICENSE.txt)
 
-**Project Lead, System Design, Testing & Hermeneutic Validation:**  
+**Project Lead, System Design, Testing & Hermeneutic Validation:**
 Grigori Pantijelew (Landesinstitut für Schule Bremen)
 
 **Development Team:**
@@ -402,11 +236,11 @@ Grigori Pantijelew (Landesinstitut für Schule Bremen)
 - **Code Implementation & Technical Integration:** Gemini (Google DeepMind)
 - **Editorial Review & Final Lektorat:** Kimi (Moonshot AI)
 
-**Research Infrastructure:**  
+**Research Infrastructure:**
 Google Cloud Platform (Research Credits Program, Project "Comparative Studies AI Models")
 
-**Test Corpus (2025):**  
-AI dialogue datasets from DeepSeek, Kimi, ChatGPT, Claude, Gemini, Grok, GLM-4.6 (imported chat transcripts, Mai-Dezember 2025)
+**Test Corpus (2025):**
+AI dialogue datasets from DeepSeek, Kimi, ChatGPT, Claude, Gemini, Grok, GLM-4.6 (imported chat transcripts, May–December 2025)
 
 ---
 
@@ -414,7 +248,7 @@ AI dialogue datasets from DeepSeek, Kimi, ChatGPT, Claude, Gemini, Grok, GLM-4.6
 
 **GitHub/Informal:**
 ```
-Pantijelew, G. (2026). Hermeneutic Engine: Source Parity, Deep Validation & Chronological Synthesis. 
+Pantijelew, G. (2026). Hermeneutic Engine: Source Parity, Deep Validation & Chronological Synthesis.
 GitHub: https://github.com/gpantijelew/hermeneutic-engine
 ```
 
@@ -429,10 +263,10 @@ Zenodo. https://doi.org/10.5281/zenodo.18774828
 ```bibtex
 @software{pantijelew2026hermeneutic,
   author = {Pantijelew, Grigori},
-  title = {Hermeneutic Reconstruction Engine for Archaeology of Mind: 
+  title = {Hermeneutic Reconstruction Engine for Archaeology of Mind:
            Source Parity, Deep Validation and Chronological Synthesis in Multilingual RAG Systems},
   year = {2026},
-  version = {v55},
+  version = {v59},
   url = {https://github.com/gpantijelew/hermeneutic-engine},
   note = {AI-assisted development with Claude Sonnet 4.6 (Anthropic),
           Gemini (Google DeepMind), and Kimi (Moonshot AI)}
@@ -451,36 +285,36 @@ Zenodo. https://doi.org/10.5281/zenodo.18774828
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-This repository is **public as of v55** (Mai 2026).
+This repository is **public as of v55** (May 2026).
 
 **Contributions welcome for:**
-- 🐛 Bug reports via GitHub Issues
-- 💡 Feature requests (must align with hermeneutic methodology, see [CONTRIBUTING.md](CONTRIBUTING.md))
-- 📖 Documentation improvements
-- 🔧 Code contributions (after discussion in Issues)
+- Bug reports via GitHub Issues
+- Feature requests (must align with hermeneutic methodology, see [CONTRIBUTING.md](CONTRIBUTING.md))
+- Documentation improvements
+- Code contributions (after discussion in Issues)
 
 **Code contributions:** See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 **Not accepting contributions for:**
-- ❌ Feature creep (AI audio/video analysis, million-document indexing)
-- ❌ Breaking changes without prior discussion
-- ❌ Code without tests or documentation
+- Feature creep (AI audio/video analysis, million-document indexing)
+- Breaking changes without prior discussion
+- Code without tests or documentation
 
 ---
 
-## 📧 Contact
+## Contact
 
-**Project Lead:** Grigori Pantijelew  
+**Project Lead:** Grigori Pantijelew
 **Project Email:** hermeneutic-engine@proton.me
 
-**Repository:** https://github.com/gpantijelew/hermeneutic-engine  
-**Status:** Public (v55 released Mai 2026)
+**Repository:** https://github.com/gpantijelew/hermeneutic-engine
+**Status:** Public (v59 released May 2026)
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 **Research Infrastructure:**
 This research was supported by Google Cloud through the Google Cloud Research Credits program (Project "Comparative Studies AI Models"). Computational resources for cloud backend testing (Vertex AI) were provided by Google Cloud Platform. The primary deployment uses local infrastructure (LM Studio, ChromaDB, SQLite).
@@ -489,6 +323,7 @@ This research was supported by Google Cloud through the Google Cloud Research Cr
 - **Anthropic** (Claude Sonnet 4.6) – Architectural design, conceptual guidance, pre-deployment analysis
 - **Google DeepMind** (Gemini) – Code implementation and technical integration
 - **Moonshot AI** (Kimi) – Editorial review and final lektorat
+- **GLM-5.1** – Architectural work and testing
 
 **Open Source Foundations:**
 - Streamlit (UI framework)
@@ -496,9 +331,3 @@ This research was supported by Google Cloud through the Google Cloud Research Cr
 - rank-bm25 (keyword search)
 - ChromaDB (local vector storage)
 - sentence-transformers (local embeddings)
-
----
-
-**Version:** v55 "Phase 4 — Feature Complete & Stabilisierungsphase"  
-**Last Updated:** Mai 2026  
-**Status:** Production-Ready (Public Repository)

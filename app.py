@@ -1,5 +1,5 @@
-# app.py - v55: IFS Dual-Modus + Reproducibility Manifest
-APP_VERSION = "[v55 (IFS Dual-Modus + A.1 Manifest)]"
+# app.py - v59: STILISTIC Mode + Stil-Distillation (Phase 0.5) + 6 Distillation-Kategorien
+APP_VERSION = "[v59 (STILISTIC Mode + Stil-Distillation)]"
 
 import os
 from dotenv import load_dotenv
@@ -91,9 +91,10 @@ except (ValueError, FileNotFoundError) as e:
     st.error(f"❌ CRITICAL: Parser-Config Fehler: {e}")
     st.stop()
 
-from modules.bulk_labeling import render_bulk_labeling_ui
-from modules.bulk_export import render_bulk_export_ui
-from modules.vector_admin import render_vector_admin_dashboard
+# FIX v57: bulk_labeling und bulk_export waren nie separate Module.
+# render_bulk_labeling() existiert in vector_admin.py.
+# render_bulk_export_ui() wurde nie implementiert — Placeholder statt ImportError.
+from modules.vector_admin import render_vector_admin_dashboard, render_bulk_labeling
 import ui.state as state
 from ui.import_tab import render_import_tab
 from ui.analysis_tab import render_analysis_tab
@@ -104,6 +105,7 @@ from ui.emergency_sidebar import render_emergency_sidebar
 from ui.chat_tab import render_chat_tab
 from ui.destillation_tab import render_destillation_tab
 from ui.stilisierung_tab import render_stilisierung_tab
+from ui.stilistic_lab_tab import render_stilistic_lab_tab    # v57.4: STILISTIC LAB
 from ui.supervision_tab import render_supervision_tab
 from ui.ifs_tab import render_ifs_tab
 from ui.qa_review_tab import render_qa_review_tab
@@ -179,7 +181,7 @@ _unreviewed = get_unreviewed_count()
 _badge = f" 🔴 {_unreviewed}" if _unreviewed > 0 else ""
 
 st.sidebar.title("📡 Navigation")
-_page_options = ["Chat", "Import", "Analyse", "Destillation", "Stilisierung", "Resonanzraum", "Supervision", "System Health", "Labeling", "DB-Export", f"QA Reviews{_badge}"]
+_page_options = ["Chat", "Import", "Analyse", "Destillation", "Stilisierung", "Stilistic Lab", "Resonanzraum", "Supervision", "System Health", "Labeling", "DB-Export", f"QA Reviews{_badge}"]
 page = st.sidebar.selectbox(
     "Seite wählen",
     _page_options,
@@ -262,9 +264,12 @@ if page == "Import":
 elif page == "System Health":
     render_system_health_tab()
 elif page == "Labeling":
-    render_bulk_labeling_ui()
+    render_bulk_labeling()
 elif page == "DB-Export":
-    render_bulk_export_ui()
+    st.header("📦 DB-Export")
+    st.info("🚧 Bulk-Export ist noch nicht als separates Modul implementiert. "
+            "Nutze den Export-Button in der Chat-Ansicht oder den Vector Admin "
+            "in der Sidebar.")
 elif page == "Analyse":
     all_chats = get_chat_list()
     render_analysis_tab(all_chats)
@@ -272,6 +277,8 @@ elif page == "Destillation":
     render_destillation_tab()
 elif page == "Stilisierung":
     render_stilisierung_tab()
+elif page == "Stilistic Lab":              # v57.4: STILISTIC LAB (Drei-Etappen)
+    render_stilistic_lab_tab()
 elif page == "Resonanzraum":
     render_ifs_tab()
 elif page == "Supervision":              # <--- NEU

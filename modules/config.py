@@ -31,6 +31,11 @@ except ImportError:
     pass
 
 # ==============================================================================
+# ENGINE VERSION (N.4 — zentrale Konstante, von allen Modulen importierbar)
+# ==============================================================================
+ENGINE_VERSION = "v59"  # STILISTIC Mode + Stil-Distillation (Phase 0.5) + 6 Distillation-Kategorien
+
+# ==============================================================================
 # PROJEKT-ROOT BESTIMMUNG
 # ==============================================================================
 if hasattr(sys, "_MEIPASS"):
@@ -57,7 +62,7 @@ CHROMA_PATH = DATA_DIR / "chroma"
 LLM_BACKEND = os.getenv("LLM_BACKEND", "lmstudio")
 
 # LM Studio Konfiguration
-LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://127.0.0.1:8888/v1")
+LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
 LM_STUDIO_API_KEY = "lm-studio"  # Dummy — LM Studio prüft das nicht
 
 # Modell-Identifier (exakt wie LM Studio ihn meldet)
@@ -68,7 +73,7 @@ LM_STUDIO_VALIDATE_TIMEOUT = int(os.getenv("LM_STUDIO_VALIDATE_TIMEOUT", "10"))
 LM_STUDIO_VALIDATE_RETRIES = int(os.getenv("LM_STUDIO_VALIDATE_RETRIES", "3"))
 # Vertex AI Konfiguration
 VERTEX_MODEL = os.getenv("VERTEX_MODEL", "gemini-3.1-pro-preview")
-VERTEX_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "hre-research-2026")
+VERTEX_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "")
 
 # ==============================================================================
 # BACKEND-SPEZIFISCHE PIPELINE-LIMITS (NEU)
@@ -76,12 +81,14 @@ VERTEX_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "hre-research-2026")
 if LLM_BACKEND == "vertex":
     # Vertex AI Pipeline-Konfigurationen
     RERANKER_CANDIDATES = 70  # Unverändert — wir opfern keinen Recall
-    RERANKER_BATCH_SIZE = 6   # NEU: 6 Chunks × 800 Zeichen = 4800 Zeichen
-                           # + ~2000 Zeichen Prompt-Overhead = 6800 Zeichen
-                           # Sicher unter dem Fehler-Schwellwert (~10.000)
+    RERANKER_BATCH_SIZE = 4   # NEU: Reduziert von 6 auf 4 für Schema-Stabilität
+                           # 4 Chunks × 800 Zeichen = 3200 Zeichen
+                           # + ~2000 Zeichen Prompt-Overhead = 5200 Zeichen
+                           # Weniger JSON-Komplexität = weniger Batch-Failures
     MAX_CHUNKS_FINAL = 30  # <--- NEU: Erhöht von 8 auf 30 für Meta-Analysen!
     MAX_TOKENS_PER_CALL = 8192  # Verringert von 32768! Verhindert Timeouts bei langen Thinking-Prozessen. Reicht für ausführliche Analysen.
     MAX_TOKENS_STILISIERUNG = 8192 # <--- NEU: Fehlte im Vertex-Zweig, verursachte ImportError
+    MAX_TOKENS_STILISTIC_DISTILLATION = 2048  # v58: Erhoeht gegen Flash-Abbruch (war 1536)  # <--- NEU v57.2: Drosselt Profil-Länge auf ~200 Wörter (8 Docs × 200 W = 1600 W Profil-Content VOR Kontext)
     MAX_IFS_TOKENS = 2048  # FIX: 3.1-pro-preview braucht mehr Puffer (war 768, MAX_TOKENS-Abbruch)
 else:
     MAX_IFS_TOKENS = 2048  # FIX: 3.1-pro-preview braucht mehr Puffer (war 768, MAX_TOKENS-Abbruch)
@@ -95,6 +102,16 @@ else:
 ESSENCE_TOTAL_BUDGET = 60
 RESCUE_THRESHOLD = 4
 MINIMUM_RESCUE_SCORE = 0.5
+
+# ==============================================================================
+# KOMPARATIVER MODUS (Test 16 — Gruppen-Vergleich)
+# ==============================================================================
+# Wenn COMPARATIVE_MODE=True, werden GRUPPEN-Labels in die QUELLE-Header injiziert
+# und die GRUPPENVERGLEICH-Instruktion in der Synthese aktiviert.
+# DOC_GROUP_ASSIGNMENTS ordnet chat_id oder QUELLE-Nummer einer Gruppe zu.
+# Beispiel: {"chat_abc": "GRUPPE A: mit Brief", 2: "GRUPPE B: ohne Brief"}
+COMPARATIVE_MODE = False
+DOC_GROUP_ASSIGNMENTS = {}  # {chat_id | QUELLE-Nummer: "GRUPPE X: Label"}
 
 # Rate Limiting für Importer-Loops (Schutz vor 429 Quota Errors)
 IMPORT_RATE_LIMIT_DELAY = 0.5 if LLM_BACKEND == "vertex" else 0.0
@@ -113,16 +130,19 @@ if LLM_BACKEND == "vertex":
     # Nutzt gemini-2.5-flash-lite-preview (Minimale Latenz & Kosten)
     MODEL_REGISTRY = {
         "chat": VERTEX_MODEL,
-        "synthesis": VERTEX_MODEL,
-        "ifs": "gemini-3.1-pro-preview",  # Tier 1 — max_output_tokens respektiert (2.5-pro hat technical limitation)
+        "synthesis": "gemini-2.5-pro",  # Hart auf 2.5 Pro für verlässliche Zitate
+        "ifs": "gemini-3.1-pro-preview",  # Tier 1 — max_output_tokens respektiert (2.5-pro has technical limitation)
         "enforcer": "gemini-2.5-pro",  # Tier 2 (Regeln strikt durchsetzen)
         "query_expansion": "gemini-2.5-pro",  # Tier 2 (Semantische Tiefe für die Suche)
         "fact_extraction": "gemini-2.5-flash",  # Tier 3 (Der große Geldsparer!)
         "reranker": "gemini-3-flash-preview", # Tier 3 (Gen 3 Upgrade: Perfektes Batch-JSON & Speed!)
         "bulk_labeling": "gemini-2.5-flash",  # Tier 3
-        "router": "gemini-2.5-flash-lite-preview-09-2025",  # Tier 4
-        "title_gen": "gemini-2.5-flash-lite-preview-09-2025",  # Tier 4
-        "question_conv": "gemini-2.5-flash-lite-preview-09-2025",  # Tier 4
+        "router": "gemini-2.5-flash-lite",  # Tier 4
+        "title_gen": "gemini-2.5-flash-lite",  # Tier 4
+        "question_conv": "gemini-2.5-flash-lite",  # Tier 4
+        "extraction": "gemini-2.5-flash",  # Tier 3 — buchstabengetreues Kopieren (Fix J.1)
+        "correction": "gemini-2.5-flash",  # Tier 3 — Phase 3 Korrektur (Drei-Phasen-Architektur)
+        "stilistic_distillation": "gemini-2.5-flash",  # Tier 3 — Stil-Distillation (Phase 0.5)
     }
 else:
     MODEL_REGISTRY = {
@@ -139,6 +159,9 @@ else:
             "bulk_labeling",
             "title_gen",
             "question_conv",
+            "extraction",
+            "correction",
+            "stilistic_distillation",
         ]
     }
 
@@ -196,6 +219,8 @@ MODEL_RERANKER = LM_STUDIO_MODEL
 MODEL_BULK_LABELING = LM_STUDIO_MODEL
 MODEL_TITLE_GEN = LM_STUDIO_MODEL
 MODEL_QUESTION_CONV = LM_STUDIO_MODEL
+MODEL_EXTRACTION = "gemini-2.5-flash-lite"
+MODEL_CORRECTION = "gemini-2.5-flash"  # Drei-Phasen: Phase 3 Korrektur-Modell
 
 # ==============================================================================
 # EMBEDDING KONFIGURATION
@@ -316,7 +341,7 @@ def validate_config() -> bool:
                     print(f"     Letzter Fehler: {e}")
                     print("     Tipps:")
                     print("       1. LM Studio gestartet?")
-                    print("       2. Developer-Server aktiv (Port 8888)?")
+                    print("       2. Developer-Server aktiv (Port 1234)?")
                     print("       3. Firewall blockiert?")
                     print("       4. Großes Modell lädt noch? (Gemma 3 27B: bis zu 30s)")
                     print(f"     Konfigurierbar via Umgebungsvariable: "
@@ -342,7 +367,7 @@ DOMAIN_STILISIERUNG = "stilisierung"
 BACKEND_CAPABILITIES = {
     "vertex": {"seed": True},
     "openai": {"seed": True},
-    "lm_studio": {"seed": False},
+    "lmstudio": {"seed": False},
 }
 
 # Parameter-Profile pro Domain
@@ -356,6 +381,9 @@ DOMAIN_PROFILES = {
     DOMAIN_STILISIERUNG: None, # Nutzt YAML-Defaults
 }
 
+# STILISTIC-Modus: Distillation-Temperatur
+STILISTIC_DISTILLATION_TEMPERATURE = 0.6  # v58: Flash braucht mehr Waerme  # Niedrig für Beobachtungstreue
+
 # --- A.7 ENFORCER SAMPLING ---
 ENFORCER_SAMPLING_RATE_HIGH = 5     # 20% Sampling-Rate am Anfang
 ENFORCER_SAMPLING_RATE_LOW = 20     # 5% Sampling-Rate für Dauerbetrieb
@@ -363,7 +391,7 @@ ENFORCER_CALIBRATION_TARGET = 100   # Ab 100 manuellen Reviews greift die LOW-Ra
 ENFORCER_VERSION = "v1.0"           # Aktuelle Version der Enforcer-Logik/Prompts
 
 if __name__ == "__main__":
-    print("=== HERMENEUTIC ENGINE CONFIG v53 ===")
+    print(f"=== HERMENEUTIC ENGINE CONFIG {ENGINE_VERSION} ===")
     print(f"Projekt-Root:  {PROJECT_ROOT}")
     print(f"LLM Backend:   {LLM_BACKEND}")
     print(f"LLM Modell:    {LM_STUDIO_MODEL}")

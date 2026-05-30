@@ -8,7 +8,9 @@ PHILOSOPHIE:
 - Enforcer-Integration: Dokumentiere Validierung explizit
 
 ÄNDERUNGSHISTORIE:
-- v50.6: generate_chat_markdown() hinzugefügt für Chat-Export
+- v58: Keine Änderung — ENGINE_VERSION aus config.py übernimmt automatisch
+- v56: ENGINE_VERSION aus config.py importiert statt hartcodiertem String
+- v55: generate_chat_markdown() hinzugefügt für Chat-Export
 - v49: Initiale Version mit Markdown/JSON/Excel
 """
 
@@ -19,7 +21,19 @@ import io
 from typing import List, Dict, Optional
 from datetime import datetime
 
-from modules.config import MODEL_SYNTHESIS
+from modules.config import MODEL_SYNTHESIS, LLM_BACKEND, LM_STUDIO_MODEL, ENGINE_VERSION
+
+
+def _get_backend_model() -> str:
+    """Gibt das tatsächlich genutzte Modell basierend auf Backend zurück."""
+    if LLM_BACKEND == "vertex":
+        from modules.config import VERTEX_MODEL
+        return VERTEX_MODEL
+    elif LLM_BACKEND == "openai":
+        from modules.config import OPENAI_MODEL
+        return OPENAI_MODEL
+    else:
+        return LM_STUDIO_MODEL
 
 
 def generate_markdown(
@@ -66,9 +80,9 @@ def generate_markdown(
     md += "reproducibility_manifest:\n"
     md += f"  analysis_id:      {analysis_id}\n"
     md += f"  timestamp:        {datetime.now().isoformat()}\n"
-    md += f"  engine_version:   v54.1\n"
+    md += f"  engine_version:   {ENGINE_VERSION}\n"
     md += f"  query:            \"{query.replace(chr(34), chr(39))}\"\n"
-    md += f"  model_synthesis:  {MODEL_SYNTHESIS}\n"
+    md += f"  model_synthesis:  {_get_backend_model()}\n"
     md += f"  deterministic_mode: True (Domain: {DOMAIN_ANALYSIS})\n"
     md += f"  analysis_domain:  {DOMAIN_ANALYSIS}\n"
     md += f"  analysis_temperature: {profile.get('temperature', 'default')}\n"
@@ -88,6 +102,12 @@ def generate_markdown(
         md += f"  reranker_rejected:{pipeline_trace.get('reranker_rejected', 0)}\n"
         md += f"  reranker_avg:     {pipeline_trace.get('reranker_avg', 'N/A')}\n"
         md += f"  reranker_failed:  {pipeline_trace.get('reranker_failed', False)}\n"
+        # v57: Extraktions-Fehler im Manifest sichtbar machen
+        _ext_fail = pipeline_trace.get('extraction_failures', [])
+        if _ext_fail:
+            _failed_ids = [f"[{f['source_id']}]" for f in _ext_fail if f.get('reason') == 'json_parse_failed']
+            if _failed_ids:
+                md += f"  extraction_failures: {', '.join(_failed_ids)} (JSON-Parsing-Fehler)\n"
     else:
         md += "  pipeline_trace:   null\n"
 
@@ -116,7 +136,7 @@ def generate_markdown(
         # Tiefenprüfung (Deep Check) mit Summary-Stats
         deep = verification_log.get("deep_check", [])
         if deep:
-            # NEU v50.6: Summary-Statistik
+            # NEU v55: Summary-Statistik
             valid_count = sum(1 for item in deep if item.get("valid", False))
             total_count = len(deep)
             pass_rate = (valid_count / total_count * 100) if total_count > 0 else 0
@@ -198,7 +218,7 @@ def generate_markdown_from_record(record: Dict) -> str:
     md += "reproducibility_manifest:\n"
     md += f"  analysis_id:      {analysis_id}\n"
     md += f"  timestamp:        {timestamp}\n"
-    md += f"  engine_version:   v54.1\n"
+    md += f"  engine_version:   {ENGINE_VERSION}\n"
     md += f"  query:            \"{query.replace(chr(34), chr(39))}\"\n"
     md += f"  model_synthesis:  {model}\n"
     md += f"  deterministic_mode: True (Domain: {domain})\n"
@@ -241,7 +261,7 @@ def generate_chat_markdown(
 
     Für: Chat-Fenster (Lite-Export ohne Quellen-Details)
 
-    v50.6: Minimal-Version – voller Chat-Verlauf, keine RAG-Metadaten.
+    v55: Minimal-Version – voller Chat-Verlauf, keine RAG-Metadaten.
     TODO v51: Integration mit rag_metadata aus Firestore für vollständige Persistenz.
 
     Args:
@@ -332,7 +352,7 @@ def generate_json(query: str, answer: str, results: List[Dict]) -> str:
 
     # TODO v51: Erweitern mit:
     # "metadata": {
-    #     "engine_version": "v50.6",
+    #     "engine_version": "v55",
     #     "synthesis_model": MODEL_SYNTHESIS,
     #     "enforcer_model": MODEL_ENFORCER,
     #     "retrieval_strategy": "hermeneutic"

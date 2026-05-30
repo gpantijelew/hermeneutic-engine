@@ -1,4 +1,4 @@
-# ui/state.py — HRE v51
+# ui/state.py — HRE v57.4
 # Zentrales Session State Management.
 #
 # ARCHITEKTUR-REGEL:
@@ -9,6 +9,7 @@
 # - Chat-State:    reset_chat()
 # - Analyse-State: reset_analysis_search()
 # - RAG-State:     clear_rag_state()
+# - Stilistic-Lab: reset_stilistic_lab()
 
 import streamlit as st
 from modules.config import get_system_message, LM_STUDIO_MODEL
@@ -97,6 +98,13 @@ def init_state() -> None:
     _set_default("ifs_emergency", False)
     _set_default("ifs_exile_warned", False)
 
+    # STILISTIC LAB (v57.4) — Eigener Lebenszyklus
+    # UI-Persistenz: Auswahl überlebt Reset
+    _set_default("stilistic_lab_selected_titles", [])
+    # Transiente Ergebnis-Keys: entstehen on-demand, werden explizit gelöscht
+    # "stilistic_lab_result", "stilistic_lab_timestamp", "stilistic_lab_source_labels"
+    # → KEIN Default — Abwesenheit ist Signal
+
 
 # ==============================================================================
 # LIFECYCLE-SETTER (autorisierte Schreibpfade)
@@ -120,19 +128,41 @@ def reset_chat() -> None:
 
 def reset_analysis_search() -> None:
     """
-    Löscht UI-Persistenz-Keys des Analyse-Tabs.
+    Löscht transiente Analyse-Ergebnisse, erhält aber UI-Persistenz-Keys.
+    
+    FIX: rag_saved_titles und rag_saved_query werden NICHT mehr gelöscht!
+    Diese Keys sichern die Datei-Auswahl und die letzte Suchanfrage
+    zwischen Analysen — sie überleben den Reset bewusst.
+    
     Eigener Lebenszyklus: wird nur explizit durch
     den User (Reset-Button) ausgelöst — nie durch Chat-Wechsel.
     """
     for key in (
-        "rag_saved_titles",
-        "rag_saved_query",
+        # TRANSIENT — werden bei jeder neuen Analyse zurückgesetzt:
         "rag_results",
         "rag_answer",
         "rag_mode",
         "rag_query",
         "verification_log",
         "rag_pipeline_trace",
+        # PERSISTENT — NICHT löschen! Überleben den Reset:
+        # "rag_saved_titles",   ← Datei-Auswahl bleibt!
+        # "rag_saved_query",    ← Letzte Suchanfrage bleibt!
+    ):
+        if key in st.session_state:
+            del st.session_state[key]
+
+
+def reset_stilistic_lab() -> None:
+    """
+    Setzt STILISTIC LAB transiente Ergebnisse zurück.
+    UI-Persistenz (stilistic_lab_selected_titles) bleibt erhalten.
+    Eigener Lebenszyklus — nie durch Chat-Wechsel ausgelöst.
+    """
+    for key in (
+        "stilistic_lab_result",
+        "stilistic_lab_timestamp",
+        "stilistic_lab_source_labels",
     ):
         if key in st.session_state:
             del st.session_state[key]
@@ -273,6 +303,29 @@ def append_ifs_message(part: str, role: str, text: str) -> None:
     })
 
 # ==============================================================================
+# STILISTIC LAB (v57.4) — Autorisierte Schreibpfade
+# ==============================================================================
+
+
+def set_stilistic_lab_result(result: dict, source_labels: list) -> None:
+    """Autorisierter Schreibpfad für STILISTIC LAB Ergebnisse."""
+    st.session_state["stilistic_lab_result"] = result
+    st.session_state["stilistic_lab_timestamp"] = _now_iso()
+    st.session_state["stilistic_lab_source_labels"] = source_labels
+
+
+def get_stilistic_lab_result() -> tuple[dict | None, str | None, list | None]:
+    """Gibt das letzte STILISTIC LAB Ergebnis zurück.
+    Returns: (result, timestamp, source_labels) oder (None, None, None)
+    """
+    return (
+        st.session_state.get("stilistic_lab_result"),
+        st.session_state.get("stilistic_lab_timestamp"),
+        st.session_state.get("stilistic_lab_source_labels"),
+    )
+
+
+# ==============================================================================
 # PRIVATE HELPERS
 # ==============================================================================
 
@@ -281,3 +334,33 @@ def _set_default(key: str, value) -> None:
     """Setzt einen Key nur, wenn er noch nicht existiert."""
     if key not in st.session_state:
         st.session_state[key] = value
+
+
+def _now_iso() -> str:
+    """Gibt aktuellen Timestamp als ISO-String zurück."""
+    from datetime import datetime
+    return datetime.now().isoformat()
+
+
+def set_supervision_result(results: dict, chat_title: str) -> None:
+    """Speichert das Ergebnis der IFS-Supervision."""
+    st.session_state["last_supervision"] = results
+    st.session_state["last_supervision_chat"] = chat_title
+
+def get_supervision_result() -> tuple[dict | None, str | None]:
+    """Gibt das letzte Supervisions-Ergebnis und den Chat-Titel zurück."""
+    return (
+        st.session_state.get("last_supervision"),
+        st.session_state.get("last_supervision_chat")
+    )
+
+
+def set_verification_log_entry(key: str, value) -> None:
+    """
+    Autorisierter Schreibpfad für verification_log Einträge.
+    key: 'structure_check' oder 'deep_check'
+    value: Liste von Warnungen/Fehlermeldungen
+    """
+    if "verification_log" not in st.session_state:
+        st.session_state["verification_log"] = {"structure_check": [], "deep_check": []}
+    st.session_state.verification_log[key] = value

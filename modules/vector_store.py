@@ -625,9 +625,11 @@ class LocalVectorStore:
             logger.warning(f"⚠️ Fehler beim Löschen der Embeddings: {e}")
 
         # Phase 4.3: Registry synchronisieren — unabhängig von ChromaDB-Erfolg
+        # v54.2: update_chunk_count ENTFERNT — verursacht Deadlock wenn aus
+        # delete_chat() aufgerufen (das bereits _db_lock hält). Chat-Zeile ist
+        # zu diesem Zeitpunkt ohnehin schon gelöscht, chunk_count irrelevant.
         try:
             unregister_chat_chunks(chat_id)
-            update_chunk_count(chat_id)
         except Exception as e:
             logger.warning(f"⚠️ Chunk Registry Sync beim Löschen fehlgeschlagen: {e}")
 
