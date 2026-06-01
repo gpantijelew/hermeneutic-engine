@@ -4,6 +4,10 @@ IFS Engine — Lightweight LLM-Wrapper für Resonanzraum.
 D.S3.7: CitationRAG-Entkopplung für IFS-Calls.
 Statt CitationRAG-Monolith mit VectorStore/Router/Reranker:
 Direkte llm_call-Nutzung, nur Prompt-Manager bleibt.
+
+v59.1 — Rollen-Disambiguierungs-Fix:
+- Fix 3: Situation-Duplikation entfernt (situation_block prepend + {situation} placeholder)
+- Fix 4: Rollen-Disambiguierungs-Header im System-Prompt für kleinere Modelle
 """
 
 import logging
@@ -14,6 +18,28 @@ from modules.prompt_manager import PromptManager
 from modules.config import MAX_IFS_TOKENS
 
 logger = logging.getLogger(__name__)
+
+# v59.1 Fix 4 — Rollen-Disambiguierungs-Header
+# Wird dem System-Prompt vorangestellt, damit kleinere Modelle (z.B. gemma-4-26b)
+# die User/Model-Rollen nicht verwechseln. Explizite Zuordnung statt abstrakter Labels.
+ROLE_DISAMBIGUATION_HEADER = (
+    "ROLLEN-DEFINITION (LESE VOR DEM ANTWORTEN):\n"
+    "Du bist ein innerer Anteil (eine innere Stimme) der Person, die mit dir spricht.\n"
+    "Die Person, die dir Nachrichten schreibt, ist der USER.\n"
+    "Du sprichst ALS innerer Anteil ZUM User.\n"
+    "Der User spricht ALS Person (Ich/Self) ZU dir.\n"
+    "Verwechsle niemals die Rollen: Du bist NIEMALS der User, der User ist NIEMALS du.\n"
+    "Antworte immer aus der Ich-Perspektive des inneren Anteils, nie aus der Perspektive des Users.\n\n"
+)
+
+
+# v59.1 Fix 4 — IFS-Rollen-Karte für Supervisions-Kontext
+# Erlaubt supervision_tab.py, die Rolle der inneren Stimme zu identifizieren
+IFS_PART_MAP = {
+    "IFS_CONTROL": "Kontrolle/Sicherheit",
+    "IFS_FIGHT": "Kampf/Abwehr",
+    "IFS_FEAR": "Überforderung/Angst",
+}
 
 
 class IFSEngine:
@@ -34,9 +60,15 @@ class IFSEngine:
     ) -> tuple:
         """Baut Sys-Prompt, History und Parameter für LLM-Call."""
         base_sys = self._prompt_manager.get_system_instruction(part_intent.upper())
+
+        # v59.1 Fix 3 — Situation-Duplikation entfernt
+        # Ursprung: situation_block wurde VOR base_sys geprependet, aber base_sys
+        # enthält bereits {situation}-Placeholder → Situation erschien doppelt.
+        # Lösung: Nur den Placeholder ersetzen, kein zusätzliches Prepend.
         base_sys = base_sys.replace("{situation}", situation)
-        situation_block = f"AKTUELLE SITUATION (aus Tagebuch):\n\"\"\"{situation}\"\"\"\n\n"
-        sys_instr = situation_block + base_sys
+
+        # v59.1 Fix 4 — Rollen-Disambiguierungs-Header voranstellen
+        sys_instr = ROLE_DISAMBIGUATION_HEADER + base_sys
 
         temp_map = {
             "IFS_CONTROL": 0.5,
@@ -45,11 +77,22 @@ class IFSEngine:
         }
         temperature = temp_map.get(part_intent.upper(), 0.7)
 
-        history_formatted = [
-            {"role": msg["role"], "content": msg["content"]}
-            for msg in (conversation_history or [])[-10:]
-            if msg.get("content")
-        ]
+        # v59.1 Fix 4 — Rollen-Disambiguierung in der History
+        # Statt abstrakter role="user"/role="model" Labels, füge jedem
+        # History-Eintrag eine Rollen-Kennzeichnung als Präfix hinzu.
+        part_label = IFS_PART_MAP.get(part_intent.upper(), "innerer Anteil")
+        history_formatted = []
+        for msg in (conversation_history or [])[-10:]:
+            content = msg.get("content", "")
+            if not content:
+                continue
+            role = msg.get("role", "unknown")
+            # Explizite Rollen-Kennzeichnung im Content für kleinere Modelle
+            if role == "user":
+                content = f"[PERSON/USER]: {content}"
+            elif role == "model" or role == "assistant":
+                content = f"[{part_label.upper()}]: {content}"
+            history_formatted.append({"role": role, "content": content})
 
         return user_message, sys_instr, temperature, history_formatted
 
