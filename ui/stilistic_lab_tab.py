@@ -202,6 +202,10 @@ def render_stilistic_lab_tab():
         if comparison:
             import pandas as pd
             df = pd.DataFrame(comparison)
+            # PyArrow-Fix: Gemischte Typen (int + "—") in Lyrik-Spalten normalisieren
+            for col in ["Strophen", "Reim", "Ø Silben", "Enjamb."]:
+                if col in df.columns:
+                    df[col] = df[col].astype(str)
             st.dataframe(df, width="stretch", hide_index=True)
         else:
             st.info("Keine Vergleichsdaten verfuegbar.")

@@ -1,5 +1,5 @@
-# app.py - v59: STILISTIC Mode + Stil-Distillation (Phase 0.5) + 6 Distillation-Kategorien
-APP_VERSION = "[v59 (STILISTIC Mode + Stil-Distillation)]"
+# app.py - v60: Meta-Hermeneutic Tab (#36)
+APP_VERSION = "[v60 (Poesie, Polyglossie, STILISTIC Mode + Stil-Distillation + Meta-Hermeneutic)]"
 
 import os
 from dotenv import load_dotenv
@@ -61,8 +61,8 @@ st.markdown(
         }
 
         /* 4. Margins von Überschriften in der Sidebar entfernen */
-        [data-testid="stSidebarUserContent"] h1, 
-        [data-testid="stSidebarUserContent"] h2, 
+        [data-testid="stSidebarUserContent"] h1,
+        [data-testid="stSidebarUserContent"] h2,
         [data-testid="stSidebarUserContent"] h3 {
             margin-top: 0.2rem !important;
             margin-bottom: 0.2rem !important;
@@ -94,7 +94,7 @@ except (ValueError, FileNotFoundError) as e:
 # FIX v57: bulk_labeling und bulk_export waren nie separate Module.
 # render_bulk_labeling() existiert in vector_admin.py.
 # render_bulk_export_ui() wurde nie implementiert — Placeholder statt ImportError.
-from modules.vector_admin import render_vector_admin_dashboard, render_bulk_labeling
+from ui.vector_admin import render_vector_admin_dashboard, render_bulk_labeling
 import ui.state as state
 from ui.import_tab import render_import_tab
 from ui.analysis_tab import render_analysis_tab
@@ -110,6 +110,7 @@ from ui.supervision_tab import render_supervision_tab
 from ui.ifs_tab import render_ifs_tab
 from ui.qa_review_tab import render_qa_review_tab
 from ui.system_health_tab import render_system_health_tab  # (A.8: Confidence Calibration)
+from ui.meta_hermeneutic_tab import render_meta_hermeneutic_tab  # v59.5: META-HERMENEUTIC (#36)
 
 # ==============================================================================
 # AUTHENTIFIZIERUNG (mit st.secrets) - NACH PAGE CONFIG!
@@ -172,7 +173,7 @@ if DEBUG_MODE:
     st.sidebar.info("🐛 Debug-Mode AKTIV")
 
 # ==============================================================================
-# SESSION STATE & NAVIGATION (Restlicher Code bleibt exakt gleich)
+# SESSION STATE & NAVIGATION
 # ==============================================================================
 state.init_state()
 
@@ -181,7 +182,7 @@ _unreviewed = get_unreviewed_count()
 _badge = f" 🔴 {_unreviewed}" if _unreviewed > 0 else ""
 
 st.sidebar.title("📡 Navigation")
-_page_options = ["Chat", "Import", "Analyse", "Destillation", "Stilisierung", "Stilistic Lab", "Resonanzraum", "Supervision", "System Health", "Labeling", "DB-Export", f"QA Reviews{_badge}"]
+_page_options = ["Chat", "Import", "Analyse", "Destillation", "Stilisierung", "Stilistic Lab", "Meta-Hermeneutic", "Resonanzraum", "Supervision", "System Health", "Labeling", "DB-Export", f"QA Reviews{_badge}"]
 page = st.sidebar.selectbox(
     "Seite wählen",
     _page_options,
@@ -279,6 +280,8 @@ elif page == "Stilisierung":
     render_stilisierung_tab()
 elif page == "Stilistic Lab":              # v57.4: STILISTIC LAB (Drei-Etappen)
     render_stilistic_lab_tab()
+elif page == "Meta-Hermeneutic":           # v59.5: META-HERMENEUTIC (#36)
+    render_meta_hermeneutic_tab()
 elif page == "Resonanzraum":
     render_ifs_tab()
 elif page == "Supervision":              # <--- NEU

@@ -227,6 +227,9 @@ def _db_write(func):
     return wrapper
 
 
+# C1: RLock-Wrapper via @_db_write (P2; eskaliert bei Multi-User).
+# RLock ist reentrant -> kein Deadlock bei Aufrufen aus @_db_write-Funktionen.
+@_db_write
 def get_db_connection() -> Optional[sqlite3.Connection]:
     """
     Robuster SQLite-Singleton.

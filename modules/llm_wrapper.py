@@ -339,7 +339,7 @@ def _vertex_call_streaming(
         role = "user" if msg["role"] == "user" else "model"
         contents.append(Content(role=role, parts=[Part(text=msg["content"])]))
 
-    # --- Google Search Grounding ---
+    # --- NEU: Google Search Grounding ---
     tools = [Tool(google_search=GoogleSearch())] if use_search else None
     config_kwargs = dict(
         system_instruction=sys_msg,
@@ -863,7 +863,7 @@ def llm_call_json_structured(
     try:
         from google.genai.types import (
             GenerateContentConfig,
-            AutomaticFunctionCallingConfig
+                        AutomaticFunctionCallingConfig
         )
 
         client, model = get_llm_client(task=task)
