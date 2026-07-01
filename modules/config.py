@@ -33,7 +33,7 @@ except ImportError:
 # ==============================================================================
 # ENGINE VERSION (N.4 — zentrale Konstante, von allen Modulen importierbar)
 # ==============================================================================
-ENGINE_VERSION = "v59"  # STILISTIC Mode + Stil-Distillation (Phase 0.5) + 6 Distillation-Kategorien
+ENGINE_VERSION = "v60"  # Falsifizierungs-Architektur (Agency, Gegenposition, Adjudikation, revidierte Destillation)
 
 # ==============================================================================
 # PROJEKT-ROOT BESTIMMUNG
@@ -67,13 +67,13 @@ LM_STUDIO_API_KEY = "lm-studio"  # Dummy — LM Studio prüft das nicht
 
 # Modell-Identifier (exakt wie LM Studio ihn meldet)
 # Nach Download von Gemma 3 27B Q3_K_M hier anpassen:
-LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "qwen3.5-27b-instruct")
+LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "qwen3.5-9b-highiq-instruct")
 # NEU: Konfigurierbare Timeouts für große Modelle (Gemma 3 27B etc.)
 LM_STUDIO_VALIDATE_TIMEOUT = int(os.getenv("LM_STUDIO_VALIDATE_TIMEOUT", "10"))
 LM_STUDIO_VALIDATE_RETRIES = int(os.getenv("LM_STUDIO_VALIDATE_RETRIES", "3"))
 # Vertex AI Konfiguration
 VERTEX_MODEL = os.getenv("VERTEX_MODEL", "gemini-3.1-pro-preview")
-VERTEX_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "")
+VERTEX_PROJECT = os.getenv("GOOGLE_CLOUD_PROJECT", "hre-research-2026")
 
 # ==============================================================================
 # BACKEND-SPEZIFISCHE PIPELINE-LIMITS (NEU)
@@ -94,9 +94,11 @@ else:
     MAX_IFS_TOKENS = 2048  # FIX: 3.1-pro-preview braucht mehr Puffer (war 768, MAX_TOKENS-Abbruch)
     # Lokale LM Studio / Standard-Pipeline Konfigurationen
     RERANKER_CANDIDATES = int(os.getenv("LOCAL_RERANKER_CANDIDATES", "20"))
+    RERANKER_BATCH_SIZE = int(os.getenv("LOCAL_RERANKER_BATCH_SIZE", "4"))  # FIX
     MAX_CHUNKS_FINAL = int(os.getenv("LOCAL_MAX_CHUNKS", "4"))
     MAX_TOKENS_PER_CALL = 4096  # <--- ERHÖHT: 2048 ist zu wenig, wenn der Prompt schon 2000 hat!
     MAX_TOKENS_STILISIERUNG = 8192 # <--- NEU: LM Studio kann das auch!
+    MAX_TOKENS_STILISTIC_DISTILLATION = 4096  # FIX
 
 # Essence Parity & Rescue Mission
 ESSENCE_TOTAL_BUDGET = 60
@@ -131,7 +133,7 @@ if LLM_BACKEND == "vertex":
     MODEL_REGISTRY = {
         "chat": VERTEX_MODEL,
         "synthesis": "gemini-2.5-pro",  # Hart auf 2.5 Pro für verlässliche Zitate
-        "ifs": "gemini-3.1-pro-preview",  # Tier 1 — max_output_tokens respektiert (2.5-pro has technical limitation)
+        "ifs": "gemini-3.1-pro-preview",  # Tier 1 — max_output_tokens respektiert
         "enforcer": "gemini-2.5-pro",  # Tier 2 (Regeln strikt durchsetzen)
         "query_expansion": "gemini-2.5-pro",  # Tier 2 (Semantische Tiefe für die Suche)
         "fact_extraction": "gemini-2.5-flash",  # Tier 3 (Der große Geldsparer!)
@@ -143,6 +145,10 @@ if LLM_BACKEND == "vertex":
         "extraction": "gemini-2.5-flash",  # Tier 3 — buchstabengetreues Kopieren (Fix J.1)
         "correction": "gemini-2.5-flash",  # Tier 3 — Phase 3 Korrektur (Drei-Phasen-Architektur)
         "stilistic_distillation": "gemini-2.5-flash",  # Tier 3 — Stil-Distillation (Phase 0.5)
+        "meta_termini_extraction": "gemini-2.5-flash",  # Tier 3 — Mini-LLM für Termini-Extraktion
+        "meta_beobachten": "gemini-2.5-flash",  # Tier 3 — Stabilitäts-Vergleich (META-BEOBACHTEN)
+        "meta_destillation": "gemini-2.5-pro",  # Tier 2 — Harter Befund braucht Qualität (META-DESTILLATION)
+        "author_extraction": "gemini-2.5-flash",  # Tier 3 — Mini-LLM für Autoren-Erkennung (Schnitt 3 v2)
     }
 else:
     MODEL_REGISTRY = {
@@ -162,6 +168,10 @@ else:
             "extraction",
             "correction",
             "stilistic_distillation",
+            "meta_termini_extraction",
+            "meta_beobachten",
+            "meta_destillation",
+            "author_extraction",
         ]
     }
 
@@ -169,6 +179,14 @@ else:
 # ==============================================================================
 # SYSTEM-HYGIENE & LOGGING
 # ==============================================================================
+import sys, io
+if sys.platform == "win32":
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+    except AttributeError:
+        pass  # Kein buffer-Attribut (z.B. in pytest) — ignorieren
+
 def setup_logging():
     """Konfiguriert das Logging zentral."""
     log_dir = PROJECT_ROOT / "logs"
@@ -209,18 +227,7 @@ setup_logging()
 # auf dasselbe lokale Modell. Differenzierung möglich sobald
 # mehrere LM Studio Backends oder Claude API verfügbar.
 # ==============================================================================
-MODEL_CHAT_API = LM_STUDIO_MODEL
-MODEL_SYNTHESIS = LM_STUDIO_MODEL
-MODEL_ENFORCER = LM_STUDIO_MODEL
-MODEL_FACT_EXTRACTION = LM_STUDIO_MODEL
-MODEL_QUERY_EXPANSION = LM_STUDIO_MODEL
-MODEL_ROUTER = LM_STUDIO_MODEL
-MODEL_RERANKER = LM_STUDIO_MODEL
-MODEL_BULK_LABELING = LM_STUDIO_MODEL
-MODEL_TITLE_GEN = LM_STUDIO_MODEL
-MODEL_QUESTION_CONV = LM_STUDIO_MODEL
-MODEL_EXTRACTION = "gemini-2.5-flash-lite"
-MODEL_CORRECTION = "gemini-2.5-flash"  # Drei-Phasen: Phase 3 Korrektur-Modell
+# Legacy MODEL_*-Variablen entfernt (Refactor 6/2026): Aufrufer nutzen jetzt get_model_for_task() / MODEL_REGISTRY.
 
 # ==============================================================================
 # EMBEDDING KONFIGURATION
