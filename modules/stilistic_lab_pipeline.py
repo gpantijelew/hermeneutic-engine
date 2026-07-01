@@ -1,4 +1,4 @@
-# modules/stilistic_lab_pipeline.py — v57.7.5: Relationale Pipeline + Modus-Erkennung
+# modules/stilistic_lab_pipeline.py — v57.7.6: Autoren-Erkennung + B13b-Leerzeilen-Fix
 """
 STILISTIC LAB — Etappe 2+3 (pro Quelle) + Globale Synthese.
 
@@ -43,10 +43,12 @@ v57.7.5 RELATIONALE PIPELINE + MODUS-ERKENNUNG (2026-05-25):
     # result = {etappe1, etappen_2_3, globale_synthese}
 """
 
+import json
 import logging
 import re
 import time
-from typing import Dict, List, Optional
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 from modules.llm_wrapper import llm_call
 from modules.config import (
@@ -62,6 +64,449 @@ from modules.text_analyzer import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ==============================================================================
+# AUTOREN-ERKENNUNG aus Originaltexten (v57.7.6)
+# ==============================================================================
+# Scannt die Originaltexte nach Übersetzer-/Autornamen und ordnet sie
+# der richtigen QUELLE-Nummer zu. Wird in Etappe 2+3 und Globale Synthese
+# injiziert, damit das LLM nicht raten muss.
+#
+# Motivation: Ohne explizite Autornamen im QUELLE-Label muss das LLM
+# die Zuordnung aus Statistiken ableiten — und rät falsch, sobald die
+# Stats verfälscht sind (z.B. B13-Leerzeilen-Bug: regelmäßig→frei).
+# Siehe Forensik-Session 2026-06-15: Q1↔Q3-Vertauschung.
+
+# Bekannte Autornamen für diese Domain — Whitelist als Validierung
+_KNOWN_AUTHORS = {
+    'Starikovskij', 'Starikovsky', 'Žukovskij', 'Zhukovskij',
+    'Zhukovsky', 'Žukovsky', 'Veresaev', 'Veresayev',
+    'Homer', 'Homeros',
+    # Kyrillische Formen
+    'Стариковский', 'Жуковский', 'Вересаев',
+}
+
+# Deutsche/Stil-Analyse-Begriffe die KEINE Autornamen sind
+_AUTHOR_STOPWORDS = {
+    'Quelle', 'DESTILLATION', 'Beweisführung', 'Hypothese',
+    'Dominante', 'Operation', 'Vers', 'Satz', 'Stil',
+    'Grundoperation', 'Kennzahl', 'Vergleich', 'Synthese',
+    'Übersetzung', 'Original', 'Originals', 'Text', 'Werk',
+    'Form', 'Lösung', 'Inhalt', 'Wort', 'Reim', 'Rhythmus',
+    'Klang', 'Bild', 'Kraft', 'Stimme', 'Grund', 'Sinn',
+    'Sprache', 'Dichtung', 'Poesie', 'Lyrik', 'Epik',
+    'Morphologie', 'Enjambement', 'Komposita',
+    'Verfahren', 'Prinzip', 'Methode', 'Technik', 'Strategie',
+    'Haltung', 'Position', 'Modus', 'Funktion', 'Charakter',
+    'Homers',  # Genitiv — "Homer" wird separat erkannt
+}
+
+
+def _is_likely_author_name(name: str) -> bool:
+    """Prüft ob ein erkannter Name wahrscheinlich ein Autorname ist."""
+    if not name or len(name) < 4:
+        return False
+    if name in _AUTHOR_STOPWORDS:
+        return False
+    # Genitiv-Filter
+    if name.endswith('s') and len(name) > 3:
+        stem_s = name[:-1]
+        stem_es = name[:-2] if name.endswith('es') and len(name) > 4 else None
+        if stem_s in _AUTHOR_STOPWORDS or (stem_es and stem_es in _AUTHOR_STOPWORDS):
+            return False
+    return True
+
+
+# ==============================================================================
+# AUTOREN-KONSOLIDIERUNG (v57.8.0 / Schnitt 1 — Claude+GLM Architektur 2026-06-20)
+# ==============================================================================
+# Vierstufige Prioritätskette:
+#   (1) Explizites User-Metadatum (author_metadata Parameter)
+#   (2) Sidecar vom Re-Run (falls existing_sidecar_path auf eine .md zeigt,
+#       deren HTML-Kommentar-Sidecar bereits Autoren enthält)
+#   (3) Erste Zeile des Quelltexts (konservative Heuristik)
+#   (4) Fallback — PLATZHALTER in Schnitt 1, Implementierung in Schnitt 3
+#       (Positions-Constraint-Regex). WICHTIG: In Schnitt 1 wird hier BEWUSST
+#       nicht die alte _detect_authors_in_texts() aufgerufen, um den Bug
+#       nicht durch die Hintertür zurückzuholen.
+# ==============================================================================
+
+
+def _resolve_author_map(
+    source_texts: Dict[str, str],
+    author_metadata: Optional[Dict[str, str]] = None,
+    existing_sidecar_path: Optional[Path] = None,
+) -> Dict[str, Dict[str, str]]:
+    """
+    Konsolidiert die Autorenzuordnung pro Quelle über die vierstufige
+    Prioritätskette. Liefert sowohl die aufgelösten Autoren als auch
+    die Herkunft jeder Entscheidung (resolution_chain).
+
+    Args:
+        source_texts:            Dict {source_label: text_content}
+        author_metadata:         Optional: User-Input {source_label: author_name}
+                                 (Stufe 1 — gewinnt immer)
+        existing_sidecar_path:   Optional: Pfad zu einer bestehenden .md-Datei,
+                                 deren HTML-Kommentar-Sidecar gelesen wird (Stufe 2).
+                                 Idempotenz bei Re-Runs.
+
+    Returns:
+        {
+          "authors": {"QUELLE 1": "Jesaia", ...},  # None-Werte möglich bei "unresolved"
+          "resolution_chain": {"QUELLE 1": "user_metadata", ...}
+        }
+        Mögliche resolution_chain Werte:
+          "user_metadata"   — Stufe 1
+          "sidecar_rerun"   — Stufe 2
+          "first_line"      — Stufe 3
+          "unresolved"      — Stufe 4 (Schnitt 1 Platzhalter, Schnitt 3 implementiert)
+    """
+    authors: Dict[str, Optional[str]] = {}
+    resolution_chain: Dict[str, str] = {}
+
+    # Stufe 2 vorab laden, falls vorhanden
+    existing_sidecar = None
+    if existing_sidecar_path and existing_sidecar_path.exists():
+        try:
+            md_text = existing_sidecar_path.read_text(encoding="utf-8")
+            existing_sidecar = _extract_authors_sidecar_from_md(md_text)
+        except (OSError, ValueError):
+            existing_sidecar = None  # korruptes Sidecar wird ignoriert, nicht eskaliert
+
+    for quelle_key, text in source_texts.items():
+        # Stufe 1: User-Metadatum
+        if author_metadata and quelle_key in author_metadata and author_metadata[quelle_key]:
+            authors[quelle_key] = author_metadata[quelle_key]
+            resolution_chain[quelle_key] = "user_metadata"
+            continue
+
+        # Stufe 2: Sidecar vom Re-Run
+        if existing_sidecar and quelle_key in existing_sidecar.get("authors", {}):
+            authors[quelle_key] = existing_sidecar["authors"][quelle_key]
+            resolution_chain[quelle_key] = "sidecar_rerun"
+            continue
+
+        # Stufe 3: Mini-LLM-Call (seit Schnitt 3 v2)
+        # _extract_first_line_author() ist jetzt LLM-basiert, nicht mehr First-Line-Heuristik.
+        # Variablenname first_line ist aus Kompatibilität geblieben, aber semantisch
+        # ist es das LLM-Ergebnis.
+        first_line = _extract_first_line_author(text)
+        if first_line:
+            authors[quelle_key] = first_line
+            resolution_chain[quelle_key] = "mini_llm"
+            continue
+
+        # Stufe 4: Platzhalter — Schnitt 3 liefert hier die Regex-Korrektur.
+        # In Schnitt 1 bewusst None/"unresolved", NICHT die alte
+        # fehleranfällige _detect_authors_in_texts() aufrufen.
+        authors[quelle_key] = None
+        resolution_chain[quelle_key] = "unresolved"
+
+    # v59.9.1 Fix 2026-06-21: Log-Zeile entfernt — duplicate mit der
+    # 🖊️ Autoren konsolidiert-Zeile in run_stilistic_lab(). Reduziert Terminal-Noise.
+    # Die Info ist in der aufrufenden Funktion sichtbar.
+    return {"authors": authors, "resolution_chain": resolution_chain}
+
+
+def _extract_first_line_author(text: str, source_label: str = "") -> Optional[str]:
+    """
+    Stufe-3-Heuristik (v57.8.2 / Schnitt 3 v2 — LLM-basiert 2026-06-20):
+    Mini-LLM-Call statt Regex. Die Autoren-Erkennung ist eine semantische
+    Aufgabe (variable Sprachen, variable Formate, Werk-Titel vs. Autor-
+    Namen, Übersetzer-Marker in verschiedenen Konventionen). Regex versagt
+    hier systematisch. Das LLM generalisiert.
+
+    Prompt: „Lies die ersten 5 Zeilen. Wer ist der Autor/Übersetzer?
+    Antworte NUR mit dem Namen, sonst nichts."
+
+    1 Call pro Quelle, 4 Calls für 4 Quellen. Flash-Modell, max_tokens=20.
+
+    Args:
+        text:          Der Quelltext (oder die ersten N Zeilen davon).
+        source_label:  Optional: QUELLE-Label für Logging.
+
+    Returns:
+        Autor-Name als String, oder None bei Fehler/leerem Input.
+    """
+    if not text:
+        return None
+
+    # Erste 5 nicht-leere Zeilen nehmen — mehr braucht das LLM nicht
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        lines.append(stripped)
+        if len(lines) >= 5:
+            break
+
+    if not lines:
+        return None
+
+    text_for_llm = "\n".join(lines)
+
+    # Mini-LLM-Call: Flash-Modell, kurze Antwort
+    # v57.8.3: Prompt präzisiert — verlangt Nachname im Nominativ, latinisiert.
+    # Vorher: LLM lieferte „В.А. Жуковского" (kyrillisch, Genitiv, mit Initialien)
+    # Jetzt: LLM liefert „Žukovskij" (Nachname, Nominativ, latinisiert)
+    prompt = (
+        "Lies die folgenden Zeilen aus dem Anfang eines Textes. "
+        "Identifiziere den Autor oder Uebersetzer. "
+        "ANTWORTFORMAT: Nur der NACHNAME im NOMINATIV, LATINISIERT "
+        "(kyrillische Namen in lateinischer Umschrift). "
+        "BEISPIELE: Autor, Uebersetzer, Herausgeber, Mitverfasser. "
+        "FALSCH wären: V.A. Zukovskogo, Жуковский, Григория Стариковского, "
+        "Thomas Paine (mit Vorname). "
+        "Wenn kein Autor erkennbar ist: antworte UNBEKANNT.\n\n"
+        "--- TEXT-ANFANG ---\n"
+        f"{text_for_llm}\n"
+        "--- TEXT-ENDE ---"
+    )
+
+    system_instruction = (
+        "Du extrahierst Autorennamen aus Textanfaengen. "
+        "ANTWORTFORMAT: AUSSCHLIESSLICH der Nachname im Nominativ, "
+        "latinisiert (kyrillische Namen in lateinischer Umschrift, "
+        "z.B. Zukovskij statt Жуковский oder Жуковского). "
+        "KEINE Vornamen, KEINE Initialien, KEINE Genitiv-Endungen, "
+        "KEINE Satzzeichen, KEINE Erklaerung. "
+        "Bei Uebersetzungen: gib den Uebersetzer an, nicht den Originalautor. "
+        "Bei unbekanntem Autor: antworte UNBEKANNT."
+    )
+
+    label_tag = f" [{source_label}]" if source_label else ""
+    logger.info(f"  🤖 Mini-LLM Autoren-Erkennung{label_tag}: {len(text_for_llm)} Zchn Input")
+
+    try:
+        response = llm_call(
+            prompt=prompt,
+            task="author_extraction",  # Config 2026-06-20: eigener Task für Mini-LLM-Calls
+            system_instruction=system_instruction,
+            temperature=0.0,
+            max_tokens=200,  # Bug-Fix 2026-06-20: 20 war zu niedrig für Flash-Reasoning
+            domain="stilisierung",
+        )
+    except Exception as e:
+        logger.error(f"  ❌ Mini-LLM Autoren-Erkennung{label_tag} fehlgeschlagen: {e}")
+        return None
+
+    if not response:
+        logger.warning(f"  ⚠️ Mini-LLM{label_tag} lieferte leere Antwort")
+        return None
+
+    # Antwort bereinigen: trimmen, Satzzeichen entfernen, UNBEKANNT filtern
+    author = response.strip()
+    author = author.strip(".\"'\n ")
+    if not author or author.upper() == "UNBEKANNT":
+        logger.info(f"  ℹ️ Mini-LLM{label_tag}: kein Autor erkannt (UNBEKANNT)")
+        return None
+    # Bug-Fix 2026-06-20: Mindestlängen-Check. Flash kann bei zu niedrigen
+    # max_tokens manchmal nur 1 Token generieren (z.B. "В" statt "Вересаев").
+    # Ein einzelner Buchstabe ist kein gültiger Autor.
+    if len(author) < 2:
+        logger.warning(f"  ⚠️ Mini-LLM{label_tag}: Antwort zu kurz ('{author}'), verworfen")
+        return None
+
+    logger.info(f"  ✅ Mini-LLM{label_tag}: Autor erkannt = '{author}'")
+    return author
+
+def _extract_authors_sidecar_from_md(md_text: str) -> Optional[Dict]:
+    """
+    Extrahiert das HTML-Kommentar-Sidecar aus einer .md-Datei.
+
+    Sucht nach einem Kommentar der Form:
+      <!-- HRE-AUTHORS-SIDECAR
+      {...JSON...}
+      -->
+
+    V57.8.0 Claude-Review Fix: Suche nur in den ersten 500 Zeichen von md_text.
+    Begründung: Ein find() über die gesamte Datei würde das ERSTE Vorkommen des
+    Markers finden, egal wo. Wenn ein Korpus-Quelltext selbst diesen String
+    enthält (z.B. ein zitierter Abschnitt aus einer früheren Analyse oder ein
+    versehentlich eingefügter alter Sidecar-Kommentar), würde die Funktion den
+    falschen Block parsen. Da der Sidecar laut Spezifikation garantiert am
+    Dateianfang sitzt, ist die Suche in den ersten 500 Zeichen sicher und
+    schließt diesen Edge Case aus.
+
+    Returns:
+        Geparstes Dict oder None, wenn kein Sidecar gefunden wurde.
+    """
+    if not md_text:
+        return None
+    # Claude-Review Fix: nur in den ersten 500 Zeichen suchen
+    search_window = md_text[:500]
+    marker = "HRE-AUTHORS-SIDECAR"
+    idx = search_window.find(marker)
+    if idx < 0:
+        return None
+    # Suche den schließenden --> nach dem Marker (im gesamten Text, da der
+    # JSON-Block länger als 500 Zeichen sein kann)
+    end_idx = md_text.find("-->", idx)
+    if end_idx < 0:
+        return None
+    # Extrahiere den Block zwischen Marker und -->, finde { und }
+    block = md_text[idx:end_idx]
+    brace_start = block.find("{")
+    brace_end = block.rfind("}")
+    if brace_start < 0 or brace_end < 0 or brace_end <= brace_start:
+        return None
+    json_str = block[brace_start:brace_end + 1]
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError:
+        return None
+
+
+def _embed_authors_sidecar_in_md(
+    md_content: str,
+    author_map: Dict[str, Optional[str]],
+    resolution_chain: Dict[str, str],
+) -> str:
+    """
+    Bettet die Autoren-Metadaten als HTML-Kommentar am Anfang des
+    md_content-Strings ein. Wird in der UI-Schicht (stilistic_lab_tab.py)
+    aufgerufen, bevor der md_content dem st.download_button übergeben wird.
+
+    V57.8.0 Claude-Review Fix: Prüft vor dem Einbetten, ob md_content bereits
+    einen Sidecar-Kommentar am Anfang enthält. Falls ja, wird md_content
+    unverändert zurückgegeben (Idempotenz). Verhindert doppelte Sidecar-
+    Kommentare bei wiederholtem Aufruf (z.B. Streamlit-Re-Render mit
+    gecachtem result).
+
+    Schema:
+      <!-- HRE-AUTHORS-SIDECAR
+      {"version": "1.0", "created_at": "...", "source_count": N,
+       "authors": {...}, "resolution_chain": {...}}
+      -->
+
+      [regulärer md_content folgt]
+    """
+    # Claude-Review Fix: Idempotenz-Check — nicht doppelt einbetten
+    if md_content.lstrip().startswith("<!-- HRE-AUTHORS-SIDECAR"):
+        return md_content  # bereits eingebettet, nichts tun
+
+    sidecar = {
+        "version": "1.0",
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "source_count": len(author_map),
+        "authors": {k: v for k, v in author_map.items()},  # None-Werte bleiben als null
+        "resolution_chain": dict(resolution_chain),
+    }
+    # Kompakte JSON-Darstellung, aber lesbar formatiert (2-Zeilen-Block im Kommentar)
+    # Bug-Fix 2026-06-20: time.strftime statt datetime.now().isoformat —
+    # `datetime` ist in stilistic_lab_pipeline.py nicht importiert (nur `time`).
+    # Vermeidet NameError: name 'datetime' is not defined.
+    json_str = json.dumps(sidecar, ensure_ascii=False, indent=2)
+    comment = f"<!-- HRE-AUTHORS-SIDECAR\n{json_str}\n-->\n\n"
+    return comment + md_content
+
+
+def _detect_authors_in_texts(source_texts: Dict[str, str]) -> Dict[str, str]:
+    """Erkennt Autornamen in den Originaltexten und ordnet sie der QUELLE zu.
+
+    Scannt jeden Originaltext nach Übersetzer-/Autornamen:
+    1. "перевод" + Genitiv-Name (zuverlässigstes Muster in russischen Texten)
+    2. Kyrillische Autornamen (Nominativ + Genitiv-Suffixes)
+    3. Lateinische Autornamen mit diakritischen Zeichen (Žukovskij etc.)
+    4. Fallback: Bekannte Autornamen aus Whitelist
+
+    Kyrillische Formen werden auf latinisierte Formen gemappt
+    (z.B. Стариковский → Starikovskij) für konsistente Darstellung.
+
+    Args:
+        source_texts: Dict {source_label: text_content}
+
+    Returns:
+        Dict {source_label: author_name} — nur für Quellen mit erkanntem Autor.
+        Quellen ohne erkennbaren Autor werden NICHT aufgenommen.
+    """
+    # Mapping kyrillisch → latinisiert (für konsistente Prompt-Darstellung)
+    _CYR_TO_LAT = {
+        'Стариковский': 'Starikovskij',
+        'Стариковского': 'Starikovskij',   # Genitiv
+        'Жуковский': 'Žukovskij',
+        'Жуковского': 'Žukovskij',          # Genitiv
+        'Вересаев': 'Veresaev',
+        'Вересаева': 'Veresaev',            # Genitiv
+    }
+
+    author_map = {}
+
+    for label, text in source_texts.items():
+        if not text or not text.strip():
+            continue
+
+        found_cyr = set()   # Kyrillische Formen (für Mapping)
+        found_lat = set()   # Lateinische Formen (direkt verwendbar)
+
+        # Muster 1 (ZUVERLÄSSIGSTES): "перевод" + Name im Genitiv
+        # z.B. "Перевод с древнегреческого Григория Стариковского"
+        # z.B. "перевод Вересаева"
+        for m in re.finditer(
+            r'[Пп]еревод[а-яё]*\s+'
+            r'(?:с\s+\S+\s+)?'        # optional: "с древнегреческого"
+            r'([А-ЯЁ][а-яё]{2,}'      # Vorname (optional)
+            r'(?:\s+[А-ЯЁ][а-яё]+)?'  # Nachname
+            r'(?:ского|ского|вой|евой|на|ний|вич)'  # Genitiv-Endung
+            r')',
+            text
+        ):
+            full_name = m.group(1).strip()
+            # Versuche Mapping über Nachnamen
+            for Cyr, lat in _CYR_TO_LAT.items():
+                if Cyr in full_name:
+                    found_cyr.add(Cyr)
+                    found_lat.add(lat)
+
+        # Muster 2: Kyrillische Autornamen — Nominativ und Genitiv
+        for m in re.finditer(
+            r'([А-ЯЁ][а-яё]+(?:ский|ского|ская|ая|ий|ов|ова|ева|ева|ин|ына|на))',
+            text
+        ):
+            name = m.group(1)
+            if name in _CYR_TO_LAT:
+                found_cyr.add(name)
+                found_lat.add(_CYR_TO_LAT[name])
+            elif name not in _AUTHOR_STOPWORDS and len(name) >= 5:
+                found_cyr.add(name)
+
+        # Muster 3: Lateinische Namen mit diakritischen Zeichen
+        for m in re.finditer(
+            r'([A-ZÁÀÂÄÅĂĄĆČĎĐÉÈÊËĖĘĚĞÍÌÎÏİĶĹĽŁŃŇÑÓÒÔÖŐŐŘŔŚŠŞŤŢÚÙÛÜŰŮŴÝŸŹŽŻ]'
+            r'[a-záàâäăąćčďđéèêëęěğíìîïıķĺľłńňñóòôöőřŕśšşťţúùûüűůŵýÿźžż]+'
+            r'(?:[vV]on)?'
+            r'[a-záàâäăąćčďđéèêëęěğíìîïıķĺľłńňñóòôöőřŕśšşťţúùûüűůŵýÿźžż]*)',
+            text
+        ):
+            name = m.group(1).strip()
+            if _is_likely_author_name(name):
+                found_lat.add(name)
+
+        # Muster 4: Fallback — bekannte Autornamen im Text
+        if not found_cyr and not found_lat:
+            for known in _KNOWN_AUTHORS:
+                if known in text and known not in _AUTHOR_STOPWORDS:
+                    if re.match(r'[А-ЯЁ]', known):
+                        found_cyr.add(known)
+                    else:
+                        found_lat.add(known)
+
+        # Ergebnis: Latinisierte Form bevorzugen (konsistent im Prompt)
+        if found_lat:
+            author_map[label] = sorted(found_lat)[0]
+        elif found_cyr:
+            # Kyrillisch ohne Mapping — versuche Mapping
+            for Cyr in sorted(found_cyr):
+                if Cyr in _CYR_TO_LAT:
+                    author_map[label] = _CYR_TO_LAT[Cyr]
+                    break
+            else:
+                author_map[label] = sorted(found_cyr)[0]
+
+    logger.info(f"  Erkannte Autoren pro Quelle: {author_map}")
+    return author_map
 
 
 # ==============================================================================
@@ -242,6 +687,134 @@ Max 8 W\u00f6rter, ein Gedankenstrich. Wie ein Buchtitel.
 
 
 # ==============================================================================
+# QUELLEN-GEGENPOSITION: SYSTEM-INSTRUCTION + PROMPT (v59.10.0 Schritt 2)
+# ==============================================================================
+
+_QUELLEN_GEGENPOSITION_SYSTEM = """Du bist ein kritischer Gegen-Analytiker.
+Deine Aufgabe ist es, GEGEN die These zu argumentieren, die die bestaetigende
+Analyse aufgestellt hat. Du suchst nach Befunden, die die These
+widerlegen, modifizieren oder alternative Erklaerungen ermoeglichen.
+
+STRIKTE REGELN:
+- PFLICHT: Behandle JEDEN Autor/jede Quelle in einem eigenen Absatz.
+  Ueberspringe keine Quelle - auch wenn du keine Gegenbefunde findest,
+  schreibe explizit, warum fuer diese Quelle keine Gegenbefunde gefunden wurden.
+- Beziehe dich auf konkrete Etappe-1-Kennzahlen (TTR, Satzlaenge, etc.)
+- Formuliere mindestens eine alternative Erklaerung pro Autor
+- Keine Harmonisierung: Wenn ein Gegenbefund stark ist, sage das.
+- Keine Bestaetigung: Suche aktiv nach dem, was NICHT zur These passt.
+
+ZENTRALE REGEL (v59.10.1 Schritt A):
+- Die bestaetigende Analyse stuetzt sich auf KONKRETE ZITATE aus den Texten.
+- Du MUSST dich mit diesen Zitaten auseinandersetzen — nicht mit abstrakten
+  Framings. Wenn die These sagt "Brodskij verwendet imperiales Vokabular
+  (Империя, еловое войско)", musst du argumentieren, WARUM diese Woerter
+  NICHT imperial sind — oder zugeben, dass die These hier stark ist.
+- VERBOTEN: Abstrakte Gegenlesarten ohne Textbezug (z.B. "Poetik der
+  Deprivation" ohne Bezug zu konkreten Zitaten).
+- PFLICHT: Zitiere die Woerter, gegen die du argumentierst.
+- PFLICHT: Wenn du eine alternative Erklaerung formulierst, muss sie die
+  KONKRETEN ZITATE ebenso gut erklaeren wie die These — nicht die abstrakte
+  Zusammenfassung."""
+
+_QUELLEN_GEGENPOSITION_PROMPT = """QUELLEN-GEGENPOSITION: Argumentiere GEGEN die These der bestaetigenden Analyse.
+
+Die bestaetigende Globale Synthese hat folgende These aufgestellt:
+{globale_synthese}
+
+Die untersuchte Frage war:
+{user_question}
+
+PFLICHT: Behandle JEDEN der folgenden Autoren/Quellen in einem eigenen Absatz.
+Format: ### [Autor/Quelle]
+Ueberspringe KEINE Quelle. Wenn du fuer eine Quelle keine Gegenbefunde findest,
+schreibe explizit: "Fuer [Quelle] wurden keine Gegenbefunde gefunden, weil..."
+und erklaere, warum die These fuer diese Quelle besonders gut passt.
+
+Fuer jede Quelle:
+1. IDENTIFIZIERE Gegenbefunde: Welche sprachlichen oder rhetorischen Elemente
+   sprechen GEGEN die These? Beziehe Etappe-1-Kennzahlen ein.
+2. ALTERNATIVE ERKLAERUNG: Formuliere mindestens eine alternative Erklaerung,
+   die die Daten ebenso gut erklaert wie die These.
+3. FALSIFIKATIONS-BEDINGUNG: Was muesste in den Daten stehen, damit die
+   These fuer diese Quelle eindeutig widerlegt waere?
+
+Autoren/Quellen (aus Etappe-1-Daten):
+{quellen_liste}
+
+Etappe-1-Kennzahlen:
+{kennzahlen_block}
+
+Einzelbeobachtungen (Etappe 2+3, mit konkreten Zitaten):
+{einzelbeobachtungen}
+
+ZENTRALE ANWEISUNG (v59.10.1 Schritt A):
+Die bestaetigende Analyse stuetzt sich auf konkrete Zitate aus den Texten.
+Diese Zitate stehen in den Einzelbeobachtungen oben. Du MUSST dich mit
+diesen Zitaten auseinandersetzen:
+
+1. IDENTIFIZIERE die konkreten Zitate, auf die die These sich stuetzt.
+2. ARGUMENTIERE GEGEN diese Zitate: Warum beweisen sie nicht, was die
+   These behauptet? Sind sie anders interpretierbar?
+3. Wenn du eine Zitat-Interpretation nicht widerlegen kannst: SAGE DAS.
+   "Die These ist fuer dieses Zitat stark, weil..." ist ehrlicher als
+   eine abstrakte Gegenlesart ohne Textbezug.
+
+VERBOTEN: Abstrakte Gegenlesarten ohne Bezug zu konkreten Zitaten.
+PFLICHT: Jeder Gegenbefund muss sich auf mindestens ein konkretes Zitat
+aus dem Text beziehen.
+
+WICHTIG: Dies ist eine GEGENPOSITION. Suche nicht nach Bestaetigung.
+Suche nach dem, was die These herausfordert."""
+
+
+def _build_quellen_gegenposition_prompt(
+    globale_synthese: str,
+    user_question: str,
+    valid_results: Dict[str, str],
+    individual_stats: Dict[str, Dict],
+    author_map: Optional[Dict[str, str]] = None,
+    comparison_table_text: str = "",
+) -> str:
+    """Baut den Prompt fuer die Quellen-Gegenposition."""
+    quellen = []
+    for label in valid_results.keys():
+        author = author_map.get(label, "") if author_map else ""
+        author_str = f" [{author}]" if author else ""
+        quellen.append(f"- {label}{author_str}")
+    quellen_liste = "\n".join(quellen)
+
+    kennzahlen_lines = []
+    for label, s in individual_stats.items():
+        kennzahlen_lines.append(
+            f"  {label}: {s.get('words', 0)} Woerter | "
+            f"TTR {s.get('TTR', 0):.3f} | "
+            f"O {s.get('avg_sent_len', 0)} | "
+            f"Alliterationen {s.get('alliterationen', '-')} | "
+            f"Enjamb. {s.get('enjambement', '-')}"
+        )
+    kennzahlen_block = "\n".join(kennzahlen_lines)
+
+    einzel_lines = []
+    for label, text in valid_results.items():
+        einzel_lines.append(f"--- {label} ---\n{text[:3000]}\n")
+    einzelbeobachtungen = "\n".join(einzel_lines)[:16000]
+
+    prompt = _QUELLEN_GEGENPOSITION_PROMPT.format(
+        globale_synthese=globale_synthese[:5000],
+        user_question=user_question or "(keine spezifische Frage)",
+        quellen_liste=quellen_liste,
+        kennzahlen_block=kennzahlen_block,
+        einzelbeobachtungen=einzelbeobachtungen,
+    )
+
+    if comparison_table_text:
+        prompt += f"\n\nVergleichstabelle:\n{comparison_table_text}\n"
+
+    return prompt
+
+
+# ==============================================================================
 # GLOBALE SYNTHESE: SYSTEM-INSTRUCTION
 # ==============================================================================
 
@@ -261,6 +834,34 @@ zu fassen. Nenne keine Schulen, keine Methoden."""
 # GLOBALE SYNTHESE: PROMPT
 # ==============================================================================
 
+def _format_klang_table_for_synthese(individual_stats: Dict[str, Dict]) -> str:
+    """v57.8.4: Formatiert Klang-Kennzahlen als Tabelle für den Synthese-Prompt.
+    Analog zu format_comparison_table_for_llm, aber fokussiert auf Klang.
+    Liefert numerische Werte, damit die Synthese BEWEISE führen kann
+    (statt „dichte akustische Textur" — „15 Alliterationen").
+    """
+    if not individual_stats:
+        return "(Keine Klang-Kennzahlen verfügbar)"
+
+    headers = ["Quelle", "Alliterationen", "Assonanzen", "Binnenreime", "Vokal-Echos", "Reim", "Enjambement"]
+    lines = ["| " + " | ".join(headers) + " |"]
+    lines.append("|" + "|".join([" --- "] * len(headers)) + "|")
+
+    for label, s in individual_stats.items():
+        row = [
+            str(label),
+            str(s.get("alliterationen", "—")),
+            str(s.get("assonanzen", "—")),
+            str(s.get("binnenreime", "—")),
+            str(s.get("vokalechos", "—")),
+            str(s.get("reim_typ", "—")),
+            str(s.get("enjambement", "—")),
+        ]
+        lines.append("| " + " | ".join(row) + " |")
+
+    return "\n".join(lines)
+
+
 def _build_globale_synthese_prompt(
     etappen_results: Dict[str, str],
     comparison_table_text: str,
@@ -270,6 +871,8 @@ def _build_globale_synthese_prompt(
     dominant_labels: Optional[Dict[str, str]] = None,
     grundoperation_labels: Optional[Dict[str, str]] = None,
     modus_labels: Optional[Dict[str, str]] = None,
+    author_map: Optional[Dict[str, str]] = None,
+    klang_table_text: str = "",  # v57.8.4: Klang-Kennzahlen-Tabelle für Beweisführung
 ) -> str:
     """
     Baut den Prompt für die Globale Synthese.
@@ -288,6 +891,7 @@ def _build_globale_synthese_prompt(
         praegnanz_sentences:   Dict {source_label: praegnanz_satz} (v57.6)
         individual_stats:      Dict {source_label: stats_dict} (v57.6.1)
         dominant_labels:       Dict {source_label: dominante} (v57.7.1)
+        author_map:            Dict {source_label: author_name} (v57.7.6)
     """
     # Schicht 0: KONZENTRAT — Dominante + Grundoperation + Modus + Titel pro Quelle (v57.7.5)
     konzentrat_block = "\n--- KONZENTRAT (Dominante | Grundoperation | Modus | Titel pro Quelle) ---\n"
@@ -302,8 +906,18 @@ def _build_globale_synthese_prompt(
         op = grundoperation_labels.get(label, "\u2014") if grundoperation_labels else "\u2014"
         mod = modus_labels.get(label, "\u2014") if modus_labels else "\u2014"
         titel = praegnanz_sentences.get(label, "\u2014") if praegnanz_sentences else "\u2014"
-        konzentrat_block += f"  {label}: Dominante: {dom} | Operation: {op} | Modus: {mod} | Titel: {titel}\n"
+        # v57.7.6: Autornamen im KONZENTRAT anzeigen wenn verfügbar
+        author_str = f" [{author_map[label]}]" if author_map and label in author_map else ""
+        konzentrat_block += f"  {label}{author_str}: Dominante: {dom} | Operation: {op} | Modus: {mod} | Titel: {titel}\n"
     konzentrat_block += "\n"
+
+    # v57.7.6: Explizite Autoren-Zuordnung als separates Block
+    # Damit das LLM die Zuordnung QUELLE → Autor nicht raten muss
+    if author_map and len(author_map) >= 2:
+        konzentrat_block += "--- AUTOREN-ZUORDNUNG ---\n"
+        for label, name in sorted(author_map.items()):
+            konzentrat_block += f"  {label} = {name}\n"
+        konzentrat_block += "\n"
 
     # Schicht 1: (in KONZENTRAT integriert, v57.7.5)
     verdichtung_block = ""
@@ -349,23 +963,49 @@ def _build_globale_synthese_prompt(
 {konzentrat_block}{kennzahlen_block}--- VERGLEICHSTABELLE ---
 {comparison_table_text}
 
+--- KLANG-KENNZAHLEN (numerisch, für Beweisführung) ---
+{klang_table_text}
+
+WICHTIG - BEWEISFÜHRUNG mit KLANG-KENNZAHLEN:
+- Wenn die UNTERSUCHUNGSFRAGE nach KLANG fragt: nutze die obige Tabelle für BEWEISE.
+- In der Tabelle der UNTERSUCHUNGSFRAGE-Sektion: NUMERISCHE WERTE aus der KLANG-KENNZAHLEN-Tabelle übernehmen, nicht nur Adjektive.
+- Statt „dichte Verwendung" schreibe „15 Alliterationen" (Zahl aus der Tabelle).
+- Statt „Vorhanden" schreibe „2 Binnenreime" (Zahl aus der Tabelle).
+- Im Urteil: NUMERISCHE VERGLEICHE führen. Beispiel:
+  „Autor A: 15 Alliterationen (Autor B: 12, Autor C: 8, Autor D: 5)"
+- BELEGE aus Etappe 2/3 als konkrete Wörter (z.B. „Alliteration 'выступают вперед взаимообразно' V.5-6").
+- KEINE Synthese-eigenen Begriffe als Beleg (z.B. „Klangfügung als Dominante" ist Synthese-Vokabular, kein Beweis).
+
 --- EINZELBEOBACHTUNGEN PRO QUELLE ---
 {quellen_block}
 
 ---
 
-GLOBALE SYNTHESE:
 Beziehe dich auf die Einzelbeobachtungen oben. Verkn\u00fcpfe die Funde
 zu einem Argument \u2014 nicht zu einer Liste.
 Wenn die Quellen-Bezeichnungen Autoren-Namen oder Gruppen enthalten,
 nutze diese, um die Beobachtungen zu strukturieren.
 
 HYPOTHESE:
-Formuliere die k\u00fchnste, aber noch plausible Behauptung,
-die dieser Vergleich ergibt.
-Nicht: eine Beobachtung, die du schon gemacht hast.
-Sondern: eine Behauptung, die stimmen k\u00f6nnte oder nicht \u2014
-die aber, wenn sie stimmt, mehr erkl\u00e4rt als alle Einzelbeobachtungen.
+Formuliere die sch\u00e4rfste Behauptung, die sich direkt aus den
+KONZENTRAT-Feldern DOMINANTE und GRUNDOPERATION ableitet.
+PFLICHT: Die Behauptung MUSS die Terminologie aus dem KONZENTRAT
+verwenden \u2014 keine freien Metaphern, keine Bilder, die nicht
+im KONZENTRAT stehen.
+DESTILLATION: Bilde aus den KONZENTRAT-Feldern DOMINANTE
+und GRUNDOPERATION je einen Stil-Terminus pro Quelle.
+PRODUKTIONSBEDINGUNG: Die Termini m\u00fcssen paarweise
+verschieden sein \u2014 jeder Terminus benennt eine Operation,
+die diese Quelle von allen anderen unterscheidet.
+Kriterium: Was tut dieser Text, das kein anderer tut?
+Wenn zwei Termini dieselbe Operation beschreiben, ist
+mindestens einer falsch destilliert.
+Ausnahme: Wenn eine Quelle keine scharfe Abweichung zeigt,
+benenne ihre Position im Vergleichsraum als das, was sie
+ist — Verzicht, Mitte, Anpassung oder ein anderer
+Beobachtungsterminus. Kein Urteil über die Intention
+des Übersetzers.
+Diese Termini sind das Vokabular des Fazits.
 Sie muss falsifizierbar sein: Was w\u00fcrde sie widerlegen?
 
 Hinweis: Tynjanows Methode ist die relationale Frage.
@@ -400,16 +1040,52 @@ Wenn die Operationen aus allen Quellen eine gemeinsame
 Logik haben \u2014 wie lie\u00dfe sie sich in einem Satz benennen?
 Nicht als Zusammenfassung. Sondern als Hypothese.
 
-FAZIT:
-Best\u00e4tigung, Revision oder Versch\u00e4rfung der Hypothese.
-Nichts Neues mehr."""
+FAZIT: Verwende die destillierten Termini als das
+Vokabular des Fazits. Die Termini d\u00fcrfen in Metaphern
+eingebettet werden, aber nicht durch Metaphern ersetzt
+werden. Eine Quelle ohne scharfe Abweichung verdient
+gesonderte Erwähnung — ihre Position im Vergleichsraum
+ist ein Befund, kein Mangel. Der letzte Satz beantwortet die
+Untersuchungsfrage als Urteil."""
 
     # Benutzerdefinierte Frage injizieren
     if user_question and user_question.strip():
         prompt += f"""
 
-FRAGE: {user_question.strip()}
-Beantworte diese Frage auf Basis der Beobachtungen oben."""
+UNTERSUCHUNGSFRAGE: {user_question.strip()}
+
+WICHTIG - THEMABEZUG DER ANTWORT:
+Beantworte diese Frage NUR mit Etappe-1-Kennzahlen, die zum THEMA der Frage passen.
+Welche Kennzahlen thematisch passen, entscheidet sich nach dem Schwerpunkt der Frage:
+
+- Wenn die Frage nach KLANG fragt: nutze Vokal-Echos, Alliterationen, Assonanzen,
+  Binnenreime, Vokalverteilung, Klangfiguren. NICHT: Enjambement, Satzlänge, TTR.
+- Wenn die Frage nach RHYTHMUS fragt: nutze Silbenzahl pro Vers, Silben-σ, 
+  Strophenzahl, Reimstruktur, Metrum. NICHT: Vokal-Echos, Klangfiguren.
+- Wenn die Frage nach SYNTAX/FLUSS fragt: nutze Satzlänge, Satzbau (HS/NS/gemischt),
+  Enjambement-Rate, Kommas. NICHT: Vokal-Echos, Klangfiguren, Reim.
+- Wenn die Frage nach WORTSCHATZ fragt: nutze TTR, Morphologie, Komposita,
+  Hotspot-Wörter. NICHT: Enjambement, Silbenzahl.
+- Bei Mischfragen (z.B. „Klang und Rhythmus"): gewichte die thematisch passenden
+  Kennzahlen, ignoriere die anderen.
+
+PRIMÄR thematisch passende Kennzahlen verwenden, SEKUNDÄR können auch andere
+Kennzahlen als ergänzende Belege dienen, wenn sie die primäre Argumentation stützen.
+Beispiel: Bei einer Klang-Frage sind Alliterationen/Assonanzen/Binnenreime/Vokal-Echos
+primär. Enjambement oder Reim können als sekundäre Belege hinzukommen, wenn sie das
+Klang-Urteil erhärten — aber sie dürfen nicht das HAUPTARGUMENT werden.
+VERBOTEN ist nur: eine Frage NUR mit themenfremden Kennzahlen zu beantworten
+(z.B. Klang-Frage NUR mit Enjambement, ohne jeglichen Klang-Bezug).
+
+STRUKTUR DER ANTWORT:
+Erstelle eine eigene Sektion ### UNTERSUCHUNGSFRAGE mit:
+1. Tabelle: Welche thematisch passenden Kennzahlen hat jede Quelle?
+   (Quelle | Kennzahl 1 | Kennzahl 2 | ... mit Werten)
+2. Urteil (1-3 Sätze): Welche Quelle passt zur Frage am besten — und zwar
+   BEGRÜNDET mit den thematisch passenden Kennzahlen, nicht mit anderen.
+
+Der letzte Satz des FAZIT muss die Frage als klares Urteil beantworten,
+konsistent mit dem Urteil in der UNTERSUCHUNGSFRAGE-Sektion."""
 
     return prompt
 
@@ -422,6 +1098,9 @@ def run_stilistic_lab(
     source_texts: Dict[str, str],
     progress_callback=None,
     user_question: str = "",
+    author_metadata: Optional[Dict[str, str]] = None,
+    existing_sidecar_path: Optional[Path] = None,
+    enable_quellen_gegenposition: bool = False,
 ) -> Dict:
     """
     Führt die komplette STILISTIC LAB Pipeline aus.
@@ -432,12 +1111,20 @@ def run_stilistic_lab(
     3. Globale Synthese: Vergleichende Beobachtung über alle Quellen
 
     Args:
-        source_texts:      Dict {source_label: text_content}
-                           source_label sollte QUELLE-Nummer + Kurzname sein,
-                           z.B. "QUELLE 1: Herzen" oder "QUELLE 2: Lenin"
-        progress_callback: Optional: Callback(status_msg) für UI-Updates
-        user_question:    Optionale Frage, die in der Globalen Synthese
-                           injiziert wird (v57.5.1 Fix C)
+        source_texts:           Dict {source_label: text_content}
+                                source_label sollte QUELLE-Nummer + Kurzname sein,
+                                z.B. "QUELLE 1: Herzen" oder "QUELLE 2: Lenin"
+        progress_callback:      Optional: Callback(status_msg) für UI-Updates
+        user_question:          Optionale Frage, die in der Globalen Synthese
+                                injiziert wird (v57.5.1 Fix C)
+        author_metadata:        Optional (v57.8.0 / Schnitt 1): User-Input
+                                {source_label: author_name}. Stufe 1 der
+                                Prioritätskette — gewinnt immer, wenn gesetzt.
+                                Vorerst nur Hook, kein UI-Eingabefeld.
+        existing_sidecar_path:  Optional (v57.8.0 / Schnitt 1): Pfad zu einer
+                                bestehenden .md-Datei, deren HTML-Kommentar-
+                                Sidecar gelesen wird (Stufe 2, Idempotenz
+                                bei Re-Runs).
 
     Returns:
         Dict mit:
@@ -445,6 +1132,8 @@ def run_stilistic_lab(
         - etappen_2_3: Dict {source_label: llm_response}
         - globale_synthese: String
         - metadata: timing, model, etc.
+        - author_map: Dict {source_label: author_name oder None}  (NEU v57.8.0)
+        - author_resolution_chain: Dict {source_label: chain_value}  (NEU v57.8.0)
     """
     start_time = time.time()
     metadata = {
@@ -466,6 +1155,50 @@ def run_stilistic_lab(
 
     # Vergleichstabelle für LLM-Kontext formatieren
     comparison_table_text = format_comparison_table_for_llm(etappe1["comparison_table"])
+
+    # ==========================================================================
+    # AUTOREN-KONSOLIDIERUNG (v57.8.0 / Schnitt 1 — Claude+GLM Architektur 2026-06-20)
+    # ==========================================================================
+    # Vierstufige Prioritätskette (siehe _resolve_author_map Docstring):
+    #   (1) User-Metadatum  →  (2) Sidecar Re-Run  →  (3) First-Line  →  (4) Fallback
+    # WICHTIG: Stufe 4 ist in Schnitt 1 nur Platzhalter (None / "unresolved").
+    # Die alte _detect_authors_in_texts() wird NICHT aufgerufen — sie bleibt
+    # im Code, bis Schnitt 3 sie zur Fallback-Funktion umbaut.
+    # ==========================================================================
+    resolution = _resolve_author_map(
+        source_texts,
+        author_metadata=author_metadata,
+        existing_sidecar_path=existing_sidecar_path,
+    )
+    author_map_full = resolution["authors"]              # inkl. None-Werte
+    author_resolution_chain = resolution["resolution_chain"]
+    # V57.8.0 Claude-Review Fix: None-Werte herausfiltern, bevor author_map an die
+    # bestehende Etappe-2/3-Logik übergeben wird. Die bestehende Logik tut
+    # `if label in author_map: author_lbl = author_map[label]` und
+    # `", ".join(other_parts)` — würde TypeError produzieren, wenn None-Werte
+    # durchsickern. Mit Filterung verhält sich author_map wie früher: nur
+    # resolved Autoren sind Keys. None-Werte sind in author_map_full (für das
+    # Sidecar) und in author_resolution_chain (für Debugging) erhalten.
+    author_map = {k: v for k, v in author_map_full.items() if v is not None}
+    resolved_count = len(author_map)
+    total_count = len(author_map_full)
+    # v59.9.2 Fix 2026-06-21: Konsolidierungs-Zeile informativ machen.
+    # Vorher: „4/4 resolved. Resolution: {... 'mini_llm' ...}" — Resolution-Chain
+    # enthält keine Info (alle Werte gleich), sinnlos.
+    # Neu: echte Autoren-Namen in Quellen-Reihenfolge + via-Info.
+    # Resolution-Chain-Detail auf debug-Level verschoben.
+    authors_str = " / ".join(
+        str(author_map_full.get(label, "—"))
+        for label in source_texts.keys()
+    )
+    # Bestimme verwendete Auflösungsstrategien (z.B. „Mini-LLM", „User-Metadatum")
+    strategies = set(author_resolution_chain.values()) - {"unresolved"}
+    strategy_str = " + ".join(sorted(strategies)) if strategies else "keine"
+    logger.info(
+        f"🖊️ Autoren konsolidiert: {authors_str} "
+        f"({resolved_count}/{total_count} via {strategy_str})"
+    )
+    logger.debug(f"  Resolution-Chain: {dict(author_resolution_chain)}")
 
     # ==========================================================================
     # ETAPPE 2+3: PRO QUELLE (LLM)
@@ -528,13 +1261,26 @@ def run_stilistic_lab(
             if klang_parts:
                 klang_sum = " | ".join(klang_parts)
 
-        # Autor-Label f\u00fcr Horizont-Instruktion ableiten (v57.7.5)
-        # Format: "QUELLE 1: Herzen 1849" \u2192 "Herzen 1849"
-        author_lbl = label.split(": ", 1)[-1] if ": " in label else label
-        other_lbls = ", ".join(
-            l.split(": ", 1)[-1] if ": " in l else l
-            for l in source_labels if l != label
-        )
+        # Autor-Label für Horizont-Instruktion ableiten (v57.7.5 + v57.7.6)
+        # v57.7.5: Format "QUELLE 1: Herzen 1849" → "Herzen 1849"
+        # v57.7.6: Wenn Autorenerkennung einen Namen fand, diesen verwenden
+        #          (zuverlässiger als Label-Extraktion, die bei "QUELLE 1" ohne
+        #           Doppelpunkt nur "QUELLE 1" liefert → LLM muss raten)
+        if label in author_map:
+            author_lbl = author_map[label]
+        else:
+            author_lbl = label.split(": ", 1)[-1] if ": " in label else label
+
+        # Andere Autoren/Quellen für Horizont-Instruktion
+        other_parts = []
+        for l in source_labels:
+            if l == label:
+                continue
+            if l in author_map:
+                other_parts.append(author_map[l])
+            else:
+                other_parts.append(l.split(": ", 1)[-1] if ": " in l else l)
+        other_lbls = ", ".join(other_parts)
 
         # Prompt bauen (v57.7.5: user_question als Horizont, nicht als Filter)
         # v59.1: lyrik_signal + klang_summary für Klang-Prominenz
@@ -625,7 +1371,7 @@ def run_stilistic_lab(
     grundoperation_labels = {}
     for label, text in valid_results.items():
         op_match = re.search(
-            r'(?:DIE )?GRUNDOPERATION:\\s*(.+?)(?:\\n\\n|\\n[A-ZÄÖÜ]|$)',
+            r'(?:DIE )?GRUNDOPERATION:\s*(.+?)(?:\n\n|\n[A-ZÄÖÜ]|$)',
             text, re.DOTALL
         )
         if op_match:
@@ -641,7 +1387,7 @@ def run_stilistic_lab(
     modus_labels = {}
     for label, text in valid_results.items():
         modus_match = re.search(
-            r'MODUS:\\s*(.+?)(?:\\n\\n|\\n[A-ZÄÖÜ]|$)',
+            r'MODUS:\s*(.+?)(?:\n\n|\n[A-ZÄÖÜ]|$)',
             text, re.DOTALL
         )
         if modus_match:
@@ -692,13 +1438,24 @@ def run_stilistic_lab(
             "avg_silben": rhythm.get("avg_syllables", "—"),
             "silben_sigma": rhythm.get("stdev_syllables", "—"),
             "enjambement": enjamb.get("count", "—"),
-            "alliterationen": len(sound.get("alliterations", [])) if sound else "—",
-            "assonanzen": len(sound.get("assonances", [])) if sound else "—",
+            # v59.9.1 Fix: Nutze count-Felder (sound.get("alliterations_count"))
+            # für echte Werte, nicht len() der getruncateten Liste.
+            # Fallback auf len() für Abwärtskompatibilität mit ungepatchtem
+            # text_analyzer.py.
+            "alliterationen": sound.get("alliterations_count", len(sound.get("alliterations", []))) if sound else "—",
+            "assonanzen": sound.get("assonances_count", len(sound.get("assonances", []))) if sound else "—",
+            "binnenreime": sound.get("internal_rhymes_count", len(sound.get("internal_rhymes", []))) if sound else "—",  # v57.8.4
+            # v59.9.2 Fix: Nutze echoes_count-Feld (analog zu alliterations_count).
+            # Fallback auf len() der Liste für Abwärtskompatibilität.
+            "vokalechos": (vd.get("vowel_echoes", {}).get("echoes_count", len(vd.get("vowel_echoes", {}).get("echoes", []))) if (vd and isinstance(vd.get("vowel_echoes"), dict)) else (len(vd.get("vowel_echoes", [])) if (vd and isinstance(vd.get("vowel_echoes"), list)) else "—")),  # v57.8.4
         }
 
     logger.info(f"Kennzahlen aufbereitet: {len(individual_stats)} Quellen")
 
     if len(valid_results) >= 2:
+        # v57.8.4: Klang-Tabelle für Synthese generieren (analog zu comparison_table_text)
+        klang_table_text = _format_klang_table_for_synthese(individual_stats)
+
         synthese_prompt = _build_globale_synthese_prompt(
             etappen_results=valid_results,
             comparison_table_text=comparison_table_text,
@@ -708,6 +1465,8 @@ def run_stilistic_lab(
             dominant_labels=dominant_labels,
             grundoperation_labels=grundoperation_labels,
             modus_labels=modus_labels,
+            author_map=author_map,  # v57.7.6: Autoren-Zuordnung
+            klang_table_text=klang_table_text,  # v57.8.4: Klang-Beweisführung
         )
 
         logger.info("🌐 Globale Synthese")
@@ -729,6 +1488,45 @@ def run_stilistic_lab(
         )
 
     # ==========================================================================
+    # QUELLEN-GEGENPOSITION (v59.10.0 Schritt 2 — Falsifizierungs-Architektur)
+    # v59.10.3: Schlafen gelegt (Default: False). Claude-Beratung 2026-06-28:
+    # Quellen-Gegenposition produziert Spitzfindigkeiten. Meta-Gegenposition
+    # (Schritt 3) ist die aktive Falsifizierungsinstanz. Code bleibt fuer
+    # spaeteren Umbau als Anomalie-Detektion.
+    # ==========================================================================
+    quellen_gegenposition = ""
+    if enable_quellen_gegenposition and len(valid_results) >= 2:
+        if progress_callback:
+            progress_callback("Quellen-Gegenposition: Falsifizierende Analyse...")
+
+        logger.info("🔄 Quellen-Gegenposition (Falsifizierung)")
+        try:
+            gegenposition_prompt = _build_quellen_gegenposition_prompt(
+                globale_synthese=globale_synthese,
+                user_question=user_question,
+                valid_results=valid_results,
+                individual_stats=individual_stats,
+                author_map=author_map,
+                comparison_table_text=comparison_table_text,
+            )
+            quellen_gegenposition = llm_call(
+                prompt=gegenposition_prompt,
+                task="synthesis",
+                system_instruction=_QUELLEN_GEGENPOSITION_SYSTEM,
+                temperature=0.3,
+                max_tokens=MAX_TOKENS_STILISIERUNG,
+                domain="stilisierung",
+            )
+            logger.info("✅ Quellen-Gegenposition abgeschlossen")
+        except Exception as e:
+            logger.error(f"❌ Quellen-Gegenposition fehlgeschlagen: {e}")
+            quellen_gegenposition = f"FEHLER bei Quellen-Gegenposition: {e}"
+    else:
+        if not enable_quellen_gegenposition:
+            logger.info("💤 Quellen-Gegenposition schlafen gelegt (Default: False)")
+        quellen_gegenposition = ""
+
+    # ==========================================================================
     # ERGEBNIS ZUSAMMENSTELLEN
     # ==========================================================================
     elapsed = time.time() - start_time
@@ -739,7 +1537,15 @@ def run_stilistic_lab(
         "etappe1": etappe1,
         "etappen_2_3": etappen_2_3,
         "globale_synthese": globale_synthese,
+        "quellen_gegenposition": quellen_gegenposition,
         "metadata": metadata,
+        # v57.8.0 / Schnitt 1: Autoren-Metadaten für Sidecar-Einbettung.
+        # WICHTIG: Hier wird author_map_full (INKL. None-Werte) zurückgegeben,
+        # damit das Sidecar die "unresolved"-Quellen dokumentiert. Die
+        # Etappe-2/3-Logik oben bekommt stattdessen das gefilterte author_map
+        # (nur resolved Autoren), um TypeError in ", ".join(other_parts) zu vermeiden.
+        "author_map": author_map_full,
+        "author_resolution_chain": author_resolution_chain,
     }
 
     logger.info(
@@ -927,6 +1733,25 @@ def run_meta_vergleich(
         f"✅ Meta-Vergleich abgeschlossen: {label_a} vs. {label_b} in {elapsed:.1f}s"
     )
 
+
+    # ── Deepening-Interface: Strukturierte Profile pro Quelle ──
+    # Kompatibel mit stil_profiles-Format der RAG-Distillation
+    profiles = {}
+    for label, etappe_text in result.get("etappen_2_3", {}).items():
+        # Extrahiere MODUS, DOMINANTE, GRUNDOPERATION aus dem Etappe-Text
+        modus_match = re.search(r'MODUS:\s*(.+?)(?:\n\n|\n[A-ZÄÖÜ]|$)', etappe_text, re.DOTALL)
+        dom_match = re.search(r'(?:DIE )?DOMINANTE:\s*(.+?)(?:\n\n|\n[A-ZÄÖÜ]|$)', etappe_text, re.DOTALL)
+        op_match = re.search(r'(?:DIE )?GRUNDOPERATION:\s*(.+?)(?:\n\n|\n[A-ZÄÖÜ]|$)', etappe_text, re.DOTALL)
+        
+        profiles[label] = {
+            "modus": modus_match.group(1).strip() if modus_match else "(Kein Modus)",
+            "dominante": dom_match.group(1).strip() if dom_match else "(Keine Dominante)",
+            "grundoperation": op_match.group(1).strip() if op_match else "(Keine Grundoperation)",
+            "volltext_analyse": etappe_text,
+        }
+    
+    result["profiles"] = profiles
+
     return result
 
 
@@ -1020,6 +1845,48 @@ def format_result_as_markdown(result: Dict) -> str:
                 str(row.get("Enjamb.", "—")),
             ]
             lines.append("| " + " | ".join(values) + " |")
+    lines.append("")
+
+    # v57.8.4: Klang-Vergleichstabelle (numerisch, für Beweisführung in Synthese)
+    # Analog zu Enjambement-Tabelle oben, aber fokussiert auf Klangfiguren
+    lines.append("### Klang-Vergleichstabelle (v57.8.4)")
+    lines.append("")
+    individual_stats = result.get("metadata", {}).get("individual_stats", {})
+    # Fallback: falls individual_stats nicht in metadata, versuche direkt aus etappe1
+    if not individual_stats:
+        individual_stats = {}
+        for label, stats in result.get("etappe1", {}).get("individual", {}).items():
+            if "error" in stats:
+                continue
+            vd = stats.get("verse_detail", {})
+            sound = vd.get("sound_patterns", {}) if vd else {}
+            echoes_data = vd.get("vowel_echoes", {}) if vd else None
+            echoes_list = echoes_data.get("echoes", []) if isinstance(echoes_data, dict) else (echoes_data if isinstance(echoes_data, list) else [])
+            individual_stats[label] = {
+                "alliterationen": len(sound.get("alliterations", [])) if sound else "—",
+                "assonanzen": len(sound.get("assonances", [])) if sound else "—",
+                "binnenreime": len(sound.get("internal_rhymes", [])) if sound else "—",
+                "vokalechos": len(echoes_list) if echoes_list else "—",
+                "reim_typ": (vd.get("rhyme", {}).get("rhyme_type", "—") if vd else "—"),
+                "enjambement": (vd.get("enjambement", {}).get("count", "—") if vd else "—"),
+            }
+    if individual_stats:
+        klang_headers = ["Quelle", "Alliterationen", "Assonanzen", "Binnenreime", "Vokal-Echos", "Reim", "Enjamb."]
+        lines.append("| " + " | ".join(klang_headers) + " |")
+        lines.append("| " + " | ".join(["---"] * len(klang_headers)) + " |")
+        for label, s in individual_stats.items():
+            values = [
+                str(label),
+                str(s.get("alliterationen", "—")),
+                str(s.get("assonanzen", "—")),
+                str(s.get("binnenreime", "—")),
+                str(s.get("vokalechos", "—")),
+                str(s.get("reim_typ", "—")),
+                str(s.get("enjambement", "—")),
+            ]
+            lines.append("| " + " | ".join(values) + " |")
+    else:
+        lines.append("(Keine Klang-Kennzahlen verfügbar)")
     lines.append("")
 
     # Etappe 1: Individual-Statistiken (v57.5.1 Fix A)
@@ -1173,5 +2040,15 @@ def format_result_as_markdown(result: Dict) -> str:
     lines.append("")
     lines.append(result.get("globale_synthese", "(Keine Synthese verfügbar)"))
     lines.append("")
+
+    # Quellen-Gegenposition (v59.10.0 Schritt 2 — nur wenn aktiviert)
+    qp = result.get("quellen_gegenposition", "")
+    if qp:
+        lines.append("---")
+        lines.append("")
+        lines.append("## Quellen-Gegenposition (Falsifizierung)")
+        lines.append("")
+        lines.append(qp)
+        lines.append("")
 
     return "\n".join(lines)
