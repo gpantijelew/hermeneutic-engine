@@ -1,7 +1,7 @@
 # modules/evidence_synthesis.py
 import json
 import logging
-from modules.config import MODEL_FACT_EXTRACTION
+from modules.config import get_model_for_task
 from modules.llm_wrapper import llm_call, llm_call_json
 from typing import List, Dict
 
@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class EvidenceFirstSynthesizer:
-    def __init__(self, model_name=MODEL_FACT_EXTRACTION):
+    def __init__(self, model_name=get_model_for_task("fact_extraction")):
         self.model_name = model_name
         # API Key wird global konfiguriert, wir verlassen uns darauf
 
