@@ -38,6 +38,54 @@ _IMBALANCE_CRITICAL = 10
 _IMBALANCE_INFO = 5
 
 
+
+# ── SPRACH-BINDUNG für STILISIERUNG (Patch 2026-07-11) ───────────────────────
+import re as _re_lang_patch
+
+_CYRILLIC_RE_PATCH = _re_lang_patch.compile(r'[А-Яа-яЁё]')
+_LATIN_RE_PATCH = _re_lang_patch.compile(r'[A-Za-zÄÖÜäöüß]')
+
+_LANGUAGE_BINDINGS_PATCH = {
+    "ru": (
+        "SPRACH-BINDUNG (ABSOLUT):\n"
+        "Der Originaltext ist auf Russisch. Dein Output MUSS auf Russisch sein.\n"
+        "Übersetze NICHT. Behalte die russische Sprache throughout bei.\n"
+        "Namen lateinischer Autoren (Eco, Sternhell etc.) können in lateinischer\n"
+        "Originalform bleiben, wenn der Originaltext sie so nennt.\n"
+        "Zitate aus dem Original bleiben in der Originalsprache.\n"
+    ),
+    "de": (
+        "SPRACH-BINDUNG (ABSOLUT):\n"
+        "Der Originaltext ist auf Deutsch. Dein Output MUSS auf Deutsch sein.\n"
+        "Behalte die deutsche Sprache throughout bei.\n"
+        "Fremdsprachige Zitate und Eigennamen bleiben in der Originalsprache.\n"
+    ),
+}
+
+
+def _detect_language_patch(text: str) -> str:
+    """Erkennt die dominanteste Sprache des Textes anhand des Skript-Anteils."""
+    if not text or len(text) < 50:
+        return "de"
+    sample = text[:2000]
+    cyrillic = len(_CYRILLIC_RE_PATCH.findall(sample))
+    latin = len(_LATIN_RE_PATCH.findall(sample))
+    total = cyrillic + latin
+    if total == 0:
+        return "de"
+    if cyrillic / total > 0.30:
+        return "ru"
+    return "de"
+
+
+def _get_language_binding(text: str) -> str:
+    """Gibt die SPRACH-BINDUNG-Instruktion für den Input-Text zurück."""
+    lang = _detect_language_patch(text)
+    return _LANGUAGE_BINDINGS_PATCH.get(lang, _LANGUAGE_BINDINGS_PATCH["de"])
+
+
+# ── Ende SPRACH-BINDUNG Patch ────────────────────────────────────────────────
+
 def _compute_imbalance(counts):
     """Berechnet Imbalance-Severity aus Dokument-Haeufigkeiten.
 
@@ -395,6 +443,7 @@ class CitationRAG:
         self,
         iteration_texts: List[str],
         intent: str = "SYNTHESIS_BEST_OF",
+        source_intent: Optional[str] = None,
         temperature: float = 0.55,
         mode_labels: Optional[Dict[int, str]] = None,
     ) -> str:
@@ -409,15 +458,26 @@ class CitationRAG:
             mode_labels: Optional Dict {1: "STILISTIC", 2: "META_ANALYTICAL", ...}
                         Wenn gesetzt, werden Modus-Tags in die Iterations-Header injiziert.
         """
+        # FIX: system_instruction vom agentic intent (Rolle),
+        # mode_instruction vom source_intent (was zu tun ist — STILISIERUNG etc.)
         sys_instr = self.prompt_manager.get_system_instruction(intent)
-        mode_instr = self.prompt_manager.get_mode_instruction(intent)
+        mode_intent = source_intent if source_intent else intent
+        mode_instr = self.prompt_manager.get_mode_instruction(mode_intent)
+        
+        # FIX: SPRACH-BINDUNG — Sprache des Originals erkennen und injizieren
+        # Verhindert ungewollte Übersetzung (z.B. Russisch → Deutsch)
+        if iteration_texts:
+            lang_binding = _get_language_binding(iteration_texts[0])
+            mode_instr = mode_instr.rstrip() + "\n\n" + lang_binding
         context = "\n\n".join(
             f"=== ITERATION {i} [{mode_labels.get(i, '')}] ===\n{text}" if mode_labels and mode_labels.get(i) else f"=== ITERATION {i} ===\n{text}"
             for i, text in enumerate(iteration_texts, 1)
         )
         prompt = f"{mode_instr}\n\nITERATIONEN:\n{context}\n\nMEISTERTEXT:"
         # Dynamisches Token-Limit: Stilisierung braucht mehr Raum für Ghostwriting
-        max_tokens = MAX_TOKENS_STILISIERUNG if intent == "STILISIERUNG" else 8192
+        # FIX: max_tokens basiert auf mode_intent (nicht intent), da STILISIERUNG
+        # die mode_instruction ist, nicht die system_instruction
+        max_tokens = MAX_TOKENS_STILISIERUNG if mode_intent == "STILISIERUNG" else 8192
         return self._llm_call_func(
             prompt,
             task="synthesis",
@@ -441,17 +501,30 @@ class CitationRAG:
         """
         import json as _json
         # --- Schritt 1: Entwurf ---
+        # FIX: source_intent wird durchgereicht — STILISIERUNG-Prompts werden geladen
         draft = self.generate_synthesis_best_of(
             iteration_texts,
-            intent="AGENT_DRAFTER"
+            intent="AGENT_DRAFTER",
+            source_intent=source_intent,
         )
         logger.info(f"✅ Agentic Schritt 1 (DRAFTER): {len(draft)} Zeichen")
         if not draft:
             return "", {"error": "DRAFTER lieferte leeren Text"}
         # --- Schritt 2: Kritik (Ohne JSON-Modus, um API-Limits zu umgehen) ---
-        critic_sys = self.prompt_manager.get_system_instruction("AGENT_CRITIC")
+        # FIX: STILISIERUNG_CRITIC nutzen, falls vorhanden (prüft STILISIERUNGS-Regeln)
+        is_stilisierung = (source_intent == "STILISIERUNG")
+        critic_sys_intent = "AGENT_CRITIC"
+        critic_mode_intent = "STILISIERUNG_CRITIC" if is_stilisierung else "AGENT_CRITIC"
+        critic_sys = self.prompt_manager.get_system_instruction(critic_sys_intent)
+        critic_mode_instr = self.prompt_manager.get_mode_instruction(critic_mode_intent)
+        # Fallback: falls STILISIERUNG_CRITIC nicht im YAML, nutze AGENT_CRITIC
+        if not critic_mode_instr.strip():
+            critic_mode_instr = self.prompt_manager.get_mode_instruction("AGENT_CRITIC")
+        # SPRACH-BINDUNG für CRITIC
+        lang_binding = _get_language_binding(draft) if draft else ""
+        critic_prompt = f"{critic_mode_instr}\n\n{lang_binding}\n\nENTWURF ZUR PRÜFUNG:\n\n{draft}"
         raw_critique = self._llm_call_func(
-            prompt=f"ENTWURF ZUR PRÜFUNG:\n\n{draft}",
+            prompt=critic_prompt,
             task="synthesis",
             system_instruction=critic_sys,
             temperature=0.3,
@@ -472,10 +545,19 @@ class CitationRAG:
         for i, point in enumerate(critique[:3]):
             logger.info(f"  [{i+1}] {point.get('problem', '?')}")
         # --- Schritt 3: Überarbeitung ---
+        # FIX: mode_instruction vom source_intent (STILISIERUNG), system_instruction vom AGENT_EDITOR
+        # FIX: "n Stellen" dynamisch statt hardcodiert "3"
         editor_sys = self.prompt_manager.get_system_instruction("AGENT_EDITOR")
+        editor_mode_intent = source_intent if source_intent else "AGENT_EDITOR"
+        editor_mode_instr = self.prompt_manager.get_mode_instruction(editor_mode_intent)
+        # SPRACH-BINDUNG für EDITOR
+        lang_binding = _get_language_binding(draft) if draft else ""
+        n_critique = min(len(critique[:3]), 3)
+        stellen_wort = f"{n_critique} Stelle{'n' if n_critique != 1 else ''}"
         edit_prompt = (
+            f"{editor_mode_instr}\n\n{lang_binding}\n\n"
             f"ENTWURF:\n\n{draft}\n\n"
-            f"KRITIKPUNKTE (nur diese 3 Stellen ändern):\n"
+            f"KRITIKPUNKTE (nur diese {stellen_wort} ändern):\n"
             f"{_json.dumps(critique[:3], ensure_ascii=False, indent=2)}"
         )
         final = self._llm_call_func(
@@ -1174,15 +1256,56 @@ Behalte Namen unverändert! """
         # Pro-Quelle-Extraktion statt Monolith-Call
         extracted_quotes = self.extract_quotes_per_document(query, doc_texts_for_extraction)
         
-        # N.2: Substring-Verify-Gate — nur Zitate behalten, die im Quelltext existieren
+        # N.2: Fuzzy-Verify-Gate — Zitate behalten, die im Quelltext existieren
         # (Claude-R3: "C2/C3-Check vor Synthese = 5-Zeilen-Filter")
+        # v51.2 Fix 2026-06-27: Fuzzy-Match statt exaktem String-Vergleich.
+        # Grund: Bei kanonischen Autoren (Puschkin, Shakespeare) zitiert das
+        # LLM aus dem Gedächtnis — mit leicht abweichender Formatierung
+        # (Zeilenumbrüche, Leerzeichen, Interpunktion). Der exakte Vergleich
+        # verwirft diese Zitate, obwohl der Inhalt korrekt ist.
+        # Fix: Normalisierung vor dem Vergleich (NFC, Zeilenumbrüche → Leerzeichen,
+        # doppelte Leerzeichen → einfache, Strip) + Teilstring-Match (erste 80 Zeichen).
+        import unicodedata
+
+        def _normalize_for_fuzzy(s: str) -> str:
+            """Normalisiert String für Fuzzy-Match."""
+            if not s:
+                return ""
+            # NFC-Normalisierung (z.B. komponierte vs. dekomponierte Diakritika)
+            s = unicodedata.normalize("NFC", s)
+            # Zeilenumbrüche → Leerzeichen
+            s = s.replace("\n", " ").replace("\r", " ").replace("\u00a0", " ")
+            # Doppelte Leerzeichen → einfache (ohne re-Modul — String-Methode)
+            while "  " in s:
+                s = s.replace("  ", " ")
+            # Strip
+            return s.strip()
+
         verified_quotes = []
         for q in extracted_quotes:
             qtext = q.get("text", "")
             qsrc = q.get("quelle", 0)
             src_text = doc_texts_for_extraction.get(qsrc, "")
-            if qtext and src_text and qtext in src_text:
-                verified_quotes.append(q)
+            if qtext and src_text:
+                # Normalisiere beide Strings
+                qtext_norm = _normalize_for_fuzzy(qtext)
+                src_text_norm = _normalize_for_fuzzy(src_text)
+                # Versuch 1: exakter Match (normalisiert)
+                if qtext_norm in src_text_norm:
+                    verified_quotes.append(q)
+                # Versuch 2: Teilstring-Match (erste 80 Zeichen — erlaubt
+                # längere Zitate, die am Anfang exakt stimmen, aber am Ende
+                # vom LLM gekürzt/erweitert wurden)
+                elif len(qtext_norm) > 80 and qtext_norm[:80] in src_text_norm:
+                    verified_quotes.append(q)
+                # Versuch 3: letzter Teil (falls Zitat mit "..." beginnt)
+                elif len(qtext_norm) > 80 and qtext_norm[-80:] in src_text_norm:
+                    verified_quotes.append(q)
+                else:
+                    logger.info(
+                        f"🚫 Verify-Gate: Zitat aus [{qsrc}] NICHT im Quelltext gefunden → verworfen: "
+                        f"\"{qtext[:60]}...\""
+                    )
             else:
                 logger.info(
                     f"🚫 Verify-Gate: Zitat aus [{qsrc}] NICHT im Quelltext gefunden → verworfen: "

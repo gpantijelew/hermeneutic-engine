@@ -1,4 +1,4 @@
-# ui/settings_panel.py — HRE v51
+# ui/settings_panel.py — HRE v60
 # Zuständig für: Modelleinstellungen-Expander in der Sidebar
 #
 # ARCHITEKTUR-REGEL:
@@ -24,19 +24,36 @@ def render_settings_panel() -> None:
 
         # --- Backend-spezifische Modell-Anzeige ---
         if LLM_BACKEND == "vertex":
-            current_model = VERTEX_MODEL
-            available_models = [
-                "gemini-3.1-pro-preview",
-                "gemini-2.5-pro",
-                "gemini-2.5-flash-preview-09-2025",
-            ]
-            selected_model = st.selectbox(
-                "Gemini-Modell wählen:",
-                options=available_models,
-                index=available_models.index(current_model)
-                if current_model in available_models
-                else 0,
+            # NEU: Definition der Arbeitsmodi und ihrer Modelle
+            modus_map = {
+                "Tiefenanalyse (Hermeneutik)": "gemini-3.1-pro-preview",
+                "Sparring (Analyse & Planung)": "gemini-2.5-pro",
+                "Pragmatik (Speed & Code)": "gemini-3.6-flash"
+            }
+            
+            # Aktuelles Modell aus Session State laden (Fallback auf VERTEX_MODEL)
+            current_model = st.session_state.global_settings.get("model_name", VERTEX_MODEL)
+            
+            # Finde den passenden Modus-Namen für das aktuell gespeicherte Modell
+            current_modus = "Tiefenanalyse (Hermeneutik)" # Default
+            for modus, model in modus_map.items():
+                if model == current_model:
+                    current_modus = modus
+                    break
+            
+            # Modus-Dropdown in der UI
+            selected_modus = st.selectbox(
+                "Arbeitsmodus wählen:",
+                options=list(modus_map.keys()),
+                index=list(modus_map.keys()).index(current_modus)
             )
+            
+            # Übersetze gewählten Modus in das tatsächliche Modell
+            selected_model = modus_map[selected_modus]
+            
+            # Zeige dem User transparent, welches Modell im Hintergrund arbeitet
+            st.caption(f"Aktives Hintergrund-Modell: `{selected_model}`")
+            
         else:
             current_model = LM_STUDIO_MODEL
             st.info(

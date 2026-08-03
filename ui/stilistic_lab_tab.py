@@ -16,7 +16,11 @@ from datetime import datetime
 import streamlit as st
 
 from modules.database import get_chat_list, get_raw_chat_messages
-from modules.stilistic_lab_pipeline import run_stilistic_lab, format_result_as_markdown
+from modules.stilistic_lab_pipeline import (
+    run_stilistic_lab,
+    format_result_as_markdown,
+    _embed_authors_sidecar_in_md,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +280,15 @@ def render_stilistic_lab_tab():
     # Download
     ts = st.session_state.get("sl_timestamp", "")
     md_content = format_result_as_markdown(result)
+    # v57.8.0 / Schnitt 1: Autoren-Sidecar als HTML-Kommentar einbetten.
+    # Meta-Engine (Schnitt 2) wird es aus der .md extrahieren, statt raten
+    # zu müssen. Siehe _embed_authors_sidecar_in_md in stilistic_lab_pipeline.
+    author_map = result.get("author_map", {})
+    resolution_chain = result.get("author_resolution_chain", {})
+    if author_map:
+        md_content = _embed_authors_sidecar_in_md(
+            md_content, author_map, resolution_chain
+        )
     st.download_button(
         label="Als Markdown herunterladen",
         data=md_content,

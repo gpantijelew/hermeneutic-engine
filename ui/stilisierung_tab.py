@@ -1,6 +1,7 @@
 """ui/stilisierung_tab.py — Stilisierungs-Tab mit optionalem Agentic Loop.
 
-HRE v52: Separater Tab für einzelnen Text mit Einfach-/Agentic-Modus.
+HRE v60-patch: Separater Tab für einzelnen Text mit Einfach-/Agentic-Modus.
+Patch 2026-07-11: st.spinner/st.status Verschachtelung aufgelöst (Freeze-Fix).
 """
 
 import logging
@@ -32,7 +33,7 @@ def render_stilisierung_tab():
         height=400,
         placeholder=(
             "Füge hier beliebigen Text ein — z. B. den Master-Draft "
-            "aus dem Destillations-Tab per Copy & Paste."
+            "aus dem Destillation-Tab per Copy & Paste."
         ),
     )
 
@@ -53,50 +54,64 @@ def render_stilisierung_tab():
         # Eingabe speichern (bleibt beim Tab-Wechsel erhalten)
         st.session_state["stilisierung_input"] = input_text
 
-        with st.spinner(
-            "Agentic Loop läuft..." if use_agentic else "Stilisierung läuft..."
-        ):
-            try:
-                rag = CitationRAG()
-                iteration_texts = [text]
+        try:
+            rag = CitationRAG()
+            iteration_texts = [text]
 
-                if use_agentic:
-                    # Drei-Stufen-Pipeline
-                    with st.status(
-                        "Agentic Pipeline: Entwurf → Kritik → Überarbeitung",
-                        expanded=True,
-                    ) as status:
-                        status.write("📝 Schritt 1: Stilistischer Entwurf...")
+            if use_agentic:
+                # Drei-Stufen-Pipeline — NUR st.status, kein st.spinner (Freeze-Fix)
+                with st.status(
+                    "Agentic Pipeline: Entwurf → Kritik → Überarbeitung",
+                    expanded=True,
+                ) as status:
+                    status.write("📝 Schritt 1: Stilistischer Entwurf...")
+                    try:
                         result, trace = rag.generate_agentic_synthesis(
                             iteration_texts,
                             source_intent="STILISIERUNG",
                         )
-                        critique_count = len(trace.get("critique", []))
-                        status.write(
-                            f"🔍 Schritt 2: Kritik — {critique_count} Punkte gefunden"
+                    except Exception as pipeline_err:
+                        logger.error(f"Agentic-Pipeline-Fehler: {pipeline_err}")
+                        status.update(
+                            label=f"❌ Fehler: {pipeline_err}",
+                            state="error",
                         )
-                        status.write("✂️ Schritt 3: Chirurgische Überarbeitung...")
-                        status.update(label="Fertig!", state="complete")
+                        st.error(f"❌ Pipeline-Fehler: {pipeline_err}")
+                        return
 
-                    st.session_state["stilisierung_result"] = result
-                    st.session_state["stilisierung_trace"] = trace
-                    st.session_state["stilisierung_agentic"] = True
-                else:
-                    # Einfacher Single-Shot
-                    result = rag.generate_synthesis_best_of(
-                        iteration_texts,
-                        intent="STILISIERUNG",
+                    critique_count = len(trace.get("critique", []))
+                    status.write(
+                        f"🔍 Schritt 2: Kritik — {critique_count} Punkte gefunden"
                     )
+                    status.write("✂️ Schritt 3: Chirurgische Überarbeitung...")
+                    status.update(label="Fertig!", state="complete")
+
+                st.session_state["stilisierung_result"] = result
+                st.session_state["stilisierung_trace"] = trace
+                st.session_state["stilisierung_agentic"] = True
+            else:
+                # Einfacher Single-Shot — NUR st.spinner, kein st.status
+                with st.spinner("Stilisierung läuft..."):
+                    try:
+                        result = rag.generate_synthesis_best_of(
+                            iteration_texts,
+                            intent="STILISIERUNG",
+                        )
+                    except Exception as single_err:
+                        logger.error(f"Single-Shot-Fehler: {single_err}")
+                        st.error(f"❌ Fehler: {single_err}")
+                        return
+
                     st.session_state["stilisierung_result"] = result
                     st.session_state["stilisierung_trace"] = None
                     st.session_state["stilisierung_agentic"] = False
 
-                st.session_state["stilisierung_timestamp"] = datetime.now().isoformat()
-                st.success("✅ Stilisierung abgeschlossen!")
+            st.session_state["stilisierung_timestamp"] = datetime.now().isoformat()
+            st.success("✅ Stilisierung abgeschlossen!")
 
-            except Exception as e:
-                logger.error(f"Stilisierungsfehler: {e}")
-                st.error(f"❌ Fehler bei der Stilisierung: {e}")
+        except Exception as e:
+            logger.error(f"Stilisierungsfehler: {e}")
+            st.error(f"❌ Fehler bei der Stilisierung: {e}")
 
     # --- Ergebnisanzeige ---
     result = st.session_state.get("stilisierung_result")
@@ -122,10 +137,11 @@ def render_stilisierung_tab():
         md_header = f"""---
 Stilisierung{mode_label}
 Erstellt: {ts}
-Engine: HRE v52
+Engine: HRE v60 (patched 2026-07-11)
 ---
 
 """
+
         md_body = result
 
         if trace and trace.get("critique"):

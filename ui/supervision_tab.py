@@ -1,106 +1,196 @@
+"""
+ui/supervision_tab.py — IFS Supervisions-Panel
+v60.2 — v59.1 Fixes integriert:
+
+Fix 1 (Rollen-Disambiguierung Layer 1):
+  Abstrakte [USER]/[MODEL]-Labels werden durch deskriptive Labels ersetzt.
+  Default: [MENSCH] / [KI-MODELL] — selbsterklärend für kleinere Modelle,
+  die bei der Zuordnung User/Assistant die Orientierung verlieren.
+  Betrifft: gemma-4-26b-a4b-it und ähnliche Open-Source-Modelle.
+
+Fix 6 (IFS-Kontext-Erkennung):
+  Wenn der zu analysierende Chat IFS-spezifische Marker enthält
+  (Stimme der Kontrolle/Kampf/Furcht, IFS-Resonanzraum, Manager/Exile/
+  Firefighter), werden IFS-spezifische Rollen-Labels verwendet:
+    - User-Nachrichten → [MENSCH]
+    - Modell-Nachrichten → [STIMME DER KONTROLLE] etc. (wenn zuordenbar)
+      oder [KI-MODELL] (fallback)
+  Dies signalisiert dem LLM, dass es sich um ein IFS-Gespräch handelt.
+
+Workaround-Hinweis:
+  Aktuell wird IFS-Kontext via Text-Heuristik erkannt (Regex). Langfristig
+  soll part_intent als Metadatum in Chat-Nachrichten gespeichert werden
+  (siehe Backlog AGENTS.md → IFS-Metadaten-Injektion). Bis dahin liefert
+  die Heuristik zuverlässige Ergebnisse für explizit IFS-benannte Chats.
+
+Siehe auch: AGENTS.md → v59.1 Rollen-Disambiguierung.
+"""
+
 import streamlit as st
+import re
+
 import ui.state as state
 from modules.database import get_chat_list, load_chat_history
 from modules.citation_rag import CitationRAG
-from modules.ifs_engine import IFS_PART_MAP  # v59.1 Fix 6 — IFS-Kontext importieren
 
-# v59.1 Fix 1 — IFS-Rollen-Karte für descriptive Labels
-# Statt abstrakter [USER]/[MODEL] Labels, die kleinere Modelle verwirren,
-# verwenden wir IFS-spezifische Rollenbeschreibungen wenn der Chat aus
-# dem Resonanzraum stammt.
-IFS_ROLE_LABELS = {
-    "user": "PERSON (Ich/Self)",
-    "model": "INNERE STIMME",
-    "assistant": "INNERE STIMME",
+# v59.1 Fix 6 — IFS-Kontext-Erkennung importieren
+from modules.ifs_engine import (
+    IFS_PART_MAP,
+    DEFAULT_HUMAN_LABEL,
+    DEFAULT_MODEL_LABEL,
+    is_ifs_context,
+)
+
+
+# =============================================================================
+# v59.1 Fix 1 + Fix 6 — ROLLEN-LABELLING
+# =============================================================================
+# _resolve_role_label() liefert für eine Chat-Nachricht das passende Label.
+#   1. Default: [MENSCH] für user, [KI-MODELL] für model/assistant
+#   2. Bei IFS-Kontext im Gesamt-Chat: versucht, IFS-Part zuzuordnen
+#      (über Message-Präfix wie "Stimme der Kontrolle:" im Text)
+# =============================================================================
+
+# Regex: Erkennt IFS-Part-Zuordnung im Nachrichtentext.
+# IFS-Resonanzraum-Chats haben oft Präfixe wie:
+#   "Stimme der Kontrolle: ..." oder "Kampf-Stimme: ..."
+_IFS_PART_PREFIX_PATTERNS = {
+    "ifs_control": re.compile(
+        r"^\s*(Stimme der Kontrolle|Kontroll-Stimme|IFS_CONTROL)\s*:",
+        re.IGNORECASE,
+    ),
+    "ifs_fight": re.compile(
+        r"^\s*(Stimme des Kampfes|Kampf-Stimme|IFS_FIGHT)\s*:",
+        re.IGNORECASE,
+    ),
+    "ifs_fear": re.compile(
+        r"^\s*(Stimme der Furcht|Furcht-Stimme|IFS_FEAR)\s*:",
+        re.IGNORECASE,
+    ),
 }
 
 
-def _detect_ifs_context(history: list) -> dict:
+def _detect_ifs_part_from_text(text: str) -> str | None:
     """
-    v59.1 Fix 6 — Erkennt ob ein Chat aus dem IFS Resonanzraum stammt
-    und welche innere Stimme aktiv war.
+    Versucht, den IFS-Part aus dem Präfix des Modell-Textes zu erkennen.
+
+    Args:
+        text: Nachrichtentext (typischerweise Modell-Antwort im IFS-Chat).
 
     Returns:
-        dict mit 'is_ifs', 'part_type', 'part_label' Keys
+        IFS-Part-Key ("ifs_control" / "ifs_fight" / "ifs_fear") oder None,
+        wenn kein IFS-Präfix gefunden wurde.
     """
-    # Heuristik: Prüfe ob Chat-Metadaten einen IFS-Intent tragen
-    # oder ob die Nachrichten IFS-typische Muster enthalten
-    result = {"is_ifs": False, "part_type": None, "part_label": None}
+    if not text:
+        return None
+    for part_key, pattern in _IFS_PART_PREFIX_PATTERNS.items():
+        if pattern.search(text):
+            return part_key
+    return None
 
-    if not history:
-        return result
 
-    # Strategie 1: Prüfe auf IFS-Metadaten im Chat (falls vorhanden)
-    for msg in history[:3]:
-        metadata = msg.get("metadata", {})
-        if isinstance(metadata, dict):
-            part_intent = metadata.get("part_intent", "")
-            if part_intent in IFS_PART_MAP:
-                result["is_ifs"] = True
-                result["part_type"] = part_intent
-                result["part_label"] = IFS_PART_MAP[part_intent]
-                return result
+def _resolve_role_label(
+    role: str,
+    text: str,
+    ifs_mode: bool,
+) -> str:
+    """
+    Liefert das deskriptive Rollen-Label für eine Chat-Nachricht.
 
-    # Strategie 2: Heuristik — prüfe auf IFS-typische Sprachmuster
-    # in den Modell-Antworten (ich-Perspektive als innerer Anteil)
-    model_texts = []
+    Args:
+        role: Rolle aus der DB ("user" / "model" / "assistant" / etc.)
+        text: Nachrichtentext (für IFS-Part-Erkennung im Präfix).
+        ifs_mode: True, wenn Gesamt-Chat als IFS-Kontext erkannt wurde.
+
+    Returns:
+        Label-String OHNE Klammern (z.B. "MENSCH", "KI-MODELL",
+        "STIMME DER KONTROLLE"). Aufrufer fügt [ ] hinzu.
+    """
+    role_lower = (role or "").lower()
+
+    # User-Seite → immer [MENSCH] (egal ob IFS oder nicht)
+    if role_lower in ("user", "human"):
+        return DEFAULT_HUMAN_LABEL
+
+    # Modell-Seite
+    if role_lower in ("model", "assistant", "ai"):
+        if ifs_mode:
+            # Versuche, IFS-Part aus Präfix zu erkennen
+            part_key = _detect_ifs_part_from_text(text)
+            if part_key and part_key in IFS_PART_MAP:
+                return IFS_PART_MAP[part_key]
+        return DEFAULT_MODEL_LABEL
+
+    # Unbekannte Rolle → generisches Label (nicht [USER]/[MODEL]!)
+    return f"ROLLE-{role.upper()}" if role else DEFAULT_MODEL_LABEL
+
+
+def _format_chat_for_supervision(history: list) -> tuple[str, bool]:
+    """
+    Formatiert Chat-Historie als Text für die Supervisions-Pipeline.
+
+    v59.1 Fix 1 + Fix 6:
+      - Verwendet deskriptive Labels statt [USER]/[MODEL]
+      - Erkennt IFS-Kontext und verwendet IFS-spezifische Labels
+
+    Args:
+        history: Liste von Message-Dicts mit role und parts.
+
+    Returns:
+        Tuple (formatted_text, is_ifs).
+        - formatted_text: Formatierter Chat für LLM-Input.
+        - is_ifs: True, wenn IFS-Kontext erkannt wurde (für Logging/Debug).
+    """
+    parts = []
+    raw_concat = []  # Für IFS-Kontext-Heuristik
+
     for msg in history:
-        role = msg.get("role", "")
-        if role in ("model", "assistant"):
-            text = msg.get("parts", [{}])[0].get("text", "") if msg.get("parts") else msg.get("content", "")
-            if text:
-                model_texts.append(text.lower())
+        role = msg.get("role", "unknown")
+        text = msg.get("parts", [{}])[0].get("text", "") if msg.get("parts") else ""
+        if text and text.strip():
+            raw_concat.append(text.strip())
 
-    if model_texts:
-        ifs_keywords = ["innerer anteil", "ich als", "mein anteil", "ich bin der teil",
-                        "ich bin die stimme", "kontrollzwang", "mauern", "verletzlichkeit"]
-        keyword_hits = sum(1 for t in model_texts for kw in ifs_keywords if kw in t)
-        if keyword_hits >= 2:
-            result["is_ifs"] = True
-            # Versuche den Part-Typ zu erraten
-            all_text = " ".join(model_texts)
-            if any(kw in all_text for kw in ["kontrolle", "regeln", "risiko", "professionell"]):
-                result["part_type"] = "IFS_CONTROL"
-                result["part_label"] = IFS_PART_MAP["IFS_CONTROL"]
-            elif any(kw in all_text for kw in ["wut", "wütend", "angriff", "verteidigung", "stolz"]):
-                result["part_type"] = "IFS_FIGHT"
-                result["part_label"] = IFS_PART_MAP["IFS_FIGHT"]
-            elif any(kw in all_text for kw in ["angst", "überfordert", "hilflos", "verstecken"]):
-                result["part_type"] = "IFS_FEAR"
-                result["part_label"] = IFS_PART_MAP["IFS_FEAR"]
-            else:
-                result["part_label"] = "innerer Anteil (unbekannt)"
+    # IFS-Kontext-Heuristik auf den Gesamt-Text anwenden
+    full_text = "\n".join(raw_concat)
+    ifs_detected = is_ifs_context(full_text)
 
-    return result
+    # Jetzt mit passenden Labels formatieren
+    for msg in history:
+        role = msg.get("role", "unknown")
+        text = msg.get("parts", [{}])[0].get("text", "") if msg.get("parts") else ""
+        if text and text.strip():
+            label = _resolve_role_label(role, text.strip(), ifs_detected)
+            parts.append(f"[{label}]\n{text.strip()}")
+
+    return "\n\n".join(parts), ifs_detected
 
 
-def _format_role_label(role: str, ifs_context: dict) -> str:
-    """
-    v59.1 Fix 1 — Gibt ein deskriptives Rollen-Label zurück.
-
-    Für IFS-Chats: [PERSON (Ich/Self)] statt [USER],
-                    [INNERE STIMME: Kampf/Abwehr] statt [MODEL]
-    Für Nicht-IFS-Chats: [USER] / [MODEL] wie bisher
-    """
-    if ifs_context["is_ifs"]:
-        if role in ("model", "assistant"):
-            part_label = ifs_context.get("part_label", "innerer Anteil")
-            return f"INNERE STIMME ({part_label})"
-        elif role == "user":
-            return "PERSON (Ich/Self)"
-    # Fallback: klassische Labels
-    return role.upper()
-
+# =============================================================================
+# TAB-RENDERING
+# =============================================================================
 
 def render_supervision_tab():
+    """
+    Rendert das IFS Supervisions-Panel.
+
+    Analysiert einen kompletten Chat als psychologisches System:
+    Zwei Agenten (Manager-Fokus & Exile-Fokus) untersuchen den Text parallel.
+    Ein META-Agent bewertet anschließend die Meta-Dynamik.
+
+    v60.2: Chat-Formatierung mit deskriptiven Rollen-Labels (Fix 1) und
+    IFS-Kontext-Erkennung (Fix 6).
+    """
     st.header("🧑‍⚖️ IFS Supervisions-Panel")
     st.markdown("""
     Dieser Modus analysiert einen kompletten Chat als psychologisches System.
     Zwei Agenten (Manager-Fokus & Exile-Fokus) untersuchen den Text parallel.
     Ein Tribunal-Agent bewertet anschließend die Meta-Dynamik.
+
+    **v59.1+:** Rollen-Labels wurden für kleinere Modelle optimiert
+    (deskriptiv statt abstrakt). IFS-Chats werden automatisch erkannt.
     """)
 
-    # Chats laden (KORRIGIERT)
+    # Chats laden
     all_chats = get_chat_list()
 
     if not all_chats:
@@ -116,53 +206,36 @@ def render_supervision_tab():
     )
 
     if st.button("🚀 Supervision starten", type="primary"):
-        # Lade Chat-Historie (KORRIGIERT)
+        # Lade Chat-Historie
         history = load_chat_history(selected_chat_id)
         if not history:
             st.warning("Dieser Chat ist leer.")
             return
 
-        # v59.1 Fix 6 — IFS-Kontext erkennen
-        ifs_context = _detect_ifs_context(history)
+        # v59.1 Fix 1 + Fix 6 — Chat mit deskriptiven Labels formatieren
+        chat_text, ifs_detected = _format_chat_for_supervision(history)
 
-        # v59.1 Fix 1 — IFS-context-aware Rollen-Labels
-        # Formatiere Chat als Text mit deskriptiven Rollen-Labels
-        parts = []
-        for msg in history:
-            role = msg.get("role", "unknown")
-            text = msg.get("parts", [{}])[0].get("text", "") if msg.get("parts") else msg.get("content", "")
-            if text.strip():
-                role_label = _format_role_label(role, ifs_context)
-                parts.append(f"[{role_label}]\n{text.strip()}")
-        chat_text = "\n\n".join(parts)
-
-        # v59.1 Fix 6 — IFS-Kontext-Präfix für Supervisions-Pipeline
-        # Wenn IFS erkannt wurde, wird ein Kontext-Header vorangestellt,
-        # damit die Supervisions-Agenten die Rollenstruktur verstehen.
-        if ifs_context["is_ifs"]:
-            ifs_header = (
-                f"=== IFS-RESONANZRAUM KONTEXT ===\n"
-                f"Dieser Dialog stammt aus dem IFS Resonanzraum.\n"
-                f"Aktive innere Stimme: {ifs_context['part_label']}\n"
-                f"Rollenstruktur:\n"
-                f"  - [PERSON (Ich/Self)] = Der User, der mit seiner inneren Stimme spricht\n"
-                f"  - [INNERE STIMME ({ifs_context['part_label']})] = Der innere Anteil, gespielt vom KI-Modell\n"
-                f"Die Analyse MUSS diese IFS-Rollenstruktur berücksichtigen.\n"
-                f"=== ENDE IFS-KONTEXT ===\n\n"
-            )
-            chat_text = ifs_header + chat_text
+        # Debug-Info (nur bei aktivem Debug-Mode)
+        if st.session_state.get("global_settings", {}).get("debug_mode", False):
+            st.caption(f"IFS-Kontext erkannt: {'Ja' if ifs_detected else 'Nein'}")
+            with st.expander("Formatierter Chat-Text (Debug)", expanded=False):
+                st.code(chat_text, language="markdown")
 
         with st.status("Führe psychosystemische Analyse durch...", expanded=True) as status:
             st.write("Starte Map-Reduce Pipeline (Manager & Exile parallel)...")
-            if ifs_context["is_ifs"]:
-                st.write(f"IFS-Modus erkannt: {ifs_context['part_label']}")
+            if ifs_detected:
+                st.write("🔍 IFS-Kontext erkannt — verwende IFS-spezifische Rollen-Labels.")
             try:
-                # Aufruf der neuen Pipeline
+                # Aufruf der Supervisions-Pipeline
                 rag = CitationRAG()
                 results = rag.generate_ifs_supervision(chat_text)
-                status.update(label="Supervision erfolgreich abgeschlossen!", state="complete", expanded=False)
+                status.update(
+                    label="Supervision erfolgreich abgeschlossen!",
+                    state="complete",
+                    expanded=False,
+                )
 
-                # Ergebnisse im State speichern, damit sie beim Tab-Wechsel bleiben
+                # Ergebnisse im State speichern
                 state.set_supervision_result(results, chat_options[selected_chat_id])
             except Exception as e:
                 status.update(label="Fehler bei der Supervision", state="error")
@@ -201,3 +274,61 @@ def render_supervision_tab():
             file_name="ifs_supervision_gutachten.md",
             mime="text/markdown"
         )
+
+
+# =============================================================================
+# SELF-TEST (wird nur bei direktem Aufruf ausgeführt)
+# =============================================================================
+if __name__ == "__main__":
+    print("=== Self-Test: supervision_tab.py v60.2 ===\n")
+
+    # Test 1: _resolve_role_label — Default-Labels
+    print("--- Test 1: Default-Labels (kein IFS-Modus) ---")
+    assert _resolve_role_label("user", "Hallo", False) == "MENSCH"
+    assert _resolve_role_label("model", "Antwort", False) == "KI-MODELL"
+    assert _resolve_role_label("assistant", "Antwort", False) == "KI-MODELL"
+    print("  ✅ Default-Labels korrekt")
+
+    # Test 2: _resolve_role_label — IFS-Modus ohne erkennbaren Part
+    print("--- Test 2: IFS-Modus ohne erkennbaren Part ---")
+    assert _resolve_role_label("user", "Hallo", True) == "MENSCH"
+    assert _resolve_role_label("model", "Einfache Antwort ohne Präfix", True) == "KI-MODELL"
+    print("  ✅ IFS-Modus ohne Präfix → KI-MODELL (Fallback)")
+
+    # Test 3: _resolve_role_label — IFS-Modus mit erkennbarem Part
+    print("--- Test 3: IFS-Modus mit Präfix ---")
+    assert _resolve_role_label(
+        "model", "Stimme der Kontrolle: Ich halte Struktur.", True
+    ) == "STIMME DER KONTROLLE"
+    assert _resolve_role_label(
+        "model", "Stimme des Kampfes: Ich wehre mich.", True
+    ) == "STIMME DES KAMPFES"
+    assert _resolve_role_label(
+        "model", "Stimme der Furcht: Ich habe Angst.", True
+    ) == "STIMME DER FURCHT"
+    print("  ✅ IFS-Part-Erkennung korrekt")
+
+    # Test 4: is_ifs_context — Heuristik
+    print("--- Test 4: IFS-Kontext-Heuristik ---")
+    assert is_ifs_context("Wir sind im IFS-Resonanzraum.") == True
+    assert is_ifs_context("Stimme der Kontrolle sagt Hallo.") == True
+    assert is_ifs_context("Ein ganz normaler Chat ohne IFS-Bezug.") == False
+    assert is_ifs_context("") == False
+    print("  ✅ Heuristik korrekt")
+
+    # Test 5: _format_chat_for_supervision — End-to-End
+    print("--- Test 5: _format_chat_for_supervision (End-to-End) ---")
+    test_history = [
+        {"role": "user", "parts": [{"text": "Hallo, ich möchte über meinen Kampf reden."}]},
+        {"role": "model", "parts": [{"text": "Stimme des Kampfes: Ich bin hier. Was sagt du?"}]},
+    ]
+    formatted, ifs_flag = _format_chat_for_supervision(test_history)
+    assert ifs_flag == True, f"IFS sollte erkannt werden, got: {ifs_flag}"
+    assert "[MENSCH]" in formatted
+    assert "[STIMME DES KAMPFES]" in formatted
+    assert "[USER]" not in formatted
+    assert "[MODEL]" not in formatted
+    print("  ✅ End-to-End-Formatierung korrekt")
+    print(f"  Formatted preview:\n{formatted[:200]}...")
+
+    print("\n=== Alle Tests bestanden ===")

@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.txt)
-[![Version](https://img.shields.io/badge/version-v59-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-v61-green.svg)](CHANGELOG.md)
 [![Status](https://img.shields.io/badge/status-production%20ready-brightgreen.svg)]()
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18774828.svg)](https://doi.org/10.5281/zenodo.18774828)
 [![YouTube](https://img.shields.io/badge/YouTube-Case_Study-red?logo=youtube)](https://youtu.be/HveLGOuWJM0)
@@ -11,7 +11,7 @@
 **Focus:** Source Parity, Deep Validation & Chronological Synthesis for Multilingual Text Analysis
 **Stack:** Python, Streamlit, SQLite, ChromaDB, LM Studio (lokal), Vertex AI (Gemini)
 
-Lokales Forschungswerkzeug für die Diskursarchäologie von KI-Gesprächen — mit hermeneutischer Validierung, Zitatnachweisen, Faktvalidierung, Meta-Analyse, Drei-Phasen-Synthese (Draft → Mechanischer Check → Korrektur), stilistischer Analyse (STILISTIC Mode), Meta-Vergleich analytischer Verfahren (META-VERGLEICH) und einem IFS-Resonanzraum für persönliche Reflexion.
+Lokales Forschungswerkzeug für die Diskursarchäologie von KI-Gesprächen — mit hermeneutischer Validierung, Zitatnachweisen, Faktvalidierung, Meta-Analyse, Drei-Phasen-Synthese (Draft → Mechanischer Check → Korrektur), stilistischer Analyse (STILISTIC Mode), Meta-Vergleich analytischer Verfahren (META-VERGLEICH) und einem IFS-Trostbau-Modul für persönliche Reflexion (v61).
 
 ---
 
@@ -24,7 +24,7 @@ Die HRE ist eine **lokale, privat betriebene** Anwendung, die es ermöglicht:
 - **Stilanalyse durchzuführen** — mit dem STILISTIC Mode (Drei-Etappen-Architektur: Python-Statistiken → LLM-Beobachtung → Kreativer Sprung)
 - **Analytische Verfahren zu vergleichen** — mit META-VERGLEICH (5-Achsen-Vergleich: Konvergenzen, Divergenzen, Komplementarität, Grenzen, Systematischer Ertrag)
 - **Forschung zu dokumentieren** — mit reproduzierbaren Analysen, Quellenangaben und einem Critical Apparatus
-- **Persönliche Reflexion zu unterstützen** — über den IFS-Resonanzraum (Internal Family Systems)
+- **Persönliche Reflexion zu unterstützen** — über den IFS-Trostbau (Internal Family Systems), mit mode-abhängigen Krisenschwellen, Echo-Wächter und Anker-Modus (v61)
 
 Alle Daten bleiben lokal. Keine Cloud-Abhängigkeit, kein API-Key erforderlich.
 
@@ -34,34 +34,80 @@ Alle Daten bleiben lokal. Keine Cloud-Abhängigkeit, kein API-Key erforderlich.
 
 ### Voraussetzungen
 
-- Python 3.11+
-- [LM Studio](https://lmstudio.ai/) (lokaler LLM-Server) oder OpenAI API-Key
-- Windows, macOS oder Linux
+Damit die HRE auf deinem Computer läuft, brauchst du:
 
-### Installation
+- **Python 3.11 oder neuer** — [hier herunterladen](https://www.python.org/downloads/). Wähle bei der Installation unter Windows die Option „Add Python to PATH".
+- **LM Studio** — ein kostenloses Programm, das lokale KI-Modelle auf deinem Rechner ausführt. [Hier herunterladen](https://lmstudio.ai/). Es läuft auf Windows, macOS und Linux.
+- **Arbeitsspeicher (RAM):** mindestens 8 GB, besser 16 GB für komfortables Arbeiten.
+- **Grafikkarte (optional, aber empfohlen):** Mind. 6 GB VRAM für flüssiges Arbeiten mit dem 9B-Standardmodell.
+- **Betriebssystem:** Windows, macOS oder Linux.
+
+### Installation — Schritt für Schritt
+
+**1. Repository herunterladen**
+
+Öffne ein Terminal (unter Windows: PowerShell) und gib ein:
 
 ```bash
-# 1. Repository klonen
 git clone https://github.com/gpantijelew/hermeneutic-engine.git
 cd hermeneutic-engine
+```
 
-# 2. Virtuelle Umgebung erstellen
+Falls du `git` nicht installiert hast: Du kannst das Repository auch als ZIP-Datei über den grünen „Code"-Button auf der GitHub-Seite herunterladen und entpacken.
+
+**2. Virtuelle Python-Umgebung einrichten**
+
+Das hält die Abhängigkeiten der HRE sauber von anderen Python-Projekten auf deinem Rechner:
+
+```bash
 python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # macOS/Linux
 
-# 3. Abhängigkeiten installieren
+# Windows:
+venv\Scripts\activate
+
+# macOS/Linux:
+source venv/bin/activate
+```
+
+Du erkennst, dass die Umgebung aktiv ist, wenn im Terminal `(venv)` vor dem Prompt steht.
+
+**3. Abhängigkeiten installieren**
+
+```bash
 pip install -r requirements.txt
+```
 
-# 4. LM Studio starten (lokaler LLM-Server)
-# - Modell laden (z.B. gemma-3-27b-it)
-# - Server aktivieren (Standard: http://localhost:1234)
+Das lädt alle benötigten Bibliotheken (Streamlit, ChromaDB, BeautifulSoup u. a.). Beim ersten Mal dauert das einige Minuten.
 
-# 5. Anwendung starten
+**4. LM Studio einrichten**
+
+1. LM Studio öffnen.
+2. Im Reiter „Search" ein Modell suchen und herunterladen. Empfohlen für den Anfang: `qwen3.5-9b-highiq-instruct` (gründlich, läuft auf den meisten Rechnern).
+3. Zum Reiter „Developer" wechseln und den lokalen Server starten. Standard-Port: `1234`. LM Studio muss im Hintergrund weiterlaufen, solange du die HRE nutzt.
+
+**5. Konfigurationsdatei anlegen**
+
+Kopiere die Vorlage `.env.example` zu `.env` (die Datei ist meist schon passend eingestellt):
+
+```bash
+cp .env.example .env
+```
+
+Falls du ein anderes Modell oder einen anderen Port verwenden willst, öffne `.env` in einem Texteditor und passe die Werte an.
+
+**6. Anwendung starten**
+
+```bash
 streamlit run app.py
 ```
 
-Die Anwendung öffnet sich automatisch im Browser unter `http://localhost:8501`.
+Dein Browser öffnet sich automatisch unter `http://localhost:8501`. Falls nicht, öffne die Adresse manuell.
+
+### Erste Schritte in der App
+
+1. **Import:** Lade eine Chat-Export-Datei hoch (z. B. HTML-Export von ChatGPT/Claude/DeepSeek) oder einen literarischen Text (TXT, MD, PDF, EPUB, FB2).
+2. **Analyse:** Wähle im Analyse-Tab deine Quellen aus und stelle eine Frage — auf Deutsch oder Englisch.
+3. **Tiefenprüfung (optional):** Klappe „Enforcer Protokoll" auf und klicke „Tiefenprüfung starten". Jede Aussage wird dann gegen die Quellen validiert.
 
 ---
 
@@ -71,7 +117,7 @@ Die Anwendung öffnet sich automatisch im Browser unter `http://localhost:8501`.
 HRE/
 ├── app.py                    # Einstiegspunkt (Streamlit), Tab-Orchestrierung, Auth
 ├── modules/                  # Kernmodule
-│   ├── llm_wrapper.py        # 5 LLM-Call-Varianten (LM Studio / OpenAI / Vertex), Retry-Logic
+│   ├── llm_wrapper.py        # LLM-Call-Varianten (LM Studio / OpenAI / Vertex), Retry-Logic
 │   ├── database.py           # SQLite CRUD, FTS5, Chunk-Registry, Analyses, Enforcer-Reviews
 │   ├── vector_store.py       # ChromaDB + BM25 Hybrid Search, SQLite Vector Store
 │   ├── citation_rag.py       # CitationRAG mit Rescue Mission & Essence Parity
@@ -81,7 +127,11 @@ HRE/
 │   ├── prompt_manager.py     # YAML-zentralisierte Prompts
 │   ├── text_analyzer.py      # Etappe 1: Deterministische Textstatistiken (Satzbau, TTR, Morphologie)
 │   ├── stilistic_lab_pipeline.py # Etappe 2+3: STILISTIC Analyse + Globale Synthese + META-VERGLEICH
-│   ├── ifs_engine.py         # IFS Resonanzraum (D.S3.7+), PromptManager + llm_call
+│   ├── meta_hermeneutic_engine.py # Meta-Engine + Falsifizierungs-Architektur (Agency, Gegenposition, Adjudikation)
+│   ├── ifs_engine.py         # IFS Trostbau (v61): PromptManager + llm_call + Mode-Wrapper
+│   ├── echo_guard.py         # IFS Trostbau (v61): Wortüberlappungs-Prüfung, einmalige Neugenerierung
+│   ├── anker_loader.py       # IFS Trostbau (v61): Lädt Anker-Liste als hermeneutisches Protokoll
+│   ├── emergency_interceptor.py # IFS Trostbau (v61): Mode-abhängige Krisenschwellen (IFS_FIGHT=2, IFS_CONTROL=3, IFS_FEAR=2, NAMASTE=2)
 │   ├── embedding_cache.py    # Embedding-Hash-Cache (SQLite), SHA-256, Batch-Commits
 │   ├── health_monitor.py     # SystemHealthMonitor, CPU/Memory/Disk/GC-Metriken
 │   ├── export.py             # Markdown-Export, Reproducibility Manifest
@@ -92,7 +142,8 @@ HRE/
 │   ├── analysis_tab.py       # Hermeneutische Analyse
 │   ├── destillation_tab.py   # Best-of-Synthese, STILISTIC & META-VERGLEICH
 │   ├── stilisierung_tab.py   # Text-Veredelung (Agentic Loop: Drafter/Critic/Editor)
-│   ├── ifs_tab.py            # IFS Resonanzraum UI (Triad + Single-Modus)
+│   ├── ifs_tab.py            # IFS Trostbau UI (v61: Triad + Single-Modus, Mode-Labels)
+│   ├── meta_hermeneutic_tab.py # Meta-Engine UI (Falsifizierungs-Architektur)
 │   ├── system_health_tab.py  # Health-Dashboard, Confidence Calibration, Corpus Stats
 │   ├── qa_review_tab.py      # QA-Review-Queue, Enforcer-Sampling
 │   ├── chat_list.py          # Sidebar: Chat-Liste mit FTS5-Suche, Lazy-Load
@@ -100,7 +151,7 @@ HRE/
 │   ├── state.py              # Zentrales State-Management
 │   └── components.py         # Wiederverwendbare UI-Bausteine
 ├── tests/                    # pytest-Suite
-├── hermeneutic_protocol.yaml # Zentrale Prompt-Regeln
+├── hermeneutic_protocol.yaml # Zentrale Prompt-Regeln (IFS-spezifische Regeln seit v61)
 └── AGENTS.md                 # Projekt-Plan & Qualitätsbewertung
 ```
 
@@ -111,7 +162,7 @@ HRE/
 3. **Analyse:** Query → `hermeneutic_router.py` → BM25 + Vectors → `citation_rag.py` → Synthese
 4. **STILISTIC:** Text → `text_analyzer.py` (Python-Statistiken) → `stilistic_lab_pipeline.py` (LLM-Beobachtung + Synthese)
 5. **META-VERGLEICH:** Zwei Analysen → `stilistic_lab_pipeline.py` → 5-Achsen-Vergleich
-6. **IFS:** Situation → `ifs_engine.py` → LLM mit Situations-Injektion + Part-spezifischem Sys-Prompt
+6. **IFS Trostbau:** Situation → `ifs_engine.py` (Mode-Wrapper) → LLM mit modus-spezifischem Krisen-Threshold (`emergency_interceptor.py`) → Echo-Prüfung (`echo_guard.py`) → Anker-Protokoll (`anker_loader.py`)
 
 ---
 
@@ -186,11 +237,25 @@ pytest tests/ --cov=modules --cov-report=term-missing
 - **Zwei-Seiten-Eingabe:** Editierbare Labels, DB-Quellen oder Freitext, optionale Forschungsfrage
 - **Anti-Harmonisierung:** Werkzeugvergleich, nicht Rangierung — keine synthetisierende Synthese am Ende
 
-### IFS Resonanzraum (v54)
-- **Triad-Modus:** Alle 3 inneren Stimmen parallel (Kontrolle, Kampf, Angst)
-- **Single-Modus:** Eine Stimme nach der anderen, mit Wechsel-Buttons
-- **Situations-Injektion:** Tagebuch-Situation fließt in jeden Sys-Prompt
-- **Emergency-Interceptor:** Automatische Pause bei Selbstverletzung/Suizidalität
+### Falsifizierungs-Architektur (v60)
+- **Agency-Extraktion:** intentional / responsiv / entbündelnd pro Meta-Run
+- **Quellen-Gegenposition (dormant):** STILISTIC-LAB-Eingang für Gegenlektüre
+- **Meta-Gegenposition (Strang B):** Argumentiert GEGEN die Primäranthese
+- **Meta-Adjudikation (Strang C):** Bewertet, was standhält — KEINE Harmonisierung
+- **Revidierte Destillation:** Synthetisiert nur, was der Gegenprobe standhält
+- **Freie Frage (Option B):** Schneller Modus (nur SEZIEREN + FREIE FRAGE) oder VOLLANALYSE-Modus
+- **Meta-Meta-Ebene:** Vergleich von Meta-Läufen über Engine-Versionen hinweg
+
+### IFS Trostbau (v54, neu in v61: Mode-Engine + Echo-Wächter + Anker-Modus)
+- **Vier innere Stimmen:** IFS_FIGHT (Kampf), IFS_CONTROL (Kontrolle), IFS_FEAR (Angst), NAMASTE (Sanftheit/Würdigung)
+- **Triad- und Single-Modus:** Alle drei klassischen Stimmen parallel oder einzeln, mit Wechsel-Buttons. NAMASTE als vierter, sanfterer Modus zusätzlich verfügbar.
+- **Mode-abhängige Krisenschwellen (v61):** Jeder Modus hat einen eigenen Threshold für Notfall-Intervention — IFS_FIGHT=2, IFS_CONTROL=3, IFS_FEAR=2, NAMASTE=2. Eine einzelne geladene, auf Kontrolle getrimmte Stimme toleriert also mehr (Threshold 3) als eine Angst-Stimme (Threshold 2), die bei Belastung schneller eskalieren kann.
+- **Echo-Wächter (v61):** Prüft nach jedem LLM-Call die Wortüberlappung zwischen User-Input und Antwort. Ab 60 % Überlappung wird einmalig neu generiert, mit dem zusätzlichen Hinweis, die Aussage vollständig umzuformulieren. Verhindert das plumpe Zurückspiegeln von User-Worten.
+- **Anker-Modus (v61):** Lädt eine optionale Anker-Liste (`anker_liste.md`) als hermeneutisches Protokoll in den IFS-Prompt. Die Anker-Liste ist ein großzügiges, didaktisch aufbereitetes Lehrmaterial (privat, wird nicht mit dem Public-Repo ausgeliefert). Sie enthält konkrete Techniken für schwere Momente — z. B. die Dr.-Kappes-Technik der *Umdeutung/Beobachtung*, bei der intrusiven Gedanken wie Insekten in einem Glas betrachtet statt bekämpft werden.
+- **Beziehungs-Frage proaktiv (v61):** Einmal pro Dialog wird die Frage nach der Beziehung zwischen Stimmen gestellt — nicht reaktiv, sondern aktiv vom System angestoßen.
+- **LEICHTIGKEIT IST ERLAUBT (v61):** Schwere Themen brauchen auch Spielräume — die Engine darf in leichten Momenten (z. B. um eine Tasse Tee) auch einmal heiter sein.
+- **Handlungsbitte-Regel (v61):** Auf „Was soll ich tun?" antwortet die Engine ehrlich mit „Das weiß ich nicht" statt zitierte Listen vorzulegen.
+- **LISTE-ALS-HINTERGRUNDMATERIAL:** Anker-Listen-Items werden als Hintergrundinformation verwendet, nicht als vorgeworfene Auflistung in der Antwort.
 
 ### Importer (20+ Plattformen)
 - HTML: ChatGPT, Claude, Gemini, Kimi, DeepSeek, Grok, Perplexity, LM Arena, Hotbot, GLM, Wikisource
@@ -202,8 +267,8 @@ pytest tests/ --cov=modules --cov-report=term-missing
 
 ## Documentation
 
-- **[FIBEL](docs/FIBEL_v50_9.md)** – Comprehensive guide (100+ pages: concepts, architecture, tutorials)
-- **[Changelog](CHANGELOG.md)** – Release notes and version history (v48 → v59)
+- **[FIBEL](docs/FIBEL_v61.md)** – Comprehensive guide (100+ pages: concepts, architecture, tutorials)
+- **[Changelog](CHANGELOG.md)** – Release notes and version history (v48 → v61)
 - **[Contributing Guide](CONTRIBUTING.md)** – How to contribute (public repository)
 
 ---
@@ -266,7 +331,7 @@ Zenodo. https://doi.org/10.5281/zenodo.18774828
   title = {Hermeneutic Reconstruction Engine for Archaeology of Mind:
            Source Parity, Deep Validation and Chronological Synthesis in Multilingual RAG Systems},
   year = {2026},
-  version = {v59},
+  version = {v61},
   url = {https://github.com/gpantijelew/hermeneutic-engine},
   note = {AI-assisted development with Claude Sonnet 4.6 (Anthropic),
           Gemini (Google DeepMind), and Kimi (Moonshot AI)}
@@ -310,7 +375,7 @@ This repository is **public as of v55** (May 2026).
 **Project Email:** hermeneutic-engine@proton.me
 
 **Repository:** https://github.com/gpantijelew/hermeneutic-engine
-**Status:** Public (v59 released May 2026)
+**Status:** Public (v61 released August 2026)
 
 ---
 
@@ -323,7 +388,7 @@ This research was supported by Google Cloud through the Google Cloud Research Cr
 - **Anthropic** (Claude Sonnet 4.6) – Architectural design, conceptual guidance, pre-deployment analysis
 - **Google DeepMind** (Gemini) – Code implementation and technical integration
 - **Moonshot AI** (Kimi) – Editorial review and final lektorat
-- **GLM-5.1** – Architectural work and testing
+- **GLM-5.1** – Architectural work, IFS Trostbau development (v61), and testing
 
 **Open Source Foundations:**
 - Streamlit (UI framework)

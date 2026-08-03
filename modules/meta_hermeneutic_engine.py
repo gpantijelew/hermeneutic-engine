@@ -685,32 +685,28 @@ def _is_likely_author_name(name: str) -> bool:
     if _GERMAN_PATTERNS.match(name):
         return False
 
-    # v59.9.6 (Patch 2026-06-27): Kyrillische Zitat-Wörter ausschließen.
-    # v59.9.7 (Patch 2026-06-27): Erweitert um Adjektiv-Endungen.
-    # Problem: Wörter wie "Миров", "Поздний", "Прощева", "Черная" aus
-    # russischen Zitaten wurden fälschlich als Autoren-Namen extrahiert.
-    # Lösung: Kyrillische Wörter ausschließen, AUSSER sie stehen in der
-    # _KNOWN_AUTHORS-Whitelist (z.B. "Пушкин", "Блок", "Бродский").
-    if re.search(r'[А-Яа-яЁё]', name):
-        # Kyrillisch — nur erlauben, wenn in Whitelist
-        if name not in _KNOWN_AUTHORS:
-            return False
-
-    # v59.9.7: Kyrillische Adjektiv-Endungen ausschließen (zusätzlich zum
-    # Whitelist-Check oben, als zweite Verteidigungslinie).
-    # Adjektive sind keine Autoren — auch wenn sie kyrillisch sind.
-    # Endungen: -ая, -яя, -ое, -ее, -ий, -ый, -ой, -ого, -его, -ому, -ему,
-    #           -ым, -им, -ом, -ем, -ыми, -ими, -ого, -его
-    _CYR_ADJ_ENDINGS = (
-        'ая', 'яя', 'ое', 'ее', 'ий', 'ый', 'ой',
-        'ого', 'его', 'ому', 'ему', 'ыми', 'ими',
+    # v60 (Patch 2026-07-03): Whitelist-Filter entfernt — blockierte neue Autoren.
+    #
+    # Problem (v59.9.6–v59.10.x): Kyrillische Wörter wurden PAUSCHAL abgelehnt,
+    # wenn sie nicht in _KNOWN_AUTHORS-Whitelist standen. Das blockierte alle
+    # neuen kyrillischen Autoren (außer Puschkin/Blok/Brodsky/Homer etc.).
+    # Ursprüngliches Ziel: Verhindern, dass Zitat-Wörter wie "Миров", "Черная"
+    # als Autoren extrahiert werden.
+    #
+    # NEU (v60): Statt harter Whitelist-Filterung verwenden wir eine weichere
+    # Heuristik: Blockiere nur Adjektiv-Endungen, die NIEMALS Nachnamen sind.
+    # Endungen wie -ий, -ый, -ой, -ов, -ин, -ева werden ALLOWED, weil viele
+    # russische Nachnamen diese Endungen haben (Маяковский, Толстой, etc.).
+    # Die _KNOWN_AUTHORS-Whitelist bleibt für Canonical-Name-Normalisierung,
+    # aber nicht mehr als Filter.
+    _CYR_NEVER_SURNAMES = (
+        'ая', 'яя', 'ое', 'ее',          # fem/neut adjective endings
+        'ого', 'его', 'ому', 'ему',       # genitive/dative
+        'ыми', 'ими',                     # instrumental plural
     )
-    if any(name.endswith(ending) for ending in _CYR_ADJ_ENDINGS):
-        # Prüfen, ob das Wort kyrillisch ist
+    if any(name.endswith(ending) for ending in _CYR_NEVER_SURNAMES):
         if re.search(r'[А-Яа-яЁё]', name):
-            # Kyrillisches Adjektiv — nur erlauben, wenn in Whitelist
-            if name not in _KNOWN_AUTHORS:
-                return False
+            return False
 
     return True
 
@@ -782,21 +778,29 @@ def _detect_authors(sezieren_results: List[Dict]) -> List[str]:
     """
     Erkennt automatisch die Autor/Quelle-Namen aus den Synthese-Outputs.
 
-    v2.4.1: Komplett überarbeitet — dreistufige Erkennung mit robuster
-    False-Positive-Filterung:
+    v60 (Patch 2026-07-03): Vollständig überarbeitet — ohne Whitelist-Fallback.
 
-    1. 'Autor (Quelle N)' — zuverlässigstes Muster
-    2. 'Quelle N Autor' — häufig, aber fehleranfälliger → Filter über _is_likely_author_name()
-    3. Kyrillische Autornamen
-    4. Fallback: Bekannte Autornamen-Whitelist
+    Frühere Probleme:
+    - Fallback-Whitelist (_KNOWN_AUTHORS) füllte <3 Autoren mit alten Namen auf.
+      Das verdeckte das Problem, anstatt es zu lösen — neue Autoren tauchten
+      nie in der Analyse auf.
+    - Regex ohne Bindestrich-Unterstützung (Мамин-Сибиряк wurde nicht gefunden).
+    - Regex fand nur den Nachnamen, wenn ein Vorname davor stand.
+      "Thomas Mann (Quelle 1)" → fand nur "Thomas".
+    - Kyrillische Muster hatten nur 6 Endungen; viele Nachnamen enden anders.
 
-    WICHTIG: Sucht NICHT in DESTILLATION-Blöcken (die Termini wie
-    **Klangfügung** stehen dort fett und würden als Autoren fehlinterpretiert).
+    Neue Strategie:
+    1. "Autor (Quelle N)" — zuverlässigstes Muster (1-2 Wörter, Bindestrich OK)
+    2. "Quelle N: Autor" — häufig im Sidecar-Format
+    3. Kyrillische Autornamen direkt im Text (erweiterte Endungen)
+    4. KEIN Whitelist-Fallback. Wenn <3 Autoren gefunden werden, ist das ein
+       Befund — der User muss die Quelldaten prüfen, nicht die Engine.
 
     Returns:
         Liste der erkannten Autor-Namen (sortiert, dedupliziert)
     """
     authors = set()
+    debug_counts = {"muster1": 0, "muster2": 0, "muster3": 0}
 
     # Sammle alle Texte (Kernhypothese + Fazit + BEWEISFÜHRUNG)
     all_text = ""
@@ -806,60 +810,96 @@ def _detect_authors(sezieren_results: List[Dict]) -> List[str]:
         all_text += (run.get("fazit", "") or "") + "\n"
         all_text += (run.get("beweisfuehrung", "") or "") + "\n"
 
-    # Muster 1 (ZUVERLÄSSIGSTES): 'Autor (Quelle N)' — z.B. 'Žukovskij (Quelle 2)'
-    # Dieses Muster ist eindeutig weil der Name VOR der Quellennummer steht
-    for m in re.finditer(
-        r'([A-ZÁÀÂÄÅĂĄĆČĎĐÉÈÊËĖĘĚĞÍÌÎÏİĶĹĽŁŃŇÑÓÒÔÖŐŐŘŔŚŠŞŤŢÚÙÛÜŰŮŴÝŸŹŽŻ]'
-        r'[a-záàâäăąćčďđéèêëęěğíìîïıķĺľłńňñóòôöőřŕśšşťţúùûüűůŵýÿźžż]+'
-        r'(?:[vV]on)?'
-        r'[a-záàâäăąćčďđéèêëęěğíìîïıķĺľłńňñóòôöőřŕśšşťţúùûüűůŵýÿźžż]*)'
+    # Buchstaben-Klassen (Latin + Kyrillisch, mit Diakritika)
+    _LATIN_UPPER = (
+        r"A-ZÁÀÂÄÅĂĄĆČĎĐÉÈÊËĖĘĚĞÍÌÎÏİĶĹĽŁŃŇÑÓÒÔÖŐŘŔŚŠŞŤŢÚÙÛÜŰŮŴÝŸŹŽŻ"
+    )
+    _LATIN_LOWER = (
+        r"a-záàâäăąćčďđéèêëęěğíìîïıķĺľłńňñóòôöőřŕśšşťţúùûüűůŵýÿźžż"
+    )
+    _CYR_UPPER = r"А-ЯЁ"
+    _CYR_LOWER = r"а-яё"
+
+    # Muster 1 (ZUVERLÄSSIGSTES): 'Autor (Quelle N)' — 1-2 Wörter vor "(Quelle N)"
+    # Erlaubt: "Mann", "Thomas Mann", "Мамин-Сибиряк", "von Kleist"
+    # Pattern: 1-2 Wörter (mit optionalem Bindestrich), gefolgt von "(Quelle N)"
+    pattern1 = re.compile(
+        r'([' + _LATIN_UPPER + _CYR_UPPER + r']'
+        r'[' + _LATIN_LOWER + _CYR_LOWER + r'\-]+'
+        r'(?:\s+[' + _LATIN_UPPER + _CYR_UPPER + r']'
+        r'[' + _LATIN_LOWER + _CYR_LOWER + r'\-]+)?)'  # optional 2. Wort
         r'\s*\(\s*Quelle\s*\d+\s*\)',
-        all_text
-    ):
+        re.IGNORECASE
+    )
+    for m in pattern1.finditer(all_text):
         name = m.group(1).strip()
         if _is_likely_author_name(name):
+            if name not in authors:
+                debug_counts["muster1"] += 1
             authors.add(name)
 
-    # Muster 2: 'Quelle N Autor' — häufig, aber fehleranfälliger
-    # z.B. 'Quelle 2 Žukovskij' ABER auch 'Quelle 1 Lösung'
-    # Daher: Zusätzliche Validierung über _is_likely_author_name()
-    for m in re.finditer(
-        r'Quelle\s*(\d+)\s*[,)]?\s*'
-        r'([A-ZÁÀÂÄÅĂĄĆČĎĐÉÈÊËĖĘĚĞÍÌÎÏİĶĹĽŁŃŇÑÓÒÔÖŐŐŘŔŚŠŞŤŢÚÙÛÜŰŮŴÝŸŹŽŻ]'
-        r'[a-záàâäăąćčďđéèêëęěğíìîïıķĺľłńňñóòôöőřŕśšşťţúùûüűůŵýÿźžż]+'
-        r'(?:[vV]on)?'
-        r'[a-záàâäăąćčďđéèêëęěğíìîïıķĺľłńňñóòôöőřŕśšşťţúùûüűůŵýÿźžż]*)',
-        all_text
-    ):
+    # Muster 2: 'Quelle N: Autor' oder 'Quelle N [Autor]' oder 'Quelle N Autor'
+    # v60 (Patch 2026-07-03): NUR 1 Wort — kein optionales 2. Wort mehr.
+    # Problem: Bei "Quelle 2: Kafka zeigt Verfremdung" hat das optionale 2. Wort
+    # das Verb "zeigt" eingesaugt → "Kafka zeigt" wurde als Autor erkannt.
+    # Lösung: Nur 1 Wort erfassen. 2-Wort-Namen (z.B. "Thomas Mann") müssen
+    # im Format "Thomas Mann (Quelle 1)" stehen — das wird von Muster 1
+    # zuverlässig erkannt, weil die Klammer als Begrenzer dient.
+    pattern2 = re.compile(
+        r'Quelle\s*(\d+)\s*[\[\]:]?\s*'
+        r'([' + _LATIN_UPPER + _CYR_UPPER + r']'
+        r'[' + _LATIN_LOWER + _CYR_LOWER + r'\-]+)',
+        re.IGNORECASE
+    )
+    for m in pattern2.finditer(all_text):
         name = m.group(2).strip()
         if _is_likely_author_name(name):
+            if name not in authors:
+                debug_counts["muster2"] += 1
             authors.add(name)
 
-    # Muster 3: Kyrillische Autornamen direkt im Text
-    # v59.9.7 (Patch 2026-06-27): _is_likely_author_name()-Filter ergänzt.
-    # Vorher: Muster 3 extrahierte ALLE kyrillischen Wörter mit bestimmten
-    # Endungen, OHNE Filterung. Dadurch wurden Adjektive und Zitat-Wörter
-    # wie "Черная", "Прощева", "Поздний", "Миров" als Autoren extrahiert.
-    # Jetzt: Filter über _is_likely_author_name(), der kyrillische Wörter
-    # nur akzeptiert, wenn sie in _KNOWN_AUTHORS-Whitelist stehen.
-    for m in re.finditer(
-        r'([А-ЯЁ][а-яё]+(?:ский|ая|ий|ов|ева|ин))',
-        all_text
-    ):
+    # Muster 3: Kyrillische Autornamen direkt im Text (erweiterte Endungen)
+    # v60 (Patch 2026-07-03): Endungen erweitert und nach Länge sortiert.
+    #   Längste Endungen zuerst (sonst matcht -ов vor -ова → "Ахматов" statt "Ахматова").
+    #   -ский / -ская / -ина / -ова / -ева / -ов / -ев / -ин / -ий / -ый / -ой
+    #   -ко / -юк / -ук / -ич
+    #   WICHTIG: _is_likely_author_name filtert noch Adjektiv-Endungen
+    #   (-ая, -яя, -ое, -ее, -ого, -его, -ому, -ему, -ыми, -ими)
+    pattern3 = re.compile(
+        r'([' + _CYR_UPPER + r']'
+        r'[' + _CYR_LOWER + r']+'
+        r'(?:ский|ская|ина|ова|ева|ов|ев|ин|ий|ый|ой|ко|юк|ук|ич))',
+    )
+    for m in pattern3.finditer(all_text):
         name = m.group(1)
         if _is_likely_author_name(name):
+            if name not in authors:
+                debug_counts["muster3"] += 1
             authors.add(name)
 
-    # Fallback: Falls weniger als 3 Autoren erkannt wurden,
-    # prüfe ob bekannte Autornamen im Text vorkommen
-    if len(authors) < 3:
-        for known in _KNOWN_AUTHORS:
-            if known in all_text and known not in authors:
-                authors.add(known)
+    # v60 (Patch 2026-07-03): KEIN Whitelist-Fallback mehr.
+    # Wenn <3 Autoren gefunden werden, ist das ein Befund — der User muss
+    # die Quelldaten prüfen, nicht die Engine mit alten Namen auffüllen.
+    # Früherer Code (entfernt):
+    #   if len(authors) < 3:
+    #       for known in _KNOWN_AUTHORS:
+    #           if known in all_text and known not in authors:
+    #               authors.add(known)
 
-    # v59.9.9 (Patch 2026-06-27 kumulativ): Canonical-Name-Normalisierung
-    # Verhindert Duplikate wie „Puschkin" + „Puskin" + „Пушкин" → alle
-    # werden zu „Puschkin" normalisiert.
+    # Logging: Wie viele Autoren wurden über welches Muster gefunden?
+    logger.info(
+        f"  📊 Autor-Erkennung: {len(authors)} Autoren gefunden "
+        f"(M1={debug_counts['muster1']}, M2={debug_counts['muster2']}, "
+        f"M3={debug_counts['muster3']})"
+    )
+    if len(authors) < 3:
+        logger.warning(
+            f"  ⚠️ Nur {len(authors)} Autoren erkannt (erwartet: mind. 3). "
+            f"Bitte Quelldaten prüfen — sind die Autoren im Format "
+            f"'Autor (Quelle N)' im Synthese-Text?"
+        )
+
+    # v59.9.9: Canonical-Name-Normalisierung (behalten — nützlich für Duplikate)
     normalized_authors = set()
     for author in authors:
         normalized = _normalize_author_name(author)
@@ -2003,8 +2043,8 @@ def _extract_quelle_author_mapping(sezieren_results: List[Dict]) -> str:
 
     # Pattern 1: "Autor (Quelle N)" — z.B. "Autorname (Quelle 1)"
     for m in re.finditer(
-        r'([A-ZÁÀÂÄÅĂĄĆČĎÉÈÊËĘĚÍÌÎÏĹĽŁŃŇÑÓÒÔÖŐÓŘŔŚŠŞŤÚÙÛÜŰŮÝŸŹŽŻ]'
-        r'[a-záàâäăąćčďéèêëęěíìîïĺľłńňñóòôöőřŕśšşťúùûüűůŵýÿźžż]+)'
+        r'([A-ZÁÀÂÄÅĂĄĆČĎÉÈÊËĘĚÍÌÎÏĹĽŁŃŇÑÓÒÔÖŐÓŘŔŚŠŞŤÚÙÛÜŰŮÝŸŹŽŻА-ЯЁ]'
+        r'[a-záàâäăąćčďéèêëęěíìîïĺľłńňñóòôöőřŕśšşťúùûüűůŵýÿźžżа-яё-]+'
         r'\s*\(?\s*Quelle\s*(\d+)\s*\)?',
         all_text, re.IGNORECASE
     ):
@@ -2016,8 +2056,8 @@ def _extract_quelle_author_mapping(sezieren_results: List[Dict]) -> str:
     # Pattern 2: "Quelle N [Autor]" oder "Quelle N: Autor" oder "Quelle N Autor"
     for m in re.finditer(
         r'Quelle\s*(\d+)\s*[\[\]:]?\s*'
-        r'([A-ZÁÀÂÄÅĂĄĆČĎÉÈÊËĘĚÍÌÎÏĹĽŁŃŇÑÓÒÔÖŐÓŘŔŚŠŞŤÚÙÛÜŰŮÝŸŹŽŻ]'
-        r'[a-záàâäăąćčďéèêëęěíìîïĺľłńňñóòôöőřŕśšşťúùûüűůŵýÿźžż]+)',
+        r'([A-ZÁÀÂÄÅĂĄĆČĎÉÈÊËĘĚÍÌÎÏĹĽŁŃŇÑÓÒÔÖŐÓŘŔŚŠŞŤÚÙÛÜŰŮÝŸŹŽŻА-ЯЁ]'
+        r'[a-záàâäăąćčďéèêëęěíìîïĺľłńňñóòôöőřŕśšşťúùûüűůŵýÿźžżа-яё-]+',
         all_text, re.IGNORECASE
     ):
         quelle = int(m.group(1))

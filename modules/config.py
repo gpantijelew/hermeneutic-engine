@@ -8,6 +8,7 @@ PHILOSOPHIE:
 - LLM_BACKEND-Schalter ermöglicht späteren Drop-in zu Claude API
 
 ÄNDERUNGSHISTORIE:
+- v60: vorsichtige Einführung neuerer Modelle
 - v55: IFS-Supervisions-Panel, Map-Reduce Pipeline, supervision_tab.py, wissenschaftliche Methodik in hermeneutic_protocol.yaml
 - v51: 4 Tiers
 - v50.9: Migration von Gemini/Firestore → LM Studio/ChromaDB/SQLite
@@ -33,7 +34,7 @@ except ImportError:
 # ==============================================================================
 # ENGINE VERSION (N.4 — zentrale Konstante, von allen Modulen importierbar)
 # ==============================================================================
-ENGINE_VERSION = "v60"  # Falsifizierungs-Architektur (Agency, Gegenposition, Adjudikation, revidierte Destillation)
+ENGINE_VERSION = "v60"  # STILISTIC Mode + Stil-Distillation (Phase 0.5) + 6 Distillation-Kategorien
 
 # ==============================================================================
 # PROJEKT-ROOT BESTIMMUNG
@@ -62,12 +63,12 @@ CHROMA_PATH = DATA_DIR / "chroma"
 LLM_BACKEND = os.getenv("LLM_BACKEND", "lmstudio")
 
 # LM Studio Konfiguration
-LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
+LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://127.0.0.1:8888/v1")
 LM_STUDIO_API_KEY = "lm-studio"  # Dummy — LM Studio prüft das nicht
 
 # Modell-Identifier (exakt wie LM Studio ihn meldet)
 # Nach Download von Gemma 3 27B Q3_K_M hier anpassen:
-LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "qwen3.5-9b-highiq-instruct")
+LM_STUDIO_MODEL = os.getenv("LM_STUDIO_MODEL", "qwen3.5-27b-instruct")
 # NEU: Konfigurierbare Timeouts für große Modelle (Gemma 3 27B etc.)
 LM_STUDIO_VALIDATE_TIMEOUT = int(os.getenv("LM_STUDIO_VALIDATE_TIMEOUT", "10"))
 LM_STUDIO_VALIDATE_RETRIES = int(os.getenv("LM_STUDIO_VALIDATE_RETRIES", "3"))
@@ -122,33 +123,36 @@ IMPORT_RATE_LIMIT_DELAY = 0.5 if LLM_BACKEND == "vertex" else 0.0
 # MODEL-REGISTRY FÜR VERTEX AI (NEU - 3-TIER ARCHITEKTUR)
 # ==============================================================================
 if LLM_BACKEND == "vertex":
-    # --- TIER 1: The Mastermind (Deepest Reasoning, User-Facing) ---
-    # Nutzt VERTEX_MODEL (Standard: gemini-3.1-pro-preview)
-    # --- TIER 2: The Senior Analyst (High Logic, Background Tasks) ---
-    # Nutzt gemini-2.5-pro (Starkes Reasoning, günstiger als 3.1)
-    # --- TIER 3: The Fast Worker (Massive Context, Extraction) ---
-    # Nutzt gemini-2.5-flash (Extrem günstig für große Chunks)
-    # --- TIER 4: The Micro-Tasker (Ultra-Fast, Economy) ---
-    # Nutzt gemini-2.5-flash-lite-preview (Minimale Latenz & Kosten)
     MODEL_REGISTRY = {
-        "chat": VERTEX_MODEL,
-        "synthesis": "gemini-2.5-pro",  # Hart auf 2.5 Pro für verlässliche Zitate
-        "ifs": "gemini-3.1-pro-preview",  # Tier 1 — max_output_tokens respektiert
-        "enforcer": "gemini-2.5-pro",  # Tier 2 (Regeln strikt durchsetzen)
-        "query_expansion": "gemini-2.5-pro",  # Tier 2 (Semantische Tiefe für die Suche)
-        "fact_extraction": "gemini-2.5-flash",  # Tier 3 (Der große Geldsparer!)
-        "reranker": "gemini-3-flash-preview", # Tier 3 (Gen 3 Upgrade: Perfektes Batch-JSON & Speed!)
-        "bulk_labeling": "gemini-2.5-flash",  # Tier 3
-        "router": "gemini-2.5-flash-lite",  # Tier 4
-        "title_gen": "gemini-2.5-flash-lite",  # Tier 4
-        "question_conv": "gemini-2.5-flash-lite",  # Tier 4
-        "extraction": "gemini-2.5-flash",  # Tier 3 — buchstabengetreues Kopieren (Fix J.1)
-        "correction": "gemini-2.5-flash",  # Tier 3 — Phase 3 Korrektur (Drei-Phasen-Architektur)
-        "stilistic_distillation": "gemini-2.5-flash",  # Tier 3 — Stil-Distillation (Phase 0.5)
-        "meta_termini_extraction": "gemini-2.5-flash",  # Tier 3 — Mini-LLM für Termini-Extraktion
-        "meta_beobachten": "gemini-2.5-flash",  # Tier 3 — Stabilitäts-Vergleich (META-BEOBACHTEN)
-        "meta_destillation": "gemini-2.5-pro",  # Tier 2 — Harter Befund braucht Qualität (META-DESTILLATION)
-        "author_extraction": "gemini-2.5-flash",  # Tier 3 — Mini-LLM für Autoren-Erkennung (Schnitt 3 v2)
+        # --- TEST: 3.6 Flash für den Chat ---
+        "chat": "gemini-3.6-flash",          # <-- HIER GEÄNDERT (vorher: gemini-3.1-pro-preview)
+        "ifs": "gemini-3.1-pro-preview",           # Tiefste hermeneutische Ebene, kein Risiko eingehen
+        "synthesis": "gemini-2.5-pro",             # Braucht vollen Token-Output, 3.6 Flash würde hier zu stark kürzen
+        "enforcer": "gemini-2.5-pro",              # Regeldurchsetzung braucht absolute Präzision
+        
+        # --- TIER 2: Analytische & Planungsaufgaben (UNANGETASTET) ---
+        "query_expansion": "gemini-2.5-pro",       
+        "meta_destillation": "gemini-2.5-pro",     # Harte Meta-Analysen, Qualitätsvorrang
+        "meta_beobachten": "gemini-2.5-flash",     # Herzstück-Abschnitte, Risiko zu groß
+        
+        # --- TIER 3: Extraktion & Coding (UNANGETASTET / SICHER) ---
+        "extraction": "gemini-2.5-flash",          # Buchstabengetreues Kopieren, 2.5 Flash macht das perfekt
+        "correction": "gemini-2.5-flash",          # Code-Refactoring, erst testen, bevor wir 3.6 Flash hier trauen
+        "stilistic_distillation": "gemini-2.5-flash", # Finger weg von den Stil-Vorlagen
+        
+        # --- TIER 4: Micro-Tasks & Router (DIE EINZIGEN ÄNDERUNGEN) ---
+        # Hier nutzen wir das neue 3.5 Flash-Lite ($0.30/$2.50). 
+        # Kein tiefes Reasoning nötig, maximaler Kostenvorteil.
+        "fact_extraction": "gemini-3.5-flash-lite",   
+        "meta_termini_extraction": "gemini-3.5-flash-lite",
+        "author_extraction": "gemini-3.5-flash-lite",
+        "bulk_labeling": "gemini-3.5-flash-lite",
+        "router": "gemini-3.5-flash-lite",
+        "title_gen": "gemini-3.5-flash-lite",
+        "question_conv": "gemini-3.5-flash-lite",
+        
+        # --- RERANKER ---
+        "reranker": "gemini-3-flash-preview",      # Belassen, bis 3.6 für Reranking getestet wurde
     }
 else:
     MODEL_REGISTRY = {
@@ -348,7 +352,7 @@ def validate_config() -> bool:
                     print(f"     Letzter Fehler: {e}")
                     print("     Tipps:")
                     print("       1. LM Studio gestartet?")
-                    print("       2. Developer-Server aktiv (Port 1234)?")
+                    print("       2. Developer-Server aktiv (Port 8888)?")
                     print("       3. Firewall blockiert?")
                     print("       4. Großes Modell lädt noch? (Gemma 3 27B: bis zu 30s)")
                     print(f"     Konfigurierbar via Umgebungsvariable: "
